@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/generation-job.schema.json",
+  "title": "GenerationJob",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "source",
+    "template",
+    "items",
+    "output"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "fileName",
+        "fileSize",
+        "sheetName",
+        "selectedGroups"
+      ],
+      "properties": {
+        "fileName": {
+          "type": "string"
+        },
+        "fileSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modifiedAt": {
+          "type": "string"
+        },
+        "sheetName": {
+          "type": "string"
+        },
+        "selectedGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "sourceCell", "startRow", "endRow", "itemCount", "physicalSegments", "inferredContinuation"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "sourceCell": { "type": "string" },
+              "startRow": { "type": "integer", "minimum": 1 },
+              "endRow": { "type": "integer", "minimum": 1 },
+              "itemCount": { "type": "integer", "minimum": 0 },
+              "physicalSegments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["ref", "startRow", "endRow"],
+                  "properties": {
+                    "ref": { "type": "string" },
+                    "startRow": { "type": "integer", "minimum": 1 },
+                    "endRow": { "type": "integer", "minimum": 1 }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "inferredContinuation": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "template": {
+      "$ref": "template.schema.json"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "assetCode",
+          "sheetName",
+          "codeCell",
+          "sourceGroupId",
+          "sourceOrder",
+          "imageEntry"
+        ],
+        "properties": {
+          "assetCode": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+          },
+          "numericId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sheetName": {
+            "type": "string"
+          },
+          "codeCell": {
+            "type": "string"
+          },
+          "nameCell": {
+            "type": "string"
+          },
+          "numericIdCell": {
+            "type": "string"
+          },
+          "sourceGroupId": {
+            "type": "string"
+          },
+          "sourceOrder": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "imageEntry": {
+            "type": "string"
+          },
+          "imageAnchorCell": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "baseName",
+        "preferPsb"
+      ],
+      "properties": {
+        "baseName": {
+          "type": "string"
+        },
+        "preferPsb": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

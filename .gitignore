@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.uxp/
+*.log
+artifacts/
+*.diagnostics.zip
+*.psd
+*.psb
+.DS_Store
+Thumbs.db
+fixtures/private/*
+!fixtures/private/README.md

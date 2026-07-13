@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "id": "archive-148",
+  "name": "归档 148",
+  "artboard": {
+    "width": 148,
+    "height": 148,
+    "columns": 10,
+    "gapX": 100,
+    "gapY": 100,
+    "background": "white"
+  },
+  "document": {
+    "resolution": 300,
+    "colorMode": "RGB",
+    "bitsPerChannel": 8
+  },
+  "placement": {
+    "maxVisibleWidth": 146,
+    "maxVisibleHeight": 134,
+    "targetCenterX": 74,
+    "targetCenterY": 78,
+    "allowUpscale": false,
+    "interpolation": "bicubicAutomatic"
+  },
+  "layout": {
+    "preserveSourceGroups": true,
+    "maxArtboardsPerDocument": 100
+  }
+}

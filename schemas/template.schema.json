@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/template.schema.json",
+  "title": "PsdTemplate",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "artboard",
+    "document",
+    "placement",
+    "layout"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "artboard": {
+      "type": "object",
+      "required": [
+        "width",
+        "height",
+        "columns",
+        "gapX",
+        "gapY",
+        "background"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gapX": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gapY": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "background": {
+          "enum": [
+            "white",
+            "transparent"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "resolution",
+        "colorMode",
+        "bitsPerChannel"
+      ],
+      "properties": {
+        "resolution": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "colorMode": {
+          "const": "RGB"
+        },
+        "bitsPerChannel": {
+          "const": 8
+        }
+      },
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "required": [
+        "maxVisibleWidth",
+        "maxVisibleHeight",
+        "targetCenterX",
+        "targetCenterY",
+        "allowUpscale",
+        "interpolation"
+      ],
+      "properties": {
+        "maxVisibleWidth": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxVisibleHeight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "targetCenterX": {
+          "type": "number"
+        },
+        "targetCenterY": {
+          "type": "number"
+        },
+        "allowUpscale": {
+          "type": "boolean"
+        },
+        "interpolation": {
+          "enum": [
+            "bicubicAutomatic",
+            "bicubicSharper"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "layout": {
+      "type": "object",
+      "required": [
+        "preserveSourceGroups",
+        "maxArtboardsPerDocument"
+      ],
+      "properties": {
+        "preserveSourceGroups": {
+          "type": "boolean"
+        },
+        "maxArtboardsPerDocument": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

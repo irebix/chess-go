@@ -1,0 +1,69 @@
+{
+  "sourcePsd": "02.psd",
+  "expected": {
+    "width": 2380,
+    "height": 1140,
+    "resolution": 300,
+    "artboardWidth": 148,
+    "artboardHeight": 148,
+    "gapX": 100,
+    "gapY": 100,
+    "artboardCount": 43,
+    "groupCount": 2
+  },
+  "groups": [
+    {
+      "id": "source-group-1",
+      "assetCodes": [
+        "ds_vietnam3",
+        "ds_vietnam5",
+        "ds_vietnam7",
+        "ds_vietnam8",
+        "ds_vietnam9",
+        "ds_vietnam14",
+        "ds_vietnam18",
+        "ds_vietnam19",
+        "ds_vietnam22",
+        "ds_vietnam33",
+        "ds_vietnam37",
+        "ds_vietnam40",
+        "ds_vietnam44",
+        "ds_vietnam46"
+      ]
+    },
+    {
+      "id": "source-group-2",
+      "assetCodes": [
+        "ds_vietnam1",
+        "ds_vietnam2",
+        "ds_vietnam4",
+        "ds_vietnam6",
+        "ds_vietnam10",
+        "ds_vietnam11",
+        "ds_vietnam12",
+        "ds_vietnam13",
+        "ds_vietnam15",
+        "ds_vietnam16",
+        "ds_vietnam17",
+        "ds_vietnam20",
+        "ds_vietnam21",
+        "ds_vietnam23",
+        "ds_vietnam24",
+        "ds_vietnam25",
+        "ds_vietnam28",
+        "ds_vietnam29",
+        "ds_vietnam30",
+        "ds_vietnam31",
+        "ds_vietnam34",
+        "ds_vietnam35",
+        "ds_vietnam36",
+        "ds_vietnam42",
+        "ds_vietnam43",
+        "ds_vietnam45",
+        "ds_vietnam47",
+        "ds_vietnam51",
+        "ds_vietnam52"
+      ]
+    }
+  ]
+}

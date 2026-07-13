@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/parsing-manifest.schema.json",
+  "title": "ParsingManifest",
+  "type": "object",
+  "required": ["schemaVersion", "pluginVersion", "exportedAt", "source", "summary", "items"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "pluginVersion": { "type": "string" },
+    "exportedAt": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["fileName", "sheetName", "selectedGroups"],
+      "properties": {
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "integer", "minimum": 0 },
+        "modifiedAt": { "type": "string" },
+        "sheetName": { "type": "string" },
+        "selectedGroups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sheetGroup" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["items", "ready", "errors", "warnings"],
+      "properties": {
+        "items": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "assetCode",
+          "prefix",
+          "sheetName",
+          "codeCell",
+          "sourceGroupId",
+          "sourceOrder",
+          "selected",
+          "imageCandidates",
+          "issues"
+        ],
+        "properties": {
+          "key": { "type": "string" },
+          "assetCode": { "type": "string" },
+          "numericId": { "type": "string" },
+          "name": { "type": "string" },
+          "prefix": { "type": "string" },
+          "sheetName": { "type": "string" },
+          "codeCell": { "type": "string" },
+          "nameCell": { "type": "string" },
+          "numericIdCell": { "type": "string" },
+          "sourceGroupId": { "type": "string" },
+          "sourceOrder": { "type": "integer", "minimum": 0 },
+          "selected": { "type": "boolean" },
+          "selectedImageId": { "type": "string" },
+          "imageCandidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "archiveEntry",
+                "mediaType",
+                "anchorType",
+                "anchorCell",
+                "fromRow",
+                "fromCol",
+                "relativeRowOffset",
+                "relativeColOffset"
+              ],
+              "properties": {
+                "id": { "type": "string" },
+                "archiveEntry": { "type": "string" },
+                "mediaType": { "enum": ["png", "jpeg", "other"] },
+                "anchorType": { "enum": ["oneCell", "twoCell"] },
+                "anchorCell": { "type": "string" },
+                "fromRow": { "type": "integer", "minimum": 1 },
+                "fromCol": { "type": "integer", "minimum": 1 },
+                "toRow": { "type": "integer", "minimum": 1 },
+                "toCol": { "type": "integer", "minimum": 1 },
+                "relativeRowOffset": { "type": "integer" },
+                "relativeColOffset": { "type": "integer" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["code", "severity", "message"],
+              "properties": {
+                "code": { "type": "string" },
+                "severity": { "enum": ["error", "warning", "info"] },
+                "message": { "type": "string" },
+                "itemKey": { "type": "string" },
+                "sourceCell": { "type": "string" },
+                "details": { "type": "object" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "sheetGroup": {
+      "type": "object",
+      "required": ["id", "label", "sourceCell", "startRow", "endRow", "itemCount", "physicalSegments", "inferredContinuation"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "sourceCell": { "type": "string" },
+        "startRow": { "type": "integer", "minimum": 1 },
+        "endRow": { "type": "integer", "minimum": 1 },
+        "itemCount": { "type": "integer", "minimum": 0 },
+        "physicalSegments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "startRow", "endRow"],
+            "properties": {
+              "ref": { "type": "string" },
+              "startRow": { "type": "integer", "minimum": 1 },
+              "endRow": { "type": "integer", "minimum": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "inferredContinuation": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

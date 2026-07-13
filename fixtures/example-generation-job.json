@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "fileName": "M图标月度安排2.xlsx",
+    "fileSize": 205000000,
+    "sheetName": "越南第三十九至四十一章",
+    "selectedGroups": [
+      {
+        "id": "越南第三十九至四十一章!A31:A35",
+        "label": "越南河粉系列",
+        "sourceCell": "A31",
+        "startRow": 31,
+        "endRow": 35,
+        "itemCount": 14,
+        "physicalSegments": [{ "ref": "A31:A35", "startRow": 31, "endRow": 35 }],
+        "inferredContinuation": false
+      },
+      {
+        "id": "越南第三十九至四十一章!A36:A40",
+        "label": "越南河内风味",
+        "sourceCell": "A36",
+        "startRow": 36,
+        "endRow": 40,
+        "itemCount": 29,
+        "physicalSegments": [{ "ref": "A36:A40", "startRow": 36, "endRow": 40 }],
+        "inferredContinuation": false
+      }
+    ]
+  },
+  "template": {
+    "schemaVersion": "1.0",
+    "id": "archive-148",
+    "name": "归档 148",
+    "artboard": {
+      "width": 148,
+      "height": 148,
+      "columns": 10,
+      "gapX": 100,
+      "gapY": 100,
+      "background": "white"
+    },
+    "document": {
+      "resolution": 300,
+      "colorMode": "RGB",
+      "bitsPerChannel": 8
+    },
+    "placement": {
+      "maxVisibleWidth": 146,
+      "maxVisibleHeight": 134,
+      "targetCenterX": 74,
+      "targetCenterY": 78,
+      "allowUpscale": false,
+      "interpolation": "bicubicAutomatic"
+    },
+    "layout": {
+      "preserveSourceGroups": true,
+      "maxArtboardsPerDocument": 100
+    }
+  },
+  "items": [
+    {
+      "assetCode": "ds_vietnam3",
+      "numericId": "201825",
+      "name": "Beef Pho Salad",
+      "sheetName": "越南第三十九至四十一章",
+      "codeCell": "B33",
+      "nameCell": "B32",
+      "numericIdCell": "B31",
+      "sourceGroupId": "越南第三十九至四十一章!codeRow:33",
+      "sourceOrder": 0,
+      "imageEntry": "xl/drawings/media/image2094.png",
+      "imageAnchorCell": "B34"
+    }
+  ],
+  "output": {
+    "baseName": "越南第三十九至四十一章",
+    "preferPsb": false
+  }
+}

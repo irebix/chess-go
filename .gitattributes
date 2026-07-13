@@ -1,0 +1,9 @@
+* text=auto
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.xlsx binary
+*.zip binary
+*.psd binary
+*.psb binary

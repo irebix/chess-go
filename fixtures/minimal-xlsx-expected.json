@@ -1,0 +1,37 @@
+{
+  "sheetName": "Sample需求",
+  "items": [
+    {
+      "assetCode": "ds_test1",
+      "numericId": "1001",
+      "name": "示例菜品一",
+      "codeCell": "A3",
+      "imageCandidates": [
+        "A4",
+        "A5"
+      ],
+      "expectedStatus": "READY_PROJECT_IMAGE_SELECTED"
+    },
+    {
+      "assetCode": "ds_test2",
+      "numericId": "1002",
+      "name": "示例 Dish Two",
+      "codeCell": "B3",
+      "imageCandidates": [
+        "B4"
+      ],
+      "expectedStatus": "READY"
+    },
+    {
+      "assetCode": "ds_test3",
+      "numericId": "1003",
+      "name": "  示例三  ",
+      "codeCell": "C3",
+      "imageCandidates": [
+        "C4"
+      ],
+      "expectedStatus": "READY",
+      "anchorType": "twoCell"
+    }
+  ]
+}

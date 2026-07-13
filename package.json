@@ -1,0 +1,35 @@
+{
+  "name": "chess-archive-psd-generator",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Offline Photoshop UXP tool for parsing Tencent XLSX exports and generating archive PSD artboards.",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "webpack --mode production",
+    "build:dev": "webpack --mode development",
+    "watch": "webpack --mode development --watch",
+    "inspect:xlsx": "tsx scripts/inspect-xlsx.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.9.3",
+    "jszip": "^3.10.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/photoshop": "23.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "copy-webpack-plugin": "^13.0.1",
+    "ts-loader": "^9.5.1",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1"
+  }
+}
