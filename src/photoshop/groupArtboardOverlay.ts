@@ -1,18 +1,37 @@
 import { action, constants } from "photoshop";
 import type { LayoutResult } from "../domain/layout";
 import type { SheetGroup } from "../domain/models";
-import { makeArtboardDescriptor } from "./actionDescriptors";
+import {
+  GROUP_LAYOUT_METADATA_TEXT_PREFIX,
+  parseGroupLayoutMetadata,
+  serializeGroupLayoutMetadata,
+  type GroupLayoutBackground,
+  type GroupLayoutMetadata,
+  type GroupLayoutMetadataGroup,
+  type NumericRect
+} from "../domain/groupLayoutMetadata";
+import {
+  makeArtboardBackgroundBatchDescriptors,
+  makeArtboardDescriptor,
+  setLayerGroupExpandedDescriptor
+} from "./actionDescriptors";
 
 const GROUP_ARTBOARD_DATA_CONTAINER_NAME = "棋子归档｜分组画板数据";
-const GROUP_ARTBOARD_DATA_PREFIX = "分组画板数据｜";
+const GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME = "棋子go｜布局数据（请勿删除）";
 
 const CANVAS_MARGIN_X = 68;
 const CANVAS_MARGIN_Y = 48;
 const ARTBOARD_PADDING_X = 44;
 const ARTBOARD_PADDING_TOP = 34;
 const ARTBOARD_PADDING_BOTTOM = 32;
-const CUSTOM_ARTBOARD_BACKGROUND = 4;
 const GROUP_ARTBOARD_BACKGROUND_COLOR = 36;
+
+export const GROUP_ARTBOARD_PADDING = {
+  left: ARTBOARD_PADDING_X,
+  top: ARTBOARD_PADDING_TOP,
+  right: ARTBOARD_PADDING_X,
+  bottom: ARTBOARD_PADDING_BOTTOM
+} as const;
 
 interface LayerLike {
   id: number;
@@ -20,6 +39,7 @@ interface LayerLike {
   visible: boolean;
   parent?: LayerLike | null;
   layers?: LayerCollectionLike;
+  textItem?: { contents: string };
   move(relativeObject: LayerLike, placement: string): void;
   delete(): Promise<void>;
 }
@@ -32,31 +52,44 @@ interface LayerCollectionLike {
 interface DocumentLike {
   layers: LayerCollectionLike;
   activeLayers: LayerLike[];
-  createLayer(options?: { name?: string }): Promise<LayerLike | null>;
   createLayerGroup(options?: { name?: string }): Promise<LayerLike | null>;
+  createTextLayer?(options?: {
+    name?: string;
+    contents?: string;
+    fontSize?: number;
+    opacity?: number;
+    position?: { x: number; y: number };
+  }): Promise<LayerLike | null>;
+}
+
+interface SingleMetadataEntry {
+  dataLayer: LayerLike;
+  metadata: GroupLayoutMetadata;
 }
 
 interface GroupArtboardBounds {
+  groupId: string;
   label: string;
   left: number;
   top: number;
   right: number;
   bottom: number;
+  members: StoredItemArtboard[];
 }
 
-interface StoredGroupArtboard {
-  version: 1;
+export interface StoredItemArtboard {
   artboardId: number;
-  label: string;
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
+  row: number;
+  col: number;
 }
 
 export interface GroupArtboardOverlayState {
   available: boolean;
   visible: boolean;
+}
+
+export interface GeneratedArtboardBackgroundState extends GroupLayoutBackground {
+  artboardIds: number[];
 }
 
 export function addGroupArtboardCanvasMargin(layout: LayoutResult): LayoutResult {
@@ -79,10 +112,12 @@ export function addGroupArtboardCanvasMargin(layout: LayoutResult): LayoutResult
 export async function initializeGroupArtboardOverlay(
   documentValue: unknown,
   layout: LayoutResult,
-  selectedGroups: SheetGroup[]
+  selectedGroups: SheetGroup[],
+  itemArtboardIds: number[],
+  background: GroupLayoutBackground
 ): Promise<void> {
   const document = documentValue as DocumentLike;
-  const specifications = groupArtboardBounds(layout, selectedGroups);
+  const specifications = groupArtboardBounds(layout, selectedGroups, itemArtboardIds);
   if (!specifications.length) return;
 
   const created: Array<{ specification: GroupArtboardBounds; artboard: LayerLike }> = [];
@@ -106,19 +141,20 @@ export async function initializeGroupArtboardOverlay(
   const container = await document.createLayerGroup({ name: GROUP_ARTBOARD_DATA_CONTAINER_NAME });
   if (!container) throw new Error("Photoshop 未能保存分组画板数据。");
 
-  for (const entry of created) {
-    const dataLayer = await document.createLayer({
-      name: serializeSpecification(entry.specification, entry.artboard.id)
-    });
-    if (!dataLayer) throw new Error(`Photoshop 未能保存分组数据：${entry.specification.label}`);
-    dataLayer.visible = false;
-    if (dataLayer.parent?.id !== container.id) {
-      dataLayer.move(container, constants.ElementPlacement.PLACEINSIDE);
-    }
-  }
+  const spacing = currentLayoutSpacing(layout);
+  const dataLayer = await createSingleMetadataLayer(
+    document,
+    container,
+    metadataGroupsFromCreated(created),
+    spacing,
+    background
+  );
 
-  container.visible = false;
   moveLayerToBottom(document, container);
+  // Moving layers can refresh their host state, so enforce invisibility last.
+  dataLayer.visible = false;
+  container.visible = false;
+  await collapseDataContainer(container.id);
 }
 
 export function inspectGroupArtboardOverlay(documentValue: unknown): GroupArtboardOverlayState {
@@ -144,6 +180,104 @@ export async function hideGroupArtboards(documentValue: unknown): Promise<void> 
   const document = documentValue as DocumentLike;
   const specifications = readStoredSpecifications(document);
   for (const artboard of findGroupArtboards(document, specifications)) artboard.visible = false;
+}
+
+export function readGeneratedArtboardBackground(
+  documentValue: unknown
+): GeneratedArtboardBackgroundState | undefined {
+  const single = readSingleMetadataEntry(documentValue as DocumentLike);
+  if (!single) return undefined;
+  return {
+    artboardIds: single.metadata.groups.flatMap((group) =>
+      group.members.map((member) => member.artboardId)
+    ),
+    color: { ...single.metadata.background.color },
+    visible: single.metadata.background.visible
+  };
+}
+
+export function writeGeneratedArtboardBackground(
+  documentValue: unknown,
+  background: GroupLayoutBackground
+): void {
+  const single = readSingleMetadataEntry(documentValue as DocumentLike);
+  if (!single) throw new Error("当前 PSD 中没有新版底板设置数据。");
+  writeSingleMetadataLayer(
+    single.dataLayer,
+    single.metadata.groups,
+    single.metadata.spacing,
+    background
+  );
+}
+
+async function createSingleMetadataLayer(
+  document: DocumentLike,
+  container: LayerLike,
+  groups: GroupLayoutMetadataGroup[],
+  spacing: number,
+  background: GroupLayoutBackground
+): Promise<LayerLike> {
+  if (typeof document.createTextLayer !== "function") {
+    throw new Error("当前 Photoshop 版本不支持单层布局数据。");
+  }
+  const contents = serializeGroupLayoutMetadata(groups, spacing, background);
+  const dataLayer = await document.createTextLayer({
+    name: GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME,
+    contents,
+    fontSize: 1,
+    opacity: 0,
+    position: { x: 0, y: 0 }
+  });
+  if (!dataLayer) throw new Error("Photoshop 未能创建布局数据层。");
+  dataLayer.visible = false;
+  if (dataLayer.parent?.id !== container.id) {
+    dataLayer.move(container, constants.ElementPlacement.PLACEINSIDE);
+  }
+  writeSingleMetadataLayer(dataLayer, groups, spacing, background);
+  return dataLayer;
+}
+
+function writeSingleMetadataLayer(
+  dataLayer: LayerLike,
+  groups: GroupLayoutMetadataGroup[],
+  spacing: number,
+  background: GroupLayoutBackground
+): void {
+  if (!dataLayer.textItem) throw new Error("布局数据层不是可写文本图层。");
+  const contents = serializeGroupLayoutMetadata(groups, spacing, background);
+  if (!parseGroupLayoutMetadata(contents)) {
+    throw new Error("棋子go 未能生成有效的布局数据。");
+  }
+  dataLayer.textItem.contents = contents;
+  // Photoshop may rename a newly-created text layer to its contents.
+  dataLayer.name = GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME;
+  dataLayer.visible = false;
+}
+
+function metadataGroupsFromCreated(
+  entries: Array<{ specification: GroupArtboardBounds; artboard: LayerLike }>
+): GroupLayoutMetadataGroup[] {
+  return entries.map(({ specification, artboard }) => ({
+    artboardId: artboard.id,
+    label: specification.label,
+    rect: {
+      left: specification.left,
+      top: specification.top,
+      right: specification.right,
+      bottom: specification.bottom
+    },
+    members: specification.members.map((member) => ({ ...member }))
+  }));
+}
+
+export function groupArtboardRectForMemberRects(rects: NumericRect[]): NumericRect {
+  if (!rects.length) throw new Error("分组框中没有可用的棋子画板。");
+  return {
+    left: Math.min(...rects.map((rect) => rect.left)) - ARTBOARD_PADDING_X,
+    top: Math.min(...rects.map((rect) => rect.top)) - ARTBOARD_PADDING_TOP,
+    right: Math.max(...rects.map((rect) => rect.right)) + ARTBOARD_PADDING_X,
+    bottom: Math.max(...rects.map((rect) => rect.bottom)) + ARTBOARD_PADDING_BOTTOM
+  };
 }
 
 async function createGroupArtboard(
@@ -173,48 +307,55 @@ async function createGroupArtboard(
 }
 
 async function setArtboardBackground(artboardId: number): Promise<void> {
-  const artboardSettings = {
-    _obj: "artboard",
-    color: rgbColor(GROUP_ARTBOARD_BACKGROUND_COLOR),
-    artboardBackgroundType: CUSTOM_ARTBOARD_BACKGROUND
-  };
-  const editById = {
-    _obj: "editArtboardEvent",
-    _target: [{ _ref: "layer", _id: artboardId }],
-    artboard: artboardSettings,
-    changeBackground: 1,
-    _options: { dialogOptions: "dontDisplay" }
-  };
-  try {
-    await action.batchPlay([editById], {});
-  } catch {
-    await action.batchPlay([{
-      ...editById,
-      _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }]
-    }], {});
-  }
+  const results = await action.batchPlay(
+    makeArtboardBackgroundBatchDescriptors(
+      [artboardId],
+      {
+        red: GROUP_ARTBOARD_BACKGROUND_COLOR,
+        green: GROUP_ARTBOARD_BACKGROUND_COLOR,
+        blue: GROUP_ARTBOARD_BACKGROUND_COLOR
+      }
+    ),
+    {}
+  ) as Array<{ _obj?: string; result?: number; message?: string }>;
+  const failure = results.find((result) => result?._obj?.toLowerCase() === "error" && result.result !== 0);
+  if (!failure) return;
+  throw new Error(`设置分组框底色失败：${failure.message || `错误 ${failure.result ?? "未知"}`}`);
 }
 
-function groupArtboardBounds(layout: LayoutResult, selectedGroups: SheetGroup[]): GroupArtboardBounds[] {
+function groupArtboardBounds(
+  layout: LayoutResult,
+  selectedGroups: SheetGroup[],
+  itemArtboardIds: number[]
+): GroupArtboardBounds[] {
   const boundsByGroup = new Map<string, GroupArtboardBounds>();
 
-  for (const placement of layout.placements) {
+  for (let index = 0; index < layout.placements.length; index += 1) {
+    const placement = layout.placements[index]!;
+    const itemArtboardId = itemArtboardIds[index];
+    if (!Number.isInteger(itemArtboardId)) {
+      throw new Error(`缺少棋子画板布局数据：${placement.item.assetCode || index + 1}`);
+    }
     const sourceGroup = selectedGroups.find((group) => itemBelongsToGroup(placement.item.codeRow, group));
     const groupId = sourceGroup?.id ?? placement.item.sourceGroupId;
     const label = sourceGroup?.label ?? groupId;
+    const member = { artboardId: itemArtboardId!, row: placement.row, col: placement.col };
     const existing = boundsByGroup.get(groupId);
     if (existing) {
       existing.left = Math.min(existing.left, placement.rect.left - ARTBOARD_PADDING_X);
       existing.top = Math.min(existing.top, placement.rect.top - ARTBOARD_PADDING_TOP);
       existing.right = Math.max(existing.right, placement.rect.right + ARTBOARD_PADDING_X);
       existing.bottom = Math.max(existing.bottom, placement.rect.bottom + ARTBOARD_PADDING_BOTTOM);
+      existing.members.push(member);
     } else {
       boundsByGroup.set(groupId, {
+        groupId,
         label,
         left: placement.rect.left - ARTBOARD_PADDING_X,
         top: placement.rect.top - ARTBOARD_PADDING_TOP,
         right: placement.rect.right + ARTBOARD_PADDING_X,
-        bottom: placement.rect.bottom + ARTBOARD_PADDING_BOTTOM
+        bottom: placement.rect.bottom + ARTBOARD_PADDING_BOTTOM,
+        members: [member]
       });
     }
   }
@@ -222,54 +363,59 @@ function groupArtboardBounds(layout: LayoutResult, selectedGroups: SheetGroup[])
   return Array.from(boundsByGroup.values());
 }
 
-function serializeSpecification(specification: GroupArtboardBounds, artboardId: number): string {
-  const stored: StoredGroupArtboard = {
-    version: 1,
-    artboardId,
-    label: specification.label,
-    left: specification.left,
-    top: specification.top,
-    right: specification.right,
-    bottom: specification.bottom
-  };
-  return `${GROUP_ARTBOARD_DATA_PREFIX}${JSON.stringify(stored)}`;
+function readStoredSpecifications(document: DocumentLike): GroupLayoutMetadataGroup[] {
+  return readSingleMetadataEntry(document)?.metadata.groups ?? [];
 }
 
-function readStoredSpecifications(document: DocumentLike): StoredGroupArtboard[] {
-  const container = findDataContainer(document);
-  if (!container) return [];
-
-  const specifications: StoredGroupArtboard[] = [];
-  for (const layer of collectionValues(container.layers)) {
-    if (!layer.name.startsWith(GROUP_ARTBOARD_DATA_PREFIX)) continue;
-    try {
-      const value = JSON.parse(layer.name.slice(GROUP_ARTBOARD_DATA_PREFIX.length)) as Partial<StoredGroupArtboard>;
-      if (
-        value.version === 1 &&
-        Number.isInteger(value.artboardId) &&
-        Number(value.artboardId) > 0 &&
-        typeof value.label === "string" &&
-        isFiniteNumber(value.left) &&
-        isFiniteNumber(value.top) &&
-        isFiniteNumber(value.right) &&
-        isFiniteNumber(value.bottom)
-      ) {
-        specifications.push(value as StoredGroupArtboard);
-      }
-    } catch {
-      // Ignore damaged metadata layers and keep reading the remaining groups.
-    }
+function currentLayoutSpacing(layout: LayoutResult): number {
+  const horizontal = layout.placements
+    .filter((placement) => placement.col > 0)
+    .map((placement) => placement.rect.left)
+    .sort((left, right) => left - right);
+  if (horizontal.length) {
+    const first = layout.placements.find((placement) => placement.col === 0);
+    const second = layout.placements.find((placement) => placement.col === 1);
+    if (first && second) return Math.max(0, Math.round(second.rect.left - first.rect.right));
   }
-  return specifications;
+  const firstRow = layout.placements.find((placement) => placement.row === 0);
+  const secondRow = layout.placements.find((placement) => placement.row === 1);
+  return firstRow && secondRow ? Math.max(0, Math.round(secondRow.rect.top - firstRow.rect.bottom)) : 0;
 }
 
 function findDataContainer(document: DocumentLike): LayerLike | undefined {
   return collectionValues(document.layers).find((layer) => layer.name === GROUP_ARTBOARD_DATA_CONTAINER_NAME);
 }
 
+async function collapseDataContainer(containerId: number): Promise<void> {
+  const [result] = await action.batchPlay(
+    [setLayerGroupExpandedDescriptor(containerId, false)],
+    {}
+  ) as Array<{ _obj?: string; result?: number; message?: string }>;
+  if (result?._obj?.toLowerCase() !== "error" || result.result === 0) return;
+  throw new Error(`Photoshop 未能折叠文档数据组：${result.message || `错误 ${result.result ?? "未知"}`}`);
+}
+
+function readSingleMetadataEntry(document: DocumentLike): SingleMetadataEntry | undefined {
+  const container = findDataContainer(document);
+  if (!container) return undefined;
+  for (const layer of collectionValues(container.layers)) {
+    if (!layer.textItem) continue;
+    const contents = layer.textItem.contents;
+    if (
+      layer.name !== GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME &&
+      !contents.startsWith(GROUP_LAYOUT_METADATA_TEXT_PREFIX)
+    ) {
+      continue;
+    }
+    const metadata = parseGroupLayoutMetadata(contents);
+    if (metadata) return { dataLayer: layer, metadata };
+  }
+  return undefined;
+}
+
 function findGroupArtboards(
   document: DocumentLike,
-  specifications: StoredGroupArtboard[]
+  specifications: Array<{ artboardId: number }>
 ): LayerLike[] {
   const artboardIds = new Set(specifications.map((specification) => specification.artboardId));
   return allLayers(document.layers).filter((layer) => artboardIds.has(layer.id));
@@ -282,10 +428,6 @@ function itemBelongsToGroup(row: number, group: SheetGroup): boolean {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function rgbColor(value: number): { _obj: "RGBColor"; red: number; grain: number; blue: number } {
-  return { _obj: "RGBColor", red: value, grain: value, blue: value };
 }
 
 function collectionValues(collection: LayerCollectionLike | undefined): LayerLike[] {

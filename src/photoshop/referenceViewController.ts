@@ -5,7 +5,7 @@ import {
   showGroupArtboards
 } from "./groupArtboardOverlay";
 import {
-  ARTBOARD_BACKGROUND_LAYER_NAME,
+  applyStoredArtboardBackgrounds,
   choosePhotoshopForegroundColor,
   inspectArtboardBackgrounds,
   setArtboardBackgroundColor,
@@ -127,6 +127,7 @@ export async function toggleActiveReferenceView(): Promise<ReferenceDocumentStat
       else if (before.referenceVisible) await hideCurrentReferences(document);
       else await enterReferenceView(document);
       await restoreGroupArtboardState(document, groupArtboardsBefore.visible);
+      await applyStoredArtboardBackgrounds(document);
       await recaptureReferenceMode(document, shouldHide ? "normal" : "reference");
     },
     { commandName: shouldHide ? "隐藏参考图" : "仅显示参考图" }
@@ -156,15 +157,15 @@ export async function toggleActiveArtboardBackgrounds(): Promise<ReferenceDocume
   const document = activeDocument();
   if (!document) throw new Error("当前没有打开的 PSD 文档。");
   const before = inspectDocument(document);
-  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板颜色图层。");
+  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板设置。");
   const shouldShow = !before.artboardBackgroundsVisible;
 
   await core.executeAsModal(
     async () => {
-      setArtboardBackgroundVisibility(document, shouldShow);
+      await setArtboardBackgroundVisibility(document, shouldShow);
       await recaptureReferenceMode(document, before.mode);
     },
-    { commandName: shouldShow ? "显示底板颜色" : "隐藏底板颜色" }
+    { commandName: shouldShow ? "显示底板" : "隐藏底板" }
   );
   return inspectDocument(document);
 }
@@ -173,7 +174,7 @@ export async function changeActiveArtboardBackgroundColor(): Promise<ArtboardBac
   const document = activeDocument();
   if (!document) throw new Error("当前没有打开的 PSD 文档。");
   const before = inspectDocument(document);
-  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板颜色图层。");
+  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板设置。");
 
   const color = await choosePhotoshopForegroundColor();
   if (!color) return { state: before, changed: false };
@@ -388,9 +389,7 @@ function scanReferences(document: DocumentLike, includeLegacy: boolean): Referen
     if (!includeLegacy) continue;
 
     const editableLayers = children.filter((layer) => layer.name === EDITABLE_CANVAS_LAYER_NAME);
-    const legacyCandidates = children.filter((layer) =>
-      layer.name !== EDITABLE_CANVAS_LAYER_NAME && layer.name !== ARTBOARD_BACKGROUND_LAYER_NAME
-    );
+    const legacyCandidates = children.filter((layer) => layer.name !== EDITABLE_CANVAS_LAYER_NAME);
     if (editableLayers.length === 1 && legacyCandidates.length === 1) {
       artboards.push(artboard);
       referenceLayers.push(legacyCandidates[0]!);

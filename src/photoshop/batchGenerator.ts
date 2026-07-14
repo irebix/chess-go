@@ -26,7 +26,10 @@ import {
   initializeGeneratedReferenceView
 } from "./referenceViewController";
 import { addGroupArtboardCanvasMargin, initializeGroupArtboardOverlay } from "./groupArtboardOverlay";
-import { createArtboardBackground } from "./artboardBackgroundController";
+import {
+  DEFAULT_ARTBOARD_BACKGROUND_COLOR,
+  initializeArtboardBackgrounds
+} from "./artboardBackgroundController";
 
 const EDITABLE_CANVAS_SOURCE_SIZE = 2048;
 const EDITABLE_CANVAS_PLACED_SIZE = 148;
@@ -114,6 +117,7 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
           if (!document) throw new Error("Photoshop 未能创建批量归档文档。");
           await context.hostControl.registerAutoCloseDocument(document.id);
           const initialLayerIds = document.layers.map((layer) => layer.id);
+          const itemArtboardIds: number[] = [];
 
           for (let itemIndex = 0; itemIndex < layout.placements.length; itemIndex += 1) {
             assertNotCancelled(context);
@@ -129,6 +133,7 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
                 document.layers.find((layer) => !beforeIds.has(layer.id)) ??
                 document.layers.find((layer) => layer.name === placement.item.assetCode);
               if (!artboard) throw new Error(`未能创建画板${placement.item.assetCode ? `：${placement.item.assetCode}` : ""}`);
+              itemArtboardIds.push(artboard.id);
 
               if (itemIndex === 0) {
                 for (const layerId of initialLayerIds) {
@@ -152,7 +157,6 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
               await editableCanvasLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
               await fitEditableCanvasLayer(editableCanvasLayer, placement.rect);
 
-              await createArtboardBackground(document, artboard);
             } finally {
               await deleteTemporaryFile(temporaryImage);
             }
@@ -164,7 +168,18 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
             await Promise.resolve();
           }
 
-          await initializeGroupArtboardOverlay(document, layout, options.selectedGroups);
+          await initializeArtboardBackgrounds(
+            document,
+            itemArtboardIds,
+            DEFAULT_ARTBOARD_BACKGROUND_COLOR
+          );
+          await initializeGroupArtboardOverlay(
+            document,
+            layout,
+            options.selectedGroups,
+            itemArtboardIds,
+            { color: DEFAULT_ARTBOARD_BACKGROUND_COLOR, visible: true }
+          );
           await initializeGeneratedReferenceView(document);
           await document.saveAs.psd(psdFile as never);
 

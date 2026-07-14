@@ -465,6 +465,59 @@ button:disabled {
   gap: 6px;
 }
 
+.generation-spacing-control {
+  display: flex;
+  min-height: 36px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--uxp-host-border-color, #555);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--uxp-host-text-color-secondary, #d0d0d0);
+  font-size: 12px;
+}
+
+.generation-spacing-label {
+  display: block;
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.generation-spacing-field {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.generation-spacing-input {
+  width: 70px;
+  min-width: 54px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 1px 6px;
+  color: inherit;
+  border: 1px solid var(--uxp-host-border-color, #666);
+  border-radius: 4px;
+  background: var(--uxp-host-widget-background-color, #444);
+  font: inherit;
+  line-height: 20px;
+  text-align: center;
+}
+
+.generation-spacing-unit {
+  flex: 0 0 auto;
+}
+
+.generation-spacing-control + .primary {
+  margin-top: 2px;
+}
+
 .item-list {
   display: flex;
   flex-direction: column;

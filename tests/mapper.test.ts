@@ -120,6 +120,18 @@ describe("asset mapper", () => {
     expect(cleared.issues.map((issue) => issue.code)).toContain("IMAGE_SELECTION_MISSING");
   });
 
+  it("keeps a missing name as a non-blocking warning", () => {
+    const [item] = mapAssets(
+      parsed(
+        [cell("B1", 1, 2, "1001"), cell("B3", 3, 2, "ds_test1")],
+        [image("image1", 4, 2)]
+      )
+    );
+
+    expect(item?.issues.map((issue) => issue.code)).toContain("NAME_MISSING");
+    expect(item?.selected).toBe(true);
+  });
+
   it("defaults multiple images to the lower project row and allows an explicit switch", () => {
     const [item] = mapAssets(
       parsed(
@@ -218,7 +230,8 @@ describe("asset mapper", () => {
     expect(result[0]?.issues.map((issue) => issue.code)).toContain("ASSET_CODE_INVALID");
     expect(result[1]?.issues.map((issue) => issue.code)).toContain("ASSET_CODE_MISSING");
     expect(result[1]?.issues.map((issue) => issue.code)).not.toContain("ASSET_CODE_DUPLICATE");
-    expect(result.every((item) => item.selected === false)).toBe(true);
+    expect(result[0]?.selected).toBe(false);
+    expect(result[1]?.selected).toBe(true);
   });
 
   it("locates invalid and missing codes after an extra localized-name row", () => {

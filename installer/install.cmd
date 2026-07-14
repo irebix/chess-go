@@ -31,7 +31,10 @@ function Find-Git {
     return $command.Source
   }
 
-  $candidates = @((Join-Path $env:ProgramFiles "Git\cmd\git.exe"))
+  $candidates = @(
+    (Join-Path $env:ProgramFiles "Git\cmd\git.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd\git.exe")
+  )
   if (${env:ProgramFiles(x86)}) {
     $candidates += Join-Path ${env:ProgramFiles(x86)} "Git\cmd\git.exe"
   }
@@ -41,6 +44,31 @@ function Find-Git {
     }
   }
   return $null
+}
+
+function Enable-UxpDeveloperMode([string]$settingsPath) {
+  $settings = [pscustomobject]@{}
+  if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+    try {
+      $rawSettings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8
+      if (-not [string]::IsNullOrWhiteSpace($rawSettings)) {
+        $settings = $rawSettings | ConvertFrom-Json
+        if ($settings -isnot [pscustomobject]) {
+          throw "Adobe developer settings must contain a JSON object."
+        }
+      }
+    } catch {
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $backupPath = "$settingsPath.backup-$timestamp"
+      Copy-Item -LiteralPath $settingsPath -Destination $backupPath -Force
+      Write-Host "Invalid Adobe developer settings were backed up to: $backupPath"
+      $settings = [pscustomobject]@{}
+    }
+  }
+
+  $settings | Add-Member -NotePropertyName "developer" -NotePropertyValue $true -Force
+  $json = $settings | ConvertTo-Json -Depth 20 -Compress
+  [IO.File]::WriteAllText($settingsPath, $json, [Text.UTF8Encoding]::new($false))
 }
 
 function Test-ChessGoRelease([string]$folder) {
@@ -188,11 +216,7 @@ try {
   $developerDir = Join-Path $env:CommonProgramFiles "Adobe\UXP\Developer"
   $developerSettings = Join-Path $developerDir "settings.json"
   New-Item -ItemType Directory -Path $developerDir -Force | Out-Null
-  [IO.File]::WriteAllText(
-    $developerSettings,
-    '{"developer": true}',
-    [Text.UTF8Encoding]::new($false)
-  )
+  Enable-UxpDeveloperMode $developerSettings
 
   Write-Host "Linking the plugin into Photoshop..."
   $pluginsDir = Join-Path $photoshopRoot "Plug-ins"

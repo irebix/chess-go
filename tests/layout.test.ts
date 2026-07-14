@@ -45,6 +45,21 @@ describe("layout", () => {
     expect(layoutItems(items, template).placements[14]).toMatchObject({ row: 1, col: 4 });
   });
 
+  it("uses one generation gap for both axes", () => {
+    const template = {
+      ...DEFAULT_TEMPLATE,
+      artboard: { ...DEFAULT_TEMPLATE.artboard, gapX: 24, gapY: 24 }
+    };
+    const result = layoutItems(
+      Array.from({ length: 11 }, (_, index) => item(index, "group-1")),
+      template
+    );
+    expect(result.placements[1]?.rect.left).toBe(172);
+    expect(result.placements[10]?.rect.top).toBe(172);
+    expect(result.width).toBe(1696);
+    expect(result.height).toBe(320);
+  });
+
   it("splits at group boundaries", () => {
     const items = [
       ...Array.from({ length: 80 }, (_, index) => item(index, "group-1")),

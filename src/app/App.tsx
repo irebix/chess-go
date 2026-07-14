@@ -91,6 +91,7 @@ export function App(): React.ReactElement {
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [groupArtboardBusy, setGroupArtboardBusy] = useState(false);
   const [artboardBackgroundBusy, setArtboardBackgroundBusy] = useState<"color" | "visibility" | null>(null);
+  const [generationSpacingInput, setGenerationSpacingInput] = useState("100");
   const [batchImageFeedbackByGroup, setBatchImageFeedbackByGroup] = useState<Record<string, BatchImageFeedback>>({});
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
@@ -101,6 +102,7 @@ export function App(): React.ReactElement {
   const thumbnailCache = useMemo(() => new ThumbnailCache(MAX_LIVE_THUMBNAILS), []);
   const thumbnailRequests = useRef(new Set<string>());
   const thumbnailOrder = useRef<string[]>([]);
+  const visibleThumbnailCounts = useRef(new Map<string, number>());
   const thumbnailSession = useRef(0);
   const thumbnailQueue = useRef<ThumbnailTask[]>([]);
   const thumbnailActiveCount = useRef(0);
@@ -141,27 +143,56 @@ export function App(): React.ReactElement {
     setShowGenerator(false);
   }, [referenceDocument]);
 
+  const pruneInactiveThumbnails = useCallback((
+    current: Record<string, ThumbnailRecord>,
+    protectedEntry?: string
+  ): Record<string, ThumbnailRecord> => {
+    let next = current;
+    while (thumbnailOrder.current.length > MAX_LIVE_THUMBNAILS) {
+      const evictionIndex = thumbnailOrder.current.findIndex((entry) =>
+        entry !== protectedEntry && !visibleThumbnailCounts.current.has(entry)
+      );
+      if (evictionIndex < 0) break;
+      const [oldest] = thumbnailOrder.current.splice(evictionIndex, 1);
+      if (!oldest) break;
+      if (next === current) next = { ...current };
+      delete next[oldest];
+      thumbnailRequests.current.delete(oldest);
+      thumbnailCache.delete(oldest);
+    }
+    return next;
+  }, [thumbnailCache]);
+
   const commitThumbnailRecord = useCallback((entry: string, record: ThumbnailRecord): void => {
     setThumbnails((current) => {
       const next = { ...current, [entry]: record };
       if (record.state === "ready" || record.state === "error") {
         thumbnailOrder.current = thumbnailOrder.current.filter((value) => value !== entry);
         thumbnailOrder.current.push(entry);
-        while (thumbnailOrder.current.length > MAX_LIVE_THUMBNAILS) {
-          const oldest = thumbnailOrder.current.shift();
-          if (!oldest || oldest === entry) continue;
-          delete next[oldest];
-          thumbnailRequests.current.delete(oldest);
-        }
       }
-      return next;
+      return pruneInactiveThumbnails(next, entry);
     });
-  }, []);
+  }, [pruneInactiveThumbnails]);
+
+  const handleThumbnailVisibility = useCallback((entry: string, visible: boolean): void => {
+    const previous = visibleThumbnailCounts.current.get(entry) ?? 0;
+    if (visible) {
+      visibleThumbnailCounts.current.set(entry, previous + 1);
+      return;
+    }
+    if (previous > 1) {
+      visibleThumbnailCounts.current.set(entry, previous - 1);
+      return;
+    }
+    visibleThumbnailCounts.current.delete(entry);
+    setThumbnails((current) => pruneInactiveThumbnails(current));
+  }, [pruneInactiveThumbnails]);
 
   const resetThumbnailPreviews = useCallback((): void => {
     thumbnailSession.current += 1;
     thumbnailRequests.current.clear();
     thumbnailOrder.current = [];
+    visibleThumbnailCounts.current.clear();
     thumbnailQueue.current = [];
     thumbnailActiveCount.current = 0;
     thumbnailCache.clear();
@@ -459,6 +490,13 @@ export function App(): React.ReactElement {
 
   async function handleGenerate(): Promise<void> {
     if (!workbook) return;
+    const spacing = Number(generationSpacingInput);
+    if (!Number.isInteger(spacing) || spacing < 0 || spacing > 1000) {
+      const detail = "画板间距请输入 0–1000 之间的整数。";
+      setMessage(detail);
+      presentError(detail, "generator");
+      return;
+    }
     if (selectedErrorCount > 0) {
       const detail = `已选项目仍有 ${selectedErrorCount} 个阻断错误。`;
       setMessage(detail);
@@ -476,7 +514,14 @@ export function App(): React.ReactElement {
         sheetName,
         selectedGroups: activeGroups,
         items: scopedItems,
-        template: DEFAULT_TEMPLATE,
+        template: {
+          ...DEFAULT_TEMPLATE,
+          artboard: {
+            ...DEFAULT_TEMPLATE.artboard,
+            gapX: spacing,
+            gapY: spacing
+          }
+        },
         suggestedBaseName: defaultBatchBaseName(workbook.sourceName, sheetName),
         onProgress: ({ stage, completed, total }) => {
           setProgress({ completed, total });
@@ -570,12 +615,12 @@ export function App(): React.ReactElement {
     try {
       const next = await toggleActiveArtboardBackgrounds();
       setReferenceDocument(next);
-      const detail = next?.artboardBackgroundsVisible ? "已显示全部底板颜色。" : "已隐藏全部底板颜色。";
+      const detail = next?.artboardBackgroundsVisible ? "已显示全部底板。" : "已隐藏全部底板。";
       setMessage(detail);
       appendLog(makeLog("info", "artboard-background.visibility.toggled", next?.artboardBackgroundsVisible ? "visible" : "hidden"));
     } catch (error) {
       const detail = toErrorMessage(error);
-      const errorMessage = `底板颜色切换失败：${detail}`;
+      const errorMessage = `底板切换失败：${detail}`;
       setMessage(errorMessage);
       presentError(errorMessage, "currentPsd");
       appendLog(makeLog("error", "artboard-background.visibility.failed", detail));
@@ -663,7 +708,7 @@ export function App(): React.ReactElement {
                   >
                     {artboardBackgroundBusy === "visibility"
                       ? "正在切换……"
-                      : referenceDocument.artboardBackgroundsVisible ? "隐藏底板颜色" : "显示底板颜色"}
+                      : referenceDocument.artboardBackgroundsVisible ? "隐藏底板" : "显示底板"}
                   </button>
                 </div>
               ) : null}
@@ -850,6 +895,26 @@ export function App(): React.ReactElement {
       {items.length && activeGroups.length ? (
         <>
           <div className="generation-action">
+            <div className="generation-spacing-control">
+              <label className="generation-spacing-label" htmlFor="generation-spacing">
+                画板间距
+              </label>
+              <div className="generation-spacing-field">
+                <input
+                  id="generation-spacing"
+                  className="generation-spacing-input"
+                  type="number"
+                  min="0"
+                  max="1000"
+                  step="1"
+                  aria-label="生成画板的横向和纵向间距"
+                  value={generationSpacingInput}
+                  disabled={busy}
+                  onChange={(event) => setGenerationSpacingInput(event.currentTarget.value)}
+                />
+                <span className="generation-spacing-unit">px</span>
+              </div>
+            </div>
             <button
               className="primary"
               disabled={busy || selectedCount === 0 || selectedErrorCount > 0}
@@ -914,10 +979,15 @@ export function App(): React.ReactElement {
                 {hasBatchChoice && representativeChoice ? (
                   <div className="batch-image-control">
                     <LazyThumbnail
+                      key={representativeChoice.representative.anchor.archiveEntry}
                       className="batch-thumbnail"
                       record={representativeThumbnail}
                       alt={`第 ${representativeChoice.rowOffset} 排代表图`}
                       onVisible={() => requestThumbnail(representativeChoice.representative.anchor.archiveEntry)}
+                      onVisibilityChange={(visible) => handleThumbnailVisibility(
+                        representativeChoice.representative.anchor.archiveEntry,
+                        visible
+                      )}
                       onError={() => handleThumbnailDecodeError(representativeChoice.representative.anchor.archiveEntry)}
                     />
                     <div className="batch-image-control-copy">
@@ -982,6 +1052,10 @@ export function App(): React.ReactElement {
                                 record={thumbnail}
                                 alt={item.name || item.assetCode || "候选图片"}
                                 onVisible={() => requestThumbnail(candidate.anchor.archiveEntry)}
+                                onVisibilityChange={(visible) => handleThumbnailVisibility(
+                                  candidate.anchor.archiveEntry,
+                                  visible
+                                )}
                                 onError={() => handleThumbnailDecodeError(candidate.anchor.archiveEntry)}
                               />
                               <span className="candidate-copy">
@@ -1063,28 +1137,51 @@ interface LazyThumbnailProps {
   record?: ThumbnailRecord;
   alt: string;
   onVisible: () => void;
+  onVisibilityChange: (visible: boolean) => void;
   onError: () => void;
 }
 
-function LazyThumbnail({ className, record, alt, onVisible, onError }: LazyThumbnailProps): React.ReactElement {
+function LazyThumbnail({
+  className,
+  record,
+  alt,
+  onVisible,
+  onVisibilityChange,
+  onError
+}: LazyThumbnailProps): React.ReactElement {
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const onVisibleRef = useRef(onVisible);
+  const onVisibilityChangeRef = useRef(onVisibilityChange);
+  const recordStateRef = useRef(record?.state);
+  const visibleRef = useRef(false);
   onVisibleRef.current = onVisible;
+  onVisibilityChangeRef.current = onVisibilityChange;
+  recordStateRef.current = record?.state;
 
   useEffect(() => {
-    if (record?.state === "loading" || record?.state === "ready" || record?.state === "error") return;
     const element = rootRef.current;
+    const setVisible = (visible: boolean): void => {
+      if (visibleRef.current === visible) return;
+      visibleRef.current = visible;
+      onVisibilityChangeRef.current(visible);
+      if (visible && !recordStateRef.current) onVisibleRef.current();
+    };
     if (!element || typeof IntersectionObserver === "undefined") {
-      onVisibleRef.current();
-      return;
+      setVisible(true);
+      return () => setVisible(false);
     }
     const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      observer.disconnect();
-      onVisibleRef.current();
+      setVisible(entries.some((entry) => entry.isIntersecting));
     }, { root: null, rootMargin: "180px 0px" });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      setVisible(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!record?.state && visibleRef.current) onVisibleRef.current();
   }, [record?.state]);
 
   return (
