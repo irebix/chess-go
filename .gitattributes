@@ -7,3 +7,5 @@
 *.zip binary
 *.psd binary
 *.psb binary
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
