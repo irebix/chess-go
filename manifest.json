@@ -2,11 +2,11 @@
   "manifestVersion": 5,
   "id": "com.linkdesks.chess-archive-psd-generator",
   "name": "棋子go",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "main": "index.html",
   "host": {
     "app": "PS",
-    "minVersion": "23.3.0",
+    "minVersion": "24.2.0",
     "data": {
       "apiVersion": 2,
       "loadEvent": "use"
