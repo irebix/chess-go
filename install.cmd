@@ -12,6 +12,9 @@ $sourceDir = Split-Path -Parent $installerPath
 $pluginId = "com.linkdesks.chess-archive-psd-generator"
 $pluginFolderName = "ChessGo"
 $requiredFiles = @("manifest.json", "index.html", "main.js", "main.js.LICENSE.txt", "styles.css")
+$repositoryUrl = "https://github.com/irebix/chess-go.git"
+$releaseBranch = "release"
+$managedReleaseDir = Join-Path $env:LOCALAPPDATA "ChessGo\release"
 
 function Show-Message([string]$text, [string]$title, [System.Windows.Forms.MessageBoxIcon]$icon) {
   [System.Windows.Forms.MessageBox]::Show(
@@ -20,6 +23,41 @@ function Show-Message([string]$text, [string]$title, [System.Windows.Forms.Messa
     [System.Windows.Forms.MessageBoxButtons]::OK,
     $icon
   ) | Out-Null
+}
+
+function Find-Git {
+  $command = Get-Command git.exe -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  $candidates = @((Join-Path $env:ProgramFiles "Git\cmd\git.exe"))
+  if (${env:ProgramFiles(x86)}) {
+    $candidates += Join-Path ${env:ProgramFiles(x86)} "Git\cmd\git.exe"
+  }
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+      return $candidate
+    }
+  }
+  return $null
+}
+
+function Test-ChessGoRelease([string]$folder) {
+  if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+    return $false
+  }
+  foreach ($fileName in $requiredFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $folder $fileName) -PathType Leaf)) {
+      return $false
+    }
+  }
+  try {
+    $candidateManifest = Get-Content -LiteralPath (Join-Path $folder "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    return $candidateManifest.id -eq $pluginId
+  } catch {
+    return $false
+  }
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -41,28 +79,63 @@ try {
   Write-Host "================="
   Write-Host ""
 
-  $gitPath = $null
-  $gitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
-  if ($gitCommand) {
-    $gitPath = $gitCommand.Source
-  } elseif (Test-Path -LiteralPath "$env:ProgramFiles\Git\cmd\git.exe") {
-    $gitPath = "$env:ProgramFiles\Git\cmd\git.exe"
+  $gitPath = Find-Git
+  if (-not $gitPath) {
+    Write-Host "Git was not found. Installing Git automatically..."
+    $wingetCommand = Get-Command winget.exe -ErrorAction SilentlyContinue
+    $wingetPath = if ($wingetCommand) { $wingetCommand.Source } else { Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe" }
+    if (-not (Test-Path -LiteralPath $wingetPath -PathType Leaf)) {
+      throw "Git is required, and Windows Package Manager is not available to install it automatically."
+    }
+    & $wingetPath install --id Git.Git -e --source winget --accept-source-agreements --accept-package-agreements --silent
+    if ($LASTEXITCODE -ne 0) {
+      throw "Git installation failed with exit code $LASTEXITCODE."
+    }
+    $gitPath = Find-Git
+    if (-not $gitPath) {
+      throw "Git was installed but git.exe could not be located. Restart Windows and run this installer again."
+    }
+    Write-Host "Git installed successfully."
+    Write-Host ""
   }
 
-  if ($gitPath -and (Test-Path -LiteralPath (Join-Path $sourceDir ".git"))) {
-    Write-Host "Checking the release branch for updates..."
-    & $gitPath -C $sourceDir pull --ff-only
+  $scriptIsInRelease = (Test-Path -LiteralPath (Join-Path $sourceDir ".git")) -and (Test-ChessGoRelease $sourceDir)
+  if ($scriptIsInRelease) {
+    Write-Host "Updating the current ChessGo release folder..."
+    & $gitPath -C $sourceDir pull --ff-only origin $releaseBranch
     if ($LASTEXITCODE -ne 0) {
       Write-Warning "Git update failed. The local plugin files will be installed."
     }
     Write-Host ""
+  } else {
+    $sourceDir = $managedReleaseDir
+    $managedGit = Join-Path $managedReleaseDir ".git"
+    if (Test-Path -LiteralPath $managedGit) {
+      Write-Host "Updating ChessGo in: $managedReleaseDir"
+      & $gitPath -C $managedReleaseDir pull --ff-only origin $releaseBranch
+      if ($LASTEXITCODE -ne 0) {
+        throw "The existing ChessGo release could not be updated."
+      }
+    } else {
+      if (Test-Path -LiteralPath $managedReleaseDir) {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $managedBackup = "$managedReleaseDir.backup-$timestamp"
+        Move-Item -LiteralPath $managedReleaseDir -Destination $managedBackup
+        Write-Host "Existing non-Git folder backed up to: $managedBackup"
+      }
+      $managedParent = Split-Path -Parent $managedReleaseDir
+      New-Item -ItemType Directory -Path $managedParent -Force | Out-Null
+      Write-Host "Cloning the ChessGo release branch..."
+      & $gitPath clone --branch $releaseBranch --single-branch $repositoryUrl $managedReleaseDir
+      if ($LASTEXITCODE -ne 0) {
+        throw "Git clone failed with exit code $LASTEXITCODE."
+      }
+    }
+    Write-Host ""
   }
 
-  foreach ($fileName in $requiredFiles) {
-    $filePath = Join-Path $sourceDir $fileName
-    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
-      throw "Missing plugin file: $fileName. Run this installer from the ChessGo release folder."
-    }
+  if (-not (Test-ChessGoRelease $sourceDir)) {
+    throw "The ChessGo release folder is incomplete or invalid: $sourceDir"
   }
 
   $manifestPath = Join-Path $sourceDir "manifest.json"
@@ -156,7 +229,7 @@ try {
   }
 
   $photoshopIsRunning = @(Get-Process -Name Photoshop -ErrorAction SilentlyContinue).Count -gt 0
-  $result = "ChessGo $($installed.version) was installed successfully.`r`n`r`n"
+  $result = "ChessGo $($installed.version) was installed successfully.`r`n`r`nRelease folder: $sourceDir`r`n`r`n"
   if ($photoshopIsRunning) {
     $result += "Restart Photoshop once to load the plugin. No other setup is required."
   } else {
