@@ -136,7 +136,9 @@ try {
         [IO.Directory]::Delete($destination)
       } else {
         $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $backup = "$destination.backup-$timestamp"
+        $backupRoot = Join-Path $env:ProgramData "ChessGo\Backups"
+        New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+        $backup = Join-Path $backupRoot "$pluginFolderName-$timestamp"
         Move-Item -LiteralPath $destination -Destination $backup
         Write-Host "Previous plugin folder backed up to: $backup"
       }
