@@ -4,6 +4,13 @@ import {
   inspectGroupArtboardOverlay,
   showGroupArtboards
 } from "./groupArtboardOverlay";
+import {
+  ARTBOARD_BACKGROUND_LAYER_NAME,
+  choosePhotoshopForegroundColor,
+  inspectArtboardBackgrounds,
+  setArtboardBackgroundColor,
+  setArtboardBackgroundVisibility
+} from "./artboardBackgroundController";
 
 export const REFERENCE_LAYER_NAME = "参考图";
 export const EDITABLE_CANVAS_LAYER_NAME = "2048x2048_空白智能对象";
@@ -88,6 +95,14 @@ export interface ReferenceDocumentState {
   supported: boolean;
   groupArtboardsAvailable: boolean;
   groupArtboardsVisible: boolean;
+  artboardBackgroundsAvailable: boolean;
+  artboardBackgroundsVisible: boolean;
+  artboardBackgroundCount: number;
+}
+
+export interface ArtboardBackgroundColorChangeResult {
+  state: ReferenceDocumentState;
+  changed: boolean;
 }
 
 export async function inspectActiveReferenceDocument(): Promise<ReferenceDocumentState | null> {
@@ -135,6 +150,42 @@ export async function toggleActiveGroupArtboards(): Promise<ReferenceDocumentSta
     { commandName: shouldShow ? "显示分组框" : "隐藏分组框" }
   );
   return inspectDocument(document);
+}
+
+export async function toggleActiveArtboardBackgrounds(): Promise<ReferenceDocumentState | null> {
+  const document = activeDocument();
+  if (!document) throw new Error("当前没有打开的 PSD 文档。");
+  const before = inspectDocument(document);
+  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板颜色图层。");
+  const shouldShow = !before.artboardBackgroundsVisible;
+
+  await core.executeAsModal(
+    async () => {
+      setArtboardBackgroundVisibility(document, shouldShow);
+      await recaptureReferenceMode(document, before.mode);
+    },
+    { commandName: shouldShow ? "显示底板颜色" : "隐藏底板颜色" }
+  );
+  return inspectDocument(document);
+}
+
+export async function changeActiveArtboardBackgroundColor(): Promise<ArtboardBackgroundColorChangeResult> {
+  const document = activeDocument();
+  if (!document) throw new Error("当前没有打开的 PSD 文档。");
+  const before = inspectDocument(document);
+  if (!before?.artboardBackgroundsAvailable) throw new Error("当前 PSD 中没有识别到底板颜色图层。");
+
+  const color = await choosePhotoshopForegroundColor();
+  if (!color) return { state: before, changed: false };
+  await core.executeAsModal(
+    async () => {
+      await setArtboardBackgroundColor(document, color);
+    },
+    { commandName: "修改底板颜色" }
+  );
+  const state = inspectDocument(document);
+  if (!state) throw new Error("更新颜色后无法重新识别当前 PSD。");
+  return { state, changed: true };
 }
 
 export async function initializeGeneratedReferenceView(documentValue: unknown): Promise<void> {
@@ -219,6 +270,7 @@ function inspectDocument(document: DocumentLike): ReferenceDocumentState | null 
   const comment = parseReferenceComment(referenceComp?.comment);
   const mode = comment?.mode === "reference" && restoreComp ? "reference" : "normal";
   const groupArtboards = inspectGroupArtboardOverlay(document);
+  const artboardBackgrounds = inspectArtboardBackgrounds(document);
 
   return {
     documentId: document.id,
@@ -229,7 +281,10 @@ function inspectDocument(document: DocumentLike): ReferenceDocumentState | null 
     mode,
     supported: Boolean(collection),
     groupArtboardsAvailable: groupArtboards.available,
-    groupArtboardsVisible: groupArtboards.visible
+    groupArtboardsVisible: groupArtboards.visible,
+    artboardBackgroundsAvailable: artboardBackgrounds.available,
+    artboardBackgroundsVisible: artboardBackgrounds.visible,
+    artboardBackgroundCount: artboardBackgrounds.count
   };
 }
 
@@ -333,7 +388,9 @@ function scanReferences(document: DocumentLike, includeLegacy: boolean): Referen
     if (!includeLegacy) continue;
 
     const editableLayers = children.filter((layer) => layer.name === EDITABLE_CANVAS_LAYER_NAME);
-    const legacyCandidates = children.filter((layer) => layer.name !== EDITABLE_CANVAS_LAYER_NAME);
+    const legacyCandidates = children.filter((layer) =>
+      layer.name !== EDITABLE_CANVAS_LAYER_NAME && layer.name !== ARTBOARD_BACKGROUND_LAYER_NAME
+    );
     if (editableLayers.length === 1 && legacyCandidates.length === 1) {
       artboards.push(artboard);
       referenceLayers.push(legacyCandidates[0]!);

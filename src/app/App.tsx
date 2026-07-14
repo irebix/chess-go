@@ -24,7 +24,9 @@ import {
 } from "../services/RecentWorkbookService";
 import type { RecentWorkbookRecord } from "../domain/recentWorkbook";
 import {
+  changeActiveArtboardBackgroundColor,
   inspectActiveReferenceDocument,
+  toggleActiveArtboardBackgrounds,
   toggleActiveGroupArtboards,
   toggleActiveReferenceView,
   watchActiveReferenceDocument,
@@ -88,6 +90,7 @@ export function App(): React.ReactElement {
   const [referenceDocument, setReferenceDocument] = useState<ReferenceDocumentState | null>(null);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [groupArtboardBusy, setGroupArtboardBusy] = useState(false);
+  const [artboardBackgroundBusy, setArtboardBackgroundBusy] = useState<"color" | "visibility" | null>(null);
   const [batchImageFeedbackByGroup, setBatchImageFeedbackByGroup] = useState<Record<string, BatchImageFeedback>>({});
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
@@ -484,7 +487,7 @@ export function App(): React.ReactElement {
       setPhase("done");
       setShowCurrentPsd(true);
       setShowGenerator(false);
-      setMessage(`生成完成：${results.length} 个 PSD，并输出对应 Manifest 与 CSV。`);
+      setMessage(`生成完成：${results.length} 个 PSD。`);
       appendLog(makeLog("info", "batch.generation.completed", `${results.length} volumes`));
     } catch (error) {
       handleError(error, "批量生成失败");
@@ -492,7 +495,7 @@ export function App(): React.ReactElement {
   }
 
   async function handleReferenceViewToggle(): Promise<void> {
-    if (!referenceDocument || referenceBusy || groupArtboardBusy) return;
+    if (!referenceDocument || referenceBusy || groupArtboardBusy || artboardBackgroundBusy) return;
     setUiError((current) => current?.area === "currentPsd" ? null : current);
     setReferenceBusy(true);
     try {
@@ -515,7 +518,7 @@ export function App(): React.ReactElement {
   }
 
   async function handleGroupArtboardToggle(): Promise<void> {
-    if (!referenceDocument?.groupArtboardsAvailable || referenceBusy || groupArtboardBusy) return;
+    if (!referenceDocument?.groupArtboardsAvailable || referenceBusy || groupArtboardBusy || artboardBackgroundBusy) return;
     setUiError((current) => current?.area === "currentPsd" ? null : current);
     setGroupArtboardBusy(true);
     try {
@@ -532,6 +535,52 @@ export function App(): React.ReactElement {
       appendLog(makeLog("error", "group-artboards.failed", detail));
     } finally {
       setGroupArtboardBusy(false);
+    }
+  }
+
+  async function handleArtboardBackgroundColorChange(): Promise<void> {
+    if (!referenceDocument?.artboardBackgroundsAvailable || referenceBusy || groupArtboardBusy || artboardBackgroundBusy) return;
+    setUiError((current) => current?.area === "currentPsd" ? null : current);
+    setArtboardBackgroundBusy("color");
+    try {
+      const result = await changeActiveArtboardBackgroundColor();
+      setReferenceDocument(result.state);
+      if (result.changed) {
+        setMessage("已使用 Photoshop 拾色器中的颜色更新全部底板。");
+        appendLog(makeLog("info", "artboard-background.color.changed", `${result.state.artboardBackgroundCount} layers`));
+      } else {
+        setMessage("已取消修改底板颜色。");
+        appendLog(makeLog("info", "artboard-background.color.cancelled"));
+      }
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      const errorMessage = `底板颜色修改失败：${detail}`;
+      setMessage(errorMessage);
+      presentError(errorMessage, "currentPsd");
+      appendLog(makeLog("error", "artboard-background.color.failed", detail));
+    } finally {
+      setArtboardBackgroundBusy(null);
+    }
+  }
+
+  async function handleArtboardBackgroundToggle(): Promise<void> {
+    if (!referenceDocument?.artboardBackgroundsAvailable || referenceBusy || groupArtboardBusy || artboardBackgroundBusy) return;
+    setUiError((current) => current?.area === "currentPsd" ? null : current);
+    setArtboardBackgroundBusy("visibility");
+    try {
+      const next = await toggleActiveArtboardBackgrounds();
+      setReferenceDocument(next);
+      const detail = next?.artboardBackgroundsVisible ? "已显示全部底板颜色。" : "已隐藏全部底板颜色。";
+      setMessage(detail);
+      appendLog(makeLog("info", "artboard-background.visibility.toggled", next?.artboardBackgroundsVisible ? "visible" : "hidden"));
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      const errorMessage = `底板颜色切换失败：${detail}`;
+      setMessage(errorMessage);
+      presentError(errorMessage, "currentPsd");
+      appendLog(makeLog("error", "artboard-background.visibility.failed", detail));
+    } finally {
+      setArtboardBackgroundBusy(null);
     }
   }
 
@@ -579,7 +628,7 @@ export function App(): React.ReactElement {
               <div className="reference-control-actions">
                 <button
                   className="compact"
-                  disabled={busy || referenceBusy || groupArtboardBusy || !referenceDocument.supported}
+                  disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy) || !referenceDocument.supported}
                   onClick={() => void handleReferenceViewToggle()}
                 >
                   {referenceBusy
@@ -589,7 +638,7 @@ export function App(): React.ReactElement {
                 {referenceDocument.groupArtboardsAvailable ? (
                   <button
                     className="compact"
-                    disabled={busy || referenceBusy || groupArtboardBusy}
+                    disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
                     onClick={() => void handleGroupArtboardToggle()}
                   >
                     {groupArtboardBusy
@@ -598,6 +647,26 @@ export function App(): React.ReactElement {
                   </button>
                 ) : null}
               </div>
+              {referenceDocument.artboardBackgroundsAvailable ? (
+                <div className="reference-control-actions">
+                  <button
+                    className="compact"
+                    disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
+                    onClick={() => void handleArtboardBackgroundColorChange()}
+                  >
+                    {artboardBackgroundBusy === "color" ? "正在选择……" : "修改底板颜色"}
+                  </button>
+                  <button
+                    className="compact"
+                    disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
+                    onClick={() => void handleArtboardBackgroundToggle()}
+                  >
+                    {artboardBackgroundBusy === "visibility"
+                      ? "正在切换……"
+                      : referenceDocument.artboardBackgroundsVisible ? "隐藏底板颜色" : "显示底板颜色"}
+                  </button>
+                </div>
+              ) : null}
               {uiError?.area === "currentPsd" ? (
                 <div className="inline-error" role="alert">{uiError.message}</div>
               ) : null}

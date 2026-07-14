@@ -26,6 +26,7 @@ import {
   initializeGeneratedReferenceView
 } from "./referenceViewController";
 import { addGroupArtboardCanvasMargin, initializeGroupArtboardOverlay } from "./groupArtboardOverlay";
+import { createArtboardBackground } from "./artboardBackgroundController";
 
 const EDITABLE_CANVAS_SOURCE_SIZE = 2048;
 const EDITABLE_CANVAS_PLACED_SIZE = 148;
@@ -150,6 +151,8 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
               editableCanvasLayer.name = EDITABLE_CANVAS_LAYER_NAME;
               await editableCanvasLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
               await fitEditableCanvasLayer(editableCanvasLayer, placement.rect);
+
+              await createArtboardBackground(document, artboard);
             } finally {
               await deleteTemporaryFile(temporaryImage);
             }
