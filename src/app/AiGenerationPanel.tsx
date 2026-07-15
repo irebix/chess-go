@@ -9,7 +9,12 @@ import {
 } from "../domain/aiCandidates";
 import { filterItemsByGroups } from "../domain/sheetGroups";
 import type { ImportedWorkbook } from "../services/WorkbookService";
-import { generateHolopixImages, loadHolopixPromptSource } from "../ai/holopixClient";
+import {
+  generateHolopixImages,
+  loadHolopixPromptSource,
+  recoverRecentHolopixImages
+} from "../ai/holopixClient";
+import { openHolopixCandidateExternally } from "../ai/holopixExternalPreview";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
 import { toErrorMessage } from "../utils/errors";
@@ -52,7 +57,9 @@ export function AiGenerationPanel({
   const [selectedItemKey, setSelectedItemKey] = useState("");
   const [tab, setTab] = useState<MatrixTab>("matrix");
   const [running, setRunning] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [syncingCandidateId, setSyncingCandidateId] = useState<string | null>(null);
+  const [openingCandidateId, setOpeningCandidateId] = useState<string | null>(null);
   const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
   const [panelMessage, setPanelMessage] = useState("导入 Excel 并选择棋子链后，可使用内嵌图片生成候选。");
   const abortRef = useRef<AbortController | null>(null);
@@ -70,7 +77,7 @@ export function AiGenerationPanel({
   const stats = summarizeAiCandidates(itemStates);
   const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
   const selectedState = selectedItem ? states[selectedItem.key] : undefined;
-  const disabled = externalBusy || running || Boolean(syncingCandidateId);
+  const disabled = externalBusy || running || recovering || Boolean(syncingCandidateId) || Boolean(openingCandidateId);
   const referenceItemKeys = useMemo(() => new Set(referenceItems.map((item) => item.key)), [referenceItems]);
   const remainingCount = itemStates.reduce(
     (count, state) => count + (referenceItemKeys.has(state.itemKey)
@@ -127,9 +134,54 @@ export function AiGenerationPanel({
   }, []);
 
   useEffect(() => {
-    onBusyChange(running || Boolean(syncingCandidateId));
+    onBusyChange(running || recovering || Boolean(syncingCandidateId) || Boolean(openingCandidateId));
     return () => onBusyChange(false);
-  }, [onBusyChange, running, syncingCandidateId]);
+  }, [onBusyChange, openingCandidateId, recovering, running, syncingCandidateId]);
+
+  async function handleRecoverExisting(): Promise<void> {
+    if (!selectedGroup || disabled || !referenceItems.length) return;
+    setRecovering(true);
+    try {
+      const recovered = await recoverRecentHolopixImages(referenceItems.map((item) => item.assetCode));
+      const recoveredCount = referenceItems.reduce(
+        (count, item) => count + Math.min(candidateCount, recovered[item.assetCode]?.length ?? 0),
+        0
+      );
+      setStates((current) => {
+        const next = reconcileAiItemStates(current, groupItems, candidateCount);
+        for (const item of referenceItems) {
+          const images = recovered[item.assetCode] ?? [];
+          const state = next[item.key];
+          if (!state || !images.length) continue;
+          next[item.key] = {
+            ...state,
+            candidates: state.candidates.map((candidate, index) => {
+              const image = images[index];
+              if (!image) return candidate;
+              return {
+                ...candidate,
+                status: candidate.status === "accepted" ? "accepted" : "ready",
+                image,
+                error: undefined
+              };
+            })
+          };
+        }
+        return { ...next };
+      });
+      const detail = recoveredCount
+        ? `已从 ComfyUI 历史恢复 ${recoveredCount} 张候选；未提交新生成任务。`
+        : "ComfyUI 历史中没有找到当前棋子链的已有候选。";
+      setPanelMessage(detail);
+      onStatus(detail, recoveredCount ? "info" : "warn");
+    } catch (error) {
+      const detail = `恢复已有候选失败：${toErrorMessage(error)}`;
+      setPanelMessage(detail);
+      onStatus(detail, "error");
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   async function handleBulkGenerate(): Promise<void> {
     if (!workbook || !selectedGroup || running) return;
@@ -180,7 +232,6 @@ export function AiGenerationPanel({
             image: images[offset]!,
             error: undefined
           })));
-          await pauseForPreviewDecode(controller.signal);
         } catch (error) {
           failedJobs += 1;
           const detail = toErrorMessage(error);
@@ -275,6 +326,24 @@ export function AiGenerationPanel({
     }
   }
 
+  async function handleView(item: AssetCandidate, candidate: AiCandidateSlot): Promise<void> {
+    if (!candidate.image || disabled) return;
+    setSelectedItemKey(item.key);
+    setOpeningCandidateId(candidate.id);
+    try {
+      await openHolopixCandidateExternally(candidate.image.url);
+      const detail = `已在系统浏览器中打开 ${item.assetCode} 的候选 ${candidate.label}。`;
+      setPanelMessage(detail);
+      onStatus(detail);
+    } catch (error) {
+      const detail = `无法在系统浏览器中查看候选：${toErrorMessage(error)}`;
+      setPanelMessage(detail);
+      onStatus(detail, "error");
+    } finally {
+      setOpeningCandidateId(null);
+    }
+  }
+
   return (
     <section className={`panel-section ai-panel ${open ? "is-open" : ""}`}>
       <div
@@ -336,6 +405,11 @@ export function AiGenerationPanel({
                   ? `继续生成未完成的 ${remainingCount} 张`
                   : `生成 ${referenceItems.length * candidateCount} 张候选`}
             </button>
+            <button
+              className="ai-recover-existing"
+              disabled={disabled || !referenceItems.length}
+              onClick={() => void handleRecoverExisting()}
+            >{recovering ? "正在恢复……" : "恢复已有候选（不生成）"}</button>
           </div>
 
           <div className="ai-progress-card">
@@ -400,7 +474,9 @@ export function AiGenerationPanel({
                             key={candidate.id}
                             candidate={candidate}
                             syncing={syncingCandidateId === candidate.id}
+                            opening={openingCandidateId === candidate.id}
                             disabled={disabled}
+                            onPreview={() => void handleView(item, candidate)}
                             onAccept={() => void handleAccept(item, candidate)}
                             onRegenerate={() => void handleRegenerate(item, slotIndex)}
                           />
@@ -418,16 +494,13 @@ export function AiGenerationPanel({
                 const accepted = states[item.key]?.candidates.find((candidate) => candidate.status === "accepted");
                 return (
                   <div className="ai-accepted-item" key={item.key}>
-                    {accepted?.image?.previewDataUrl
-                      ? <img
-                          src={accepted.image.previewDataUrl}
-                          alt={item.name || item.assetCode}
-                          width={68}
-                          height={68}
-                          decoding="async"
-                          draggable={false}
-                        />
-                      : <span>{accepted?.image ? "预览不可用" : "未选择"}</span>}
+                    {accepted?.image
+                      ? <button
+                          className="ai-accepted-view"
+                          disabled={disabled}
+                          onClick={() => void handleView(item, accepted)}
+                        >{openingCandidateId === accepted.id ? "打开中" : "系统查看"}</button>
+                      : <span>未选择</span>}
                     <small>{item.name || item.assetCode}</small>
                   </div>
                 );
@@ -482,41 +555,57 @@ function ReferencePreview({
 function CandidateCell({
   candidate,
   syncing,
+  opening,
   disabled,
+  onPreview,
   onAccept,
   onRegenerate
 }: {
   candidate: AiCandidateSlot;
   syncing: boolean;
+  opening: boolean;
   disabled: boolean;
+  onPreview: () => void;
   onAccept: () => void;
   onRegenerate: () => void;
 }): React.ReactElement {
   const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
   return (
-    <button
+    <div
       className={`ai-candidate-cell is-${candidate.status}`}
-      disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
-      title={candidate.error || candidate.image?.previewError || (interactive ? "点击选中并回填 PSD" : "点击生成或重试")}
-      onClick={(event) => {
-        event.stopPropagation();
-        if (interactive) onAccept();
-        else onRegenerate();
-      }}
+      title={candidate.error || (interactive ? "先在系统浏览器查看，再选用并回填 PSD" : "点击生成或重试")}
     >
-      {candidate.image?.previewDataUrl
-        ? <img
-            src={candidate.image.previewDataUrl}
-            alt={`候选 ${candidate.label}`}
-            width={64}
-            height={64}
-            decoding="async"
-            draggable={false}
-          />
-        : null}
       <span className="ai-candidate-badge">{candidate.label}</span>
-      <small>{syncing ? "回填中" : candidateStatusLabel(candidate)}</small>
-    </button>
+      {interactive ? (
+        <>
+          <button
+            className="ai-candidate-view"
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onPreview();
+            }}
+          >{opening ? "打开中" : "查看"}</button>
+          <button
+            className="ai-candidate-accept"
+            disabled={disabled || candidate.status === "accepted"}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAccept();
+            }}
+          >{syncing ? "回填中" : candidate.status === "accepted" ? "已选" : "选用"}</button>
+        </>
+      ) : (
+        <button
+          className="ai-candidate-generate"
+          disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRegenerate();
+          }}
+        >{candidateStatusLabel(candidate)}</button>
+      )}
+    </div>
   );
 }
 
@@ -589,8 +678,8 @@ function candidateStatusLabel(candidate: AiCandidateSlot): string {
   if (candidate.status === "idle") return "待生成";
   if (candidate.status === "queued") return "排队中";
   if (candidate.status === "generating") return "生成中";
-  if (candidate.status === "ready") return candidate.image?.previewDataUrl ? "可选择" : "已完成";
-  if (candidate.status === "accepted") return candidate.image?.previewDataUrl ? "已选" : "已选 · 无预览";
+  if (candidate.status === "ready") return "可选择";
+  if (candidate.status === "accepted") return "已选";
   return "失败 · 重试";
 }
 
@@ -605,28 +694,4 @@ function firstRegenerationSlot(state: AiItemState): number {
 
 function safeFilePart(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
-}
-
-function pauseForPreviewDecode(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(previewPauseAbortError());
-      return;
-    }
-    const onAbort = (): void => {
-      window.clearTimeout(timer);
-      reject(previewPauseAbortError());
-    };
-    const timer = window.setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, 750);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function previewPauseAbortError(): Error {
-  const error = new Error("已停止等待候选缩略图解码。");
-  error.name = "AbortError";
-  return error;
 }

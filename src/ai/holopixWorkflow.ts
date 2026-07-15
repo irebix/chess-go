@@ -1,5 +1,3 @@
-import { HOLOPIX_PREVIEW_SIZE } from "./holopixPreview";
-
 export interface ComfyWorkflowNode {
   inputs: Record<string, unknown>;
   class_type: string;
@@ -12,7 +10,6 @@ export interface PreparedHolopixWorkflow {
   workflow: ComfyWorkflow;
   generateNodeId: string;
   saveNodeId: string;
-  previewNodeId: string;
   timeoutSeconds: number;
 }
 
@@ -51,25 +48,6 @@ export function prepareHolopixWorkflow(
   save.node.inputs.filename_prefix = options.filenamePrefix;
   save.node.inputs.images = [generate.id, 0];
 
-  const previewScaleNodeId = nextRuntimeNodeId(workflow);
-  const previewNodeId = nextRuntimeNodeId(workflow, [previewScaleNodeId]);
-  workflow[previewScaleNodeId] = {
-    class_type: "ImageScale",
-    inputs: {
-      image: [generate.id, 0],
-      upscale_method: "lanczos",
-      width: HOLOPIX_PREVIEW_SIZE,
-      height: HOLOPIX_PREVIEW_SIZE,
-      crop: "center"
-    },
-    _meta: { title: "ChessGo safe thumbnail" }
-  };
-  workflow[previewNodeId] = {
-    class_type: "PreviewImage",
-    inputs: { images: [previewScaleNodeId, 0] },
-    _meta: { title: "ChessGo safe preview output" }
-  };
-
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)
     ? Math.min(240, Math.max(30, timeoutInput))
@@ -79,7 +57,6 @@ export function prepareHolopixWorkflow(
     workflow,
     generateNodeId: generate.id,
     saveNodeId: save.id,
-    previewNodeId,
     timeoutSeconds
   };
 }
@@ -140,16 +117,6 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
 
 function cloneWorkflow(workflow: ComfyWorkflow): ComfyWorkflow {
   return JSON.parse(JSON.stringify(workflow)) as ComfyWorkflow;
-}
-
-function nextRuntimeNodeId(workflow: ComfyWorkflow, reserved: string[] = []): string {
-  const occupied = new Set([...Object.keys(workflow), ...reserved]);
-  const numericIds = [...occupied]
-    .map((id) => Number(id))
-    .filter((id) => Number.isSafeInteger(id) && id >= 0);
-  let next = numericIds.length ? Math.max(...numericIds) + 1 : 1;
-  while (occupied.has(String(next))) next += 1;
-  return String(next);
 }
 
 function findOnlyNode(workflow: ComfyWorkflow, classType: string): { id: string; node: ComfyWorkflowNode } {

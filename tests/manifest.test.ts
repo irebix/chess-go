@@ -5,4 +5,11 @@ describe("UXP manifest", () => {
   it("allows the local ComfyUI HTTP endpoint using the UXP-supported network form", () => {
     expect(manifest.requiredPermissions.network.domains).toBe("all");
   });
+
+  it("allows explicit browser viewing of local HTTP candidates", () => {
+    expect(manifest.requiredPermissions.launchProcess).toEqual({
+      schemes: ["http"],
+      extensions: []
+    });
+  });
 });

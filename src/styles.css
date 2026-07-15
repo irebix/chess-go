@@ -896,6 +896,15 @@ button:disabled {
   width: 100%;
 }
 
+.ai-recover-existing {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid var(--uxp-host-border-color, #666);
+  color: inherit;
+  background: rgba(0, 0, 0, 0.16);
+  font-size: 10px;
+}
+
 .ai-progress-card progress {
   display: block;
   width: 100%;
@@ -1050,9 +1059,7 @@ button:disabled {
   background: rgba(0, 0, 0, 0.2);
 }
 
-.ai-reference-preview img,
-.ai-candidate-cell img,
-.ai-accepted-item img {
+.ai-reference-preview img {
   display: block;
   width: 100%;
   height: 100%;
@@ -1092,7 +1099,7 @@ button:disabled {
   border-color: #db6767;
 }
 
-.ai-candidate-cell:disabled {
+.ai-candidate-cell button:disabled {
   opacity: 1;
 }
 
@@ -1109,20 +1116,57 @@ button:disabled {
   color: #fff;
   background: rgba(0, 0, 0, 0.62);
   font-size: 9px;
+  pointer-events: none;
+  z-index: 2;
 }
 
-.ai-candidate-cell small {
+.ai-candidate-view,
+.ai-candidate-accept,
+.ai-candidate-generate {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  left: 2px;
-  padding: 2px 1px;
-  border-radius: 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.68);
-  font-size: 9px;
   font-weight: 400;
   text-align: center;
+}
+
+.ai-candidate-view {
+  top: 3px;
+  right: 3px;
+  bottom: 24px;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(42, 42, 42, 0.86);
+  font-size: 11px;
+}
+
+.ai-candidate-accept {
+  right: 3px;
+  bottom: 3px;
+  left: 3px;
+  height: 18px;
+  padding: 0;
+  background: #1f80dc;
+  font-size: 9px;
+}
+
+.ai-candidate-cell.is-accepted .ai-candidate-accept {
+  background: #277a59;
+}
+
+.ai-candidate-generate {
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  left: 3px;
+  padding: 19px 3px 3px;
+  background: rgba(0, 0, 0, 0.4);
+  font-size: 9px;
 }
 
 .ai-empty {
@@ -1149,7 +1193,7 @@ button:disabled {
   overflow: hidden;
 }
 
-.ai-accepted-item > img,
+.ai-accepted-item > .ai-accepted-view,
 .ai-accepted-item > span {
   display: flex;
   width: 68px;
@@ -1160,6 +1204,12 @@ button:disabled {
   border-radius: 5px;
   color: var(--uxp-host-text-color-secondary, #999);
   background: rgba(0, 0, 0, 0.18);
+}
+
+.ai-accepted-view {
+  margin: 0;
+  padding: 0;
+  font-size: 10px;
 }
 
 .ai-accepted-item small {

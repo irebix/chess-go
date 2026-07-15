@@ -47,24 +47,7 @@ describe("Holopix workflow adapter", () => {
     });
     expect(prepared.workflow["1"]!.inputs.image).toBe("uploaded.png");
     expect(prepared.workflow["9"]!.inputs.filename_prefix).toBe("Holopix/ChessGo/103001");
-    const preview = prepared.workflow[prepared.previewNodeId]!;
-    const scaleNodeId = (preview.inputs.images as [string, number])[0];
-    expect(preview).toMatchObject({
-      class_type: "PreviewImage",
-      inputs: { images: [scaleNodeId, 0] }
-    });
-    expect(prepared.workflow[scaleNodeId]).toMatchObject({
-      class_type: "ImageScale",
-      inputs: {
-        image: ["7", 0],
-        upscale_method: "lanczos",
-        width: 96,
-        height: 96,
-        crop: "center"
-      }
-    });
     expect(workflow["7"]!.inputs.confirm_cost).toBe(false);
-    expect(Object.keys(workflow)).toHaveLength(6);
   });
 
   it("reports the workflow node that supplies the prompt", () => {
