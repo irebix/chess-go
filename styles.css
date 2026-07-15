@@ -1039,9 +1039,9 @@ button:disabled {
 .ai-candidate-cell {
   position: relative;
   display: flex;
-  width: 56px;
-  height: 72px;
-  flex: 0 0 56px;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -1056,7 +1056,7 @@ button:disabled {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .ai-reference-preview small {
@@ -1181,6 +1181,12 @@ button:disabled {
   background: rgba(0, 0, 0, 0.2);
   font: inherit;
   line-height: 1.5;
+}
+
+.ai-prompt-source-detail {
+  color: var(--uxp-host-text-color-secondary, #aaa);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .ai-prompt-actions {
