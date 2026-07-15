@@ -1,4 +1,25 @@
 {
+  "1": {
+    "inputs": {
+      "image": "holopix-workflow-reference.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载 Excel 参考图"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "HolopixUploadReference",
+    "_meta": {
+      "title": "Holopix 上传参考图（仅供图生文）"
+    }
+  },
   "3": {
     "inputs": {
       "model_id": 6768,
@@ -37,6 +58,22 @@
       "title": "模型 3：日韩风格等距道具模型 | HOLO-V1"
     }
   },
+  "6": {
+    "inputs": {
+      "reference": [
+        "2",
+        0
+      ],
+      "models": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "HolopixImageToPrompt",
+    "_meta": {
+      "title": "Holopix 图片转提示词"
+    }
+  },
   "7": {
     "inputs": {
       "aspect_ratio": "1:1",
@@ -44,7 +81,10 @@
       "request_nonce": 0,
       "confirm_cost": true,
       "timeout_seconds": 150,
-      "prompt": "{{name}}，单个游戏道具图标，主体完整居中，精致的三维卡通渲染，干净背景，1:1 方形构图，无文字，无水印",
+      "prompt": [
+        "6",
+        0
+      ],
       "models": [
         "5",
         0
@@ -52,7 +92,7 @@
     },
     "class_type": "HolopixGenerate",
     "_meta": {
-      "title": "三模型生成（仅提示词）"
+      "title": "三模型文生图（不接参考图）"
     }
   },
   "8": {
@@ -82,6 +122,18 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "保存图像"
+    }
+  },
+  "10": {
+    "inputs": {
+      "anything": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "记录 Holopix 实际提示词"
     }
   }
 }

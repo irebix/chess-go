@@ -1082,10 +1082,17 @@ button:disabled {
 }
 
 .ai-candidate-cell {
-  margin: 0;
   padding: 0;
   color: inherit;
+  cursor: default;
+}
+
+.ai-candidate-cell.is-actionable {
   cursor: pointer;
+}
+
+.ai-candidate-cell.is-actionable:focus {
+  border-color: #76b7ff;
 }
 
 .ai-candidate-cell.is-accepted {
@@ -1098,10 +1105,6 @@ button:disabled {
   border-color: #db6767;
 }
 
-.ai-candidate-cell button:disabled {
-  opacity: 1;
-}
-
 .ai-candidate-preview-canvas {
   position: absolute;
   top: 0;
@@ -1112,6 +1115,14 @@ button:disabled {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.ai-no-reference {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  color: var(--uxp-host-text-color-secondary, #999);
+  font-size: 10px;
 }
 
 .ai-candidate-preview-fallback {
