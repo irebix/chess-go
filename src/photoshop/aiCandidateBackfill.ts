@@ -1,11 +1,22 @@
-import { action, app, core } from "photoshop";
+import { action, app, constants, core } from "photoshop";
 import { storage } from "uxp";
+import {
+  artboardBoundsFromDescriptor,
+  calculateAiCandidatePlacement
+} from "../domain/aiCandidatePlacement";
 import { deleteTemporaryFile } from "../infrastructure/filesystem/uxpFiles";
-import { replacePlacedLayerContentsDescriptor, selectLayerDescriptor } from "./actionDescriptors";
+import {
+  getArtboardDescriptor,
+  replacePlacedLayerContentsDescriptor,
+  selectLayerDescriptor
+} from "./actionDescriptors";
 import {
   findEditableCanvasLayer,
+  findEditableCanvasTarget,
+  type CandidateTargetLayer,
   type CandidateTargetDocument
 } from "./aiCandidateTarget";
+import { smartObjectBoundsFromDescriptor, type SmartObjectTransformBounds } from "./smartObjectBounds";
 
 export interface CandidateBackfillResult {
   applied: boolean;
@@ -44,12 +55,14 @@ export async function backfillAiCandidate(
       async () => {
         const currentDocument = activeDocument();
         if (!currentDocument) throw new Error("回填过程中当前 PSD 已关闭。");
-        const currentTarget = findEditableCanvasLayer(currentDocument, assetCode);
+        const currentTarget = findEditableCanvasTarget(currentDocument, assetCode);
         if (!currentTarget) throw new Error(`回填过程中未找到画板 ${assetCode} 的空白智能对象。`);
+        const targetBounds = await readArtboardBounds(currentTarget.artboard.id);
         await action.batchPlay([
-          selectLayerDescriptor(currentTarget.id),
+          selectLayerDescriptor(currentTarget.layer.id),
           replacePlacedLayerContentsDescriptor(token)
         ], {});
+        await fitReplacementInsideTarget(currentTarget.layer, targetBounds);
       },
       { commandName: `回填 Holopix 候选：${assetCode}` }
     );
@@ -57,7 +70,50 @@ export async function backfillAiCandidate(
     await deleteTemporaryFile(temporary);
   }
 
-  return { applied: true, detail: `已选中并回填画板 ${assetCode}。` };
+  return { applied: true, detail: `已选中并回填画板 ${assetCode}；图片已限制在画板范围内。` };
+}
+
+async function readArtboardBounds(layerId: number): Promise<SmartObjectTransformBounds> {
+  const [descriptor] = await action.batchPlay([getArtboardDescriptor(layerId)], {});
+  return artboardBoundsFromDescriptor(descriptor);
+}
+
+async function fitReplacementInsideTarget(
+  layer: CandidateTargetLayer,
+  targetBounds: SmartObjectTransformBounds
+): Promise<void> {
+  if (!layer.scale || !layer.translate) throw new Error("当前 Photoshop 图层不支持回填后的缩放定位。");
+  const sourceBounds = await readSmartObjectTransformBounds(layer.id);
+  const placement = calculateAiCandidatePlacement(sourceBounds, targetBounds);
+  if (Math.abs(placement.scale - 1) > 0.0001) {
+    await layer.scale(
+      placement.scale * 100,
+      placement.scale * 100,
+      constants.AnchorPosition.MIDDLECENTER
+    );
+  }
+  const fitted = await readSmartObjectTransformBounds(layer.id);
+  const centerX = (fitted.left + fitted.right) / 2;
+  const centerY = (fitted.top + fitted.bottom) / 2;
+  await layer.translate(
+    placement.targetCenterX - centerX,
+    placement.targetCenterY - centerY
+  );
+}
+
+async function readSmartObjectTransformBounds(layerId: number): Promise<SmartObjectTransformBounds> {
+  const [descriptor] = await action.batchPlay(
+    [{
+      _obj: "get",
+      _target: [
+        { _property: "smartObjectMore" },
+        { _ref: "layer", _id: layerId }
+      ],
+      _options: { dialogOptions: "dontDisplay" }
+    }],
+    {}
+  );
+  return smartObjectBoundsFromDescriptor(descriptor);
 }
 
 function activeDocument(): CandidateTargetDocument | null {

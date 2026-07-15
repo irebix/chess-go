@@ -1082,17 +1082,16 @@ button:disabled {
 }
 
 .ai-candidate-cell {
+  margin: 0;
   padding: 0;
   color: inherit;
+  cursor: pointer;
 }
 
-.ai-candidate-cell.is-ready,
 .ai-candidate-cell.is-accepted {
   border-color: #4dcc91;
-}
-
-.ai-candidate-cell.is-accepted {
-  box-shadow: inset 0 0 0 2px rgba(77, 204, 145, 0.75);
+  box-shadow: inset 0 0 0 1px #4dcc91;
+  cursor: default;
 }
 
 .ai-candidate-cell.is-failed {
@@ -1123,72 +1122,23 @@ button:disabled {
   text-align: center;
 }
 
-.ai-candidate-badge {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  display: flex;
-  width: 17px;
-  height: 17px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.62);
-  font-size: 9px;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.ai-candidate-view,
-.ai-candidate-accept,
 .ai-candidate-generate {
   position: absolute;
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
   border: 0;
   border-radius: 3px;
   color: #fff;
-  font-weight: 400;
-  text-align: center;
-}
-
-.ai-candidate-view {
-  top: 3px;
-  right: 3px;
-  width: 27px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: rgba(24, 24, 24, 0.76);
-  font-size: 9px;
-  z-index: 2;
-}
-
-.ai-candidate-accept {
-  right: 3px;
-  bottom: 3px;
-  left: 3px;
-  height: 18px;
-  padding: 0;
-  background: #1f80dc;
-  font-size: 9px;
-  z-index: 2;
-}
-
-.ai-candidate-cell.is-accepted .ai-candidate-accept {
-  background: #277a59;
-}
-
-.ai-candidate-generate {
-  top: 3px;
-  right: 3px;
-  bottom: 3px;
-  left: 3px;
-  padding: 19px 3px 3px;
   background: rgba(0, 0, 0, 0.4);
   font-size: 9px;
+  font-weight: 400;
+  text-align: center;
 }
 
 .ai-empty {

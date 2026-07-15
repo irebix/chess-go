@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { findEditableCanvasLayer, isEditableCanvasLayerName } from "../src/photoshop/aiCandidateTarget";
+import {
+  findEditableCanvasLayer,
+  findEditableCanvasTarget,
+  isEditableCanvasLayerName
+} from "../src/photoshop/aiCandidateTarget";
 
 describe("AI candidate PSD target lookup", () => {
   it("recognizes only generated blank smart-object layer names", () => {
@@ -17,6 +21,10 @@ describe("AI candidate PSD target lookup", () => {
       }
     };
     expect(findEditableCanvasLayer(document, "103001")).toBe(target);
+    expect(findEditableCanvasTarget(document, "103001")).toEqual({
+      artboard: document.layers[0],
+      layer: target
+    });
     expect(findEditableCanvasLayer(document, "103002")).toBeUndefined();
   });
 });

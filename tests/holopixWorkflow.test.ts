@@ -3,15 +3,13 @@ import {
   assertHolopixWorkflow,
   describeHolopixPromptSource,
   prepareHolopixWorkflow,
+  resolveHolopixPromptText,
   splitHolopixBatches,
   type ComfyWorkflow
 } from "../src/ai/holopixWorkflow";
 
 const workflow: ComfyWorkflow = {
-  "1": { class_type: "LoadImage", inputs: { image: "old.png" } },
-  "2": { class_type: "HolopixUploadReference", inputs: { image: ["1", 0] } },
   "5": { class_type: "HolopixModelStack", inputs: { model_id: 858, strength: 0.6 } },
-  "6": { class_type: "HolopixImageToPrompt", inputs: { reference: ["2", 0], models: ["5", 0] } },
   "7": {
     class_type: "HolopixGenerate",
     inputs: {
@@ -20,21 +18,26 @@ const workflow: ComfyWorkflow = {
       request_nonce: 0,
       confirm_cost: false,
       timeout_seconds: 175,
-      prompt: ["6", 0],
+      prompt: "{{name}} game icon, asset {{assetCode}}",
       models: ["5", 0]
     }
   },
-  "9": { class_type: "SaveImage", inputs: { filename_prefix: "old", images: ["7", 0] } }
+  "8": {
+    class_type: "ImageScale",
+    inputs: { image: ["7", 0], upscale_method: "nearest-exact", width: 768, height: 512, crop: "disabled" }
+  },
+  "9": { class_type: "SaveImage", inputs: { filename_prefix: "old", images: ["8", 0] } }
 };
 
 describe("Holopix workflow adapter", () => {
   it("preserves node parameters while injecting only runtime values", () => {
     const prepared = prepareHolopixWorkflow(workflow, {
-      imageName: "uploaded.png",
       batchSize: 2,
       requestNonce: 123,
       confirmCost: true,
-      filenamePrefix: "Holopix/ChessGo/103001"
+      filenamePrefix: "Holopix/ChessGo/103001",
+      itemName: "清洁布",
+      assetCode: "103001"
     });
     expect(prepared.workflow["7"]!.inputs).toMatchObject({
       aspect_ratio: "1:1",
@@ -42,30 +45,32 @@ describe("Holopix workflow adapter", () => {
       request_nonce: 123,
       confirm_cost: true,
       timeout_seconds: 175,
-      prompt: ["6", 0],
-      reference: ["2", 0]
+      prompt: "清洁布 game icon, asset 103001"
     });
-    expect(prepared.workflow["1"]!.inputs.image).toBe("uploaded.png");
+    expect(prepared.workflow["8"]!.inputs).toMatchObject({
+      image: ["7", 0],
+      width: 1024,
+      height: 1024,
+      crop: "center"
+    });
     expect(prepared.workflow["9"]!.inputs.filename_prefix).toBe("Holopix/ChessGo/103001");
+    expect(prepared.workflow["9"]!.inputs.images).toEqual(["8", 0]);
+    expect(prepared.promptText).toBe("清洁布 game icon, asset 103001");
     expect(workflow["7"]!.inputs.confirm_cost).toBe(false);
+    expect(workflow["8"]!.inputs.width).toBe(768);
   });
 
-  it("reports the workflow node that supplies the prompt", () => {
-    expect(describeHolopixPromptSource(workflow)).toEqual({
-      kind: "node",
-      label: "HolopixImageToPrompt",
-      detail: "HolopixImageToPrompt · 节点 6"
-    });
-  });
-
-  it("reports literal prompt text directly from the workflow", () => {
-    const literalWorkflow = JSON.parse(JSON.stringify(workflow)) as ComfyWorkflow;
-    literalWorkflow["7"]!.inputs.prompt = "prompt stored in workflow";
-    expect(describeHolopixPromptSource(literalWorkflow)).toEqual({
+  it("reports the exact prompt submitted for the selected item", () => {
+    expect(describeHolopixPromptSource(workflow, { itemName: "海绵块", assetCode: "103002" })).toEqual({
       kind: "text",
-      label: "HolopixGenerate.prompt",
-      detail: "prompt stored in workflow"
+      label: "HolopixGenerate.prompt · 当前节点",
+      detail: "海绵块 game icon, asset 103002"
     });
+  });
+
+  it("resolves both supported name placeholders without reading a reference image", () => {
+    expect(resolveHolopixPromptText(workflow, { itemName: "喷雾瓶", assetCode: "103004" }))
+      .toBe("喷雾瓶 game icon, asset 103004");
   });
 
   it("splits unsupported three-image requests into valid Holopix batches", () => {
@@ -76,6 +81,16 @@ describe("Holopix workflow adapter", () => {
   });
 
   it("rejects workflows with missing required node classes", () => {
-    expect(() => assertHolopixWorkflow({})).toThrow(/LoadImage/);
+    expect(() => assertHolopixWorkflow({})).toThrow(/HolopixGenerate/);
+  });
+
+  it("rejects reference-image and prompt-node workflows", () => {
+    const withReference = JSON.parse(JSON.stringify(workflow)) as ComfyWorkflow;
+    withReference["1"] = { class_type: "LoadImage", inputs: { image: "reference.png" } };
+    expect(() => assertHolopixWorkflow(withReference)).toThrow(/提示词-only/);
+
+    const linkedPrompt = JSON.parse(JSON.stringify(workflow)) as ComfyWorkflow;
+    linkedPrompt["7"]!.inputs.prompt = ["5", 0];
+    expect(() => assertHolopixWorkflow(linkedPrompt)).toThrow(/必须是非空文本/);
   });
 });
