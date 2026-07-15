@@ -42,16 +42,16 @@ describe("calculateContainTransform", () => {
     expect(135 * result.scale).toBeLessThanOrEqual(133.5);
   });
 
-  it("scales a 2048 square editable canvas to exactly 148 by 148", () => {
+  it("scales the default 1024 square editable canvas to exactly 148 by 148", () => {
     const result = calculateContainTransform({
-      source: { left: 0, top: 0, right: 2048, bottom: 2048 },
+      source: { left: 0, top: 0, right: 1024, bottom: 1024 },
       maxWidth: 148,
       maxHeight: 148,
       targetCenterX: 74,
       targetCenterY: 74,
       allowUpscale: true
     });
-    expect(result.scale).toBe(148 / 2048);
-    expect(2048 * result.scale).toBe(148);
+    expect(result.scale).toBe(148 / 1024);
+    expect(1024 * result.scale).toBe(148);
   });
 });

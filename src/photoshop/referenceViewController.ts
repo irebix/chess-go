@@ -13,7 +13,11 @@ import {
 } from "./artboardBackgroundController";
 
 export const REFERENCE_LAYER_NAME = "参考图";
-export const EDITABLE_CANVAS_LAYER_NAME = "2048x2048_空白智能对象";
+const EDITABLE_CANVAS_LAYER_NAME_PATTERN = /^\d+x\d+_空白智能对象$/;
+
+export function editableCanvasLayerName(size: number): string {
+  return `${size}x${size}_空白智能对象`;
+}
 
 const REFERENCE_COMP_NAME = "棋子归档｜仅参考图";
 const RESTORE_COMP_NAME = "棋子归档｜恢复点";
@@ -388,8 +392,8 @@ function scanReferences(document: DocumentLike, includeLegacy: boolean): Referen
     }
     if (!includeLegacy) continue;
 
-    const editableLayers = children.filter((layer) => layer.name === EDITABLE_CANVAS_LAYER_NAME);
-    const legacyCandidates = children.filter((layer) => layer.name !== EDITABLE_CANVAS_LAYER_NAME);
+    const editableLayers = children.filter((layer) => EDITABLE_CANVAS_LAYER_NAME_PATTERN.test(layer.name));
+    const legacyCandidates = children.filter((layer) => !EDITABLE_CANVAS_LAYER_NAME_PATTERN.test(layer.name));
     if (editableLayers.length === 1 && legacyCandidates.length === 1) {
       artboards.push(artboard);
       referenceLayers.push(legacyCandidates[0]!);

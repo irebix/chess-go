@@ -11,7 +11,12 @@ import {
 } from "../services/WorkbookService";
 import { exportParsingManifest } from "../services/ParsingManifestService";
 import { ThumbnailCache } from "../services/ThumbnailCache";
-import { generateBatch } from "../photoshop/batchGenerator";
+import {
+  DEFAULT_EDITABLE_CANVAS_SIZE,
+  MAX_EDITABLE_CANVAS_SIZE,
+  MIN_EDITABLE_CANVAS_SIZE,
+  generateBatch
+} from "../photoshop/batchGenerator";
 import { formatLog, makeLog, type LogEvent } from "../utils/logging";
 import { toErrorMessage, UserCancelledError } from "../utils/errors";
 import { defaultBatchBaseName } from "../utils/fileNames";
@@ -91,6 +96,7 @@ export function App(): React.ReactElement {
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [groupArtboardBusy, setGroupArtboardBusy] = useState(false);
   const [artboardBackgroundBusy, setArtboardBackgroundBusy] = useState<"color" | "visibility" | null>(null);
+  const [editableCanvasSizeInput, setEditableCanvasSizeInput] = useState(String(DEFAULT_EDITABLE_CANVAS_SIZE));
   const [generationSpacingInput, setGenerationSpacingInput] = useState("100");
   const [batchImageFeedbackByGroup, setBatchImageFeedbackByGroup] = useState<Record<string, BatchImageFeedback>>({});
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
@@ -490,6 +496,17 @@ export function App(): React.ReactElement {
 
   async function handleGenerate(): Promise<void> {
     if (!workbook) return;
+    const editableCanvasSize = Number(editableCanvasSizeInput);
+    if (
+      !Number.isInteger(editableCanvasSize) ||
+      editableCanvasSize < MIN_EDITABLE_CANVAS_SIZE ||
+      editableCanvasSize > MAX_EDITABLE_CANVAS_SIZE
+    ) {
+      const detail = `智能对象边长请输入 ${MIN_EDITABLE_CANVAS_SIZE}–${MAX_EDITABLE_CANVAS_SIZE} 之间的整数。`;
+      setMessage(detail);
+      presentError(detail, "generator");
+      return;
+    }
     const spacing = Number(generationSpacingInput);
     if (!Number.isInteger(spacing) || spacing < 0 || spacing > 1000) {
       const detail = "画板间距请输入 0–1000 之间的整数。";
@@ -514,6 +531,7 @@ export function App(): React.ReactElement {
         sheetName,
         selectedGroups: activeGroups,
         items: scopedItems,
+        editableCanvasSize,
         template: {
           ...DEFAULT_TEMPLATE,
           artboard: {
@@ -895,14 +913,35 @@ export function App(): React.ReactElement {
       {items.length && activeGroups.length ? (
         <>
           <div className="generation-action">
-            <div className="generation-spacing-control">
-              <label className="generation-spacing-label" htmlFor="generation-spacing">
+            <div className="generation-setting-control">
+              <label className="generation-setting-label" htmlFor="editable-canvas-size">
+                智能对象边长
+              </label>
+              <div className="generation-setting-field">
+                <input
+                  id="editable-canvas-size"
+                  className="generation-setting-input"
+                  type="number"
+                  min={MIN_EDITABLE_CANVAS_SIZE}
+                  max={MAX_EDITABLE_CANVAS_SIZE}
+                  step="1"
+                  placeholder={String(DEFAULT_EDITABLE_CANVAS_SIZE)}
+                  aria-label="生成空白智能对象的正方形边长"
+                  value={editableCanvasSizeInput}
+                  disabled={busy}
+                  onChange={(event) => setEditableCanvasSizeInput(event.currentTarget.value)}
+                />
+                <span className="generation-setting-unit">px</span>
+              </div>
+            </div>
+            <div className="generation-setting-control">
+              <label className="generation-setting-label" htmlFor="generation-spacing">
                 画板间距
               </label>
-              <div className="generation-spacing-field">
+              <div className="generation-setting-field">
                 <input
                   id="generation-spacing"
-                  className="generation-spacing-input"
+                  className="generation-setting-input"
                   type="number"
                   min="0"
                   max="1000"
@@ -912,7 +951,7 @@ export function App(): React.ReactElement {
                   disabled={busy}
                   onChange={(event) => setGenerationSpacingInput(event.currentTarget.value)}
                 />
-                <span className="generation-spacing-unit">px</span>
+                <span className="generation-setting-unit">px</span>
               </div>
             </div>
             <button

@@ -465,7 +465,7 @@ button:disabled {
   gap: 6px;
 }
 
-.generation-spacing-control {
+.generation-setting-control {
   display: flex;
   min-height: 36px;
   flex-direction: row;
@@ -480,13 +480,13 @@ button:disabled {
   font-size: 12px;
 }
 
-.generation-spacing-label {
+.generation-setting-label {
   display: block;
   flex: 1 1 auto;
   margin: 0;
 }
 
-.generation-spacing-field {
+.generation-setting-field {
   display: flex;
   flex: 0 0 auto;
   flex-direction: row;
@@ -494,7 +494,7 @@ button:disabled {
   gap: 6px;
 }
 
-.generation-spacing-input {
+.generation-setting-input {
   width: 70px;
   min-width: 54px;
   height: 24px;
@@ -510,11 +510,11 @@ button:disabled {
   text-align: center;
 }
 
-.generation-spacing-unit {
+.generation-setting-unit {
   flex: 0 0 auto;
 }
 
-.generation-spacing-control + .primary {
+.generation-setting-control + .primary {
   margin-top: 2px;
 }
 

@@ -21,7 +21,7 @@ import { toErrorMessage, UserCancelledError } from "../utils/errors";
 import { makeArtboardDescriptor, placeEmbeddedDescriptor } from "./actionDescriptors";
 import { smartObjectBoundsFromDescriptor } from "./smartObjectBounds";
 import {
-  EDITABLE_CANVAS_LAYER_NAME,
+  editableCanvasLayerName,
   REFERENCE_LAYER_NAME,
   initializeGeneratedReferenceView
 } from "./referenceViewController";
@@ -31,8 +31,10 @@ import {
   initializeArtboardBackgrounds
 } from "./artboardBackgroundController";
 
-const EDITABLE_CANVAS_SOURCE_SIZE = 2048;
 const EDITABLE_CANVAS_PLACED_SIZE = 148;
+export const DEFAULT_EDITABLE_CANVAS_SIZE = 1024;
+export const MIN_EDITABLE_CANVAS_SIZE = 1;
+export const MAX_EDITABLE_CANVAS_SIZE = 30000;
 
 export interface BatchProgress {
   stage: string;
@@ -46,6 +48,7 @@ export interface BatchGenerationOptions {
   selectedGroups: SheetGroup[];
   items: AssetCandidate[];
   template: PsdTemplate;
+  editableCanvasSize: number;
   suggestedBaseName: string;
   onProgress?: (progress: BatchProgress) => void;
 }
@@ -66,6 +69,7 @@ interface VolumeResult {
 }
 
 export async function generateBatch(options: BatchGenerationOptions): Promise<VolumeResult[]> {
+  assertEditableCanvasSize(options.editableCanvasSize);
   const validItems = options.items.filter((item) => item.selected);
   if (!validItems.length) throw new Error("没有选择可生成项目。");
   const blocking = validItems.flatMap((item) => item.issues.filter((issue) => issue.severity === "error"));
@@ -93,7 +97,7 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
     await core.executeAsModal(
       async (executionContext) => {
         const context = executionContext as unknown as ModalExecutionContext;
-        await createEditableCanvasSource(editableCanvasSource, context);
+        await createEditableCanvasSource(editableCanvasSource, context, options.editableCanvasSize);
         const editableCanvasToken = storage.localFileSystem.createSessionToken(editableCanvasSource);
 
         for (let volumeIndex = 0; volumeIndex < volumes.length; volumeIndex += 1) {
@@ -153,7 +157,7 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
               await action.batchPlay([placeEmbeddedDescriptor(editableCanvasToken)], {});
               const editableCanvasLayer = document.activeLayers[0];
               if (!editableCanvasLayer) throw new Error(`空白智能对象置入失败：${placement.item.assetCode}`);
-              editableCanvasLayer.name = EDITABLE_CANVAS_LAYER_NAME;
+              editableCanvasLayer.name = editableCanvasLayerName(options.editableCanvasSize);
               await editableCanvasLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
               await fitEditableCanvasLayer(editableCanvasLayer, placement.rect);
 
@@ -224,17 +228,18 @@ async function assertSubsequentOutputNamesAvailable(
 
 async function createEditableCanvasSource(
   outputFile: storage.File,
-  context: ModalExecutionContext
+  context: ModalExecutionContext,
+  size: number
 ): Promise<void> {
   const sourceDocument = await app.createDocument({
-    width: EDITABLE_CANVAS_SOURCE_SIZE,
-    height: EDITABLE_CANVAS_SOURCE_SIZE,
+    width: size,
+    height: size,
     resolution: 300,
     mode: constants.NewDocumentMode.RGB,
     fill: constants.DocumentFill.TRANSPARENT,
-    name: "棋子归档_2048空白智能对象"
+    name: `棋子归档_${size}空白智能对象`
   } as never);
-  if (!sourceDocument) throw new Error("Photoshop 未能创建 2048×2048 空白智能对象源文档。");
+  if (!sourceDocument) throw new Error(`Photoshop 未能创建 ${size}×${size} 空白智能对象源文档。`);
 
   await context.hostControl.registerAutoCloseDocument(sourceDocument.id);
   try {
@@ -248,6 +253,18 @@ async function createEditableCanvasSource(
   } finally {
     await context.hostControl.unregisterAutoCloseDocument(sourceDocument.id);
     sourceDocument.closeWithoutSaving();
+  }
+}
+
+function assertEditableCanvasSize(size: number): void {
+  if (
+    !Number.isInteger(size) ||
+    size < MIN_EDITABLE_CANVAS_SIZE ||
+    size > MAX_EDITABLE_CANVAS_SIZE
+  ) {
+    throw new Error(
+      `智能对象边长请输入 ${MIN_EDITABLE_CANVAS_SIZE}–${MAX_EDITABLE_CANVAS_SIZE} 之间的整数。`
+    );
   }
 }
 
@@ -301,7 +318,7 @@ async function fitEditableCanvasLayer(
   const bounds = await readSmartObjectTransformBounds(layer.id);
   const width = bounds.right - bounds.left;
   const height = bounds.bottom - bounds.top;
-  if (!(width > 0) || !(height > 0)) throw new Error("2048×2048 空白智能对象变换边界为空。");
+  if (!(width > 0) || !(height > 0)) throw new Error("空白智能对象变换边界为空。");
 
   const targetCenterX = (artboardRect.left + artboardRect.right) / 2;
   const targetCenterY = (artboardRect.top + artboardRect.bottom) / 2;
