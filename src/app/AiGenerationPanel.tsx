@@ -180,6 +180,7 @@ export function AiGenerationPanel({
             image: images[offset]!,
             error: undefined
           })));
+          await pauseForPreviewDecode(controller.signal);
         } catch (error) {
           failedJobs += 1;
           const detail = toErrorMessage(error);
@@ -418,7 +419,14 @@ export function AiGenerationPanel({
                 return (
                   <div className="ai-accepted-item" key={item.key}>
                     {accepted?.image?.previewDataUrl
-                      ? <img src={accepted.image.previewDataUrl} alt={item.name || item.assetCode} />
+                      ? <img
+                          src={accepted.image.previewDataUrl}
+                          alt={item.name || item.assetCode}
+                          width={68}
+                          height={68}
+                          decoding="async"
+                          draggable={false}
+                        />
                       : <span>{accepted?.image ? "预览不可用" : "未选择"}</span>}
                     <small>{item.name || item.assetCode}</small>
                   </div>
@@ -497,7 +505,14 @@ function CandidateCell({
       }}
     >
       {candidate.image?.previewDataUrl
-        ? <img src={candidate.image.previewDataUrl} alt={`候选 ${candidate.label}`} />
+        ? <img
+            src={candidate.image.previewDataUrl}
+            alt={`候选 ${candidate.label}`}
+            width={64}
+            height={64}
+            decoding="async"
+            draggable={false}
+          />
         : null}
       <span className="ai-candidate-badge">{candidate.label}</span>
       <small>{syncing ? "回填中" : candidateStatusLabel(candidate)}</small>
@@ -590,4 +605,28 @@ function firstRegenerationSlot(state: AiItemState): number {
 
 function safeFilePart(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
+}
+
+function pauseForPreviewDecode(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(previewPauseAbortError());
+      return;
+    }
+    const onAbort = (): void => {
+      window.clearTimeout(timer);
+      reject(previewPauseAbortError());
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, 750);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function previewPauseAbortError(): Error {
+  const error = new Error("已停止等待候选缩略图解码。");
+  error.name = "AbortError";
+  return error;
 }

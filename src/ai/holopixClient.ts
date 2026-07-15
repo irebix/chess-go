@@ -78,18 +78,20 @@ export async function generateHolopixImages(
     });
     const promptId = await queuePrompt(prepared.workflow, options.signal);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已提交。`);
-    const images = await waitForImages(
+    const output = await waitForImages(
       promptId,
       prepared.saveNodeId,
+      prepared.previewNodeId,
       prepared.timeoutSeconds + 45,
       options.signal
     );
-    if (images.length < batchSize) {
-      throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
+    if (output.originals.length < batchSize) {
+      throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${output.originals.length} 张。`);
     }
-    const selectedImages = images.slice(0, batchSize);
+    const selectedImages = output.originals.slice(0, batchSize);
+    const selectedPreviews = output.previews.slice(0, batchSize);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
-    results.push(...await loadSafePreviews(selectedImages, options));
+    results.push(...await loadSafePreviews(selectedImages, selectedPreviews, options));
   }
 
   return results;
@@ -97,16 +99,19 @@ export async function generateHolopixImages(
 
 async function loadSafePreviews(
   images: AiGeneratedImage[],
+  previews: AiGeneratedImage[],
   options: Pick<HolopixGenerationOptions, "signal" | "onStage">
 ): Promise<AiGeneratedImage[]> {
   const results: AiGeneratedImage[] = [];
   for (let index = 0; index < images.length; index += 1) {
     throwIfAborted(options.signal);
     const image = images[index]!;
+    const preview = previews[index];
     try {
-      const previewDataUrl = await fetchPreviewDataUrl(image, options.signal);
+      if (!preview) throw new Error("ComfyUI 未返回安全缩略图。");
+      const previewDataUrl = await fetchPreviewDataUrl(preview, options.signal);
       results.push({ ...image, previewDataUrl });
-      options.onStage?.(`安全缩略图 ${index + 1}/${images.length} 已读取。`);
+      options.onStage?.(`96×96 安全缩略图 ${index + 1}/${images.length} 已读取。`);
     } catch (error) {
       if (isAbortError(error)) throw error;
       const previewError = error instanceof Error ? error.message : String(error);
@@ -207,9 +212,10 @@ async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promi
 async function waitForImages(
   promptId: string,
   saveNodeId: string,
+  previewNodeId: string,
   timeoutSeconds: number,
   signal?: AbortSignal
-): Promise<AiGeneratedImage[]> {
+): Promise<{ originals: AiGeneratedImage[]; previews: AiGeneratedImage[] }> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
@@ -230,9 +236,15 @@ async function waitForImages(
       const executionError = findExecutionError(entry.status?.messages);
       if (executionError) throw new Error(executionError);
       const images = entry.outputs?.[saveNodeId]?.images ?? [];
-      if (images.length) return images.map(toGeneratedImage);
+      const previews = entry.outputs?.[previewNodeId]?.images ?? [];
+      if (images.length && previews.length) {
+        return {
+          originals: images.map(toGeneratedImage),
+          previews: previews.map(toGeneratedImage)
+        };
+      }
       if (entry.status?.completed || entry.status?.status_str === "error") {
-        throw new Error("Holopix 工作流已结束，但 SaveImage 节点没有输出图片。");
+        throw new Error("Holopix 工作流已结束，但原图或 96×96 安全缩略图没有输出。");
       }
     }
     await delay(1000, signal);
