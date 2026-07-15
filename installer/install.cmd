@@ -14,7 +14,12 @@ $pluginFolderName = "ChessGo"
 $requiredFiles = @("manifest.json", "index.html", "main.js", "main.js.LICENSE.txt", "styles.css")
 $repositoryUrl = "https://github.com/irebix/chess-go.git"
 $releaseBranch = "release"
-$managedReleaseDir = Join-Path $env:LOCALAPPDATA "ChessGo\release"
+$releaseApiUrl = "https://api.github.com/repos/irebix/chess-go/commits/$releaseBranch"
+$releaseArchiveBaseUrl = "https://codeload.github.com/irebix/chess-go/zip"
+$managedRoot = Join-Path $env:LOCALAPPDATA "ChessGo"
+$managedReleaseDir = Join-Path $managedRoot "release"
+$archiveReleaseDir = Join-Path $managedRoot "archive-release"
+$releaseShaMarkerName = ".chessgo-release-sha"
 
 function Show-Message([string]$text, [string]$title, [System.Windows.Forms.MessageBoxIcon]$icon) {
   [System.Windows.Forms.MessageBox]::Show(
@@ -88,6 +93,256 @@ function Test-ChessGoRelease([string]$folder) {
   }
 }
 
+function Assert-PathInside([string]$path, [string]$root, [string]$label) {
+  $fullPath = [IO.Path]::GetFullPath($path).TrimEnd("\")
+  $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd("\")
+  $rootPrefix = "$fullRoot\"
+  if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "$label is outside the expected folder: $fullPath"
+  }
+  return $fullPath
+}
+
+function Remove-SafeDirectory([string]$path, [string]$root) {
+  if (-not (Test-Path -LiteralPath $path)) {
+    return
+  }
+  $safePath = Assert-PathInside $path $root "Cleanup path"
+  Remove-Item -LiteralPath $safePath -Recurse -Force
+}
+
+function Get-RemoteReleaseSha {
+  try {
+    [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{
+      "Accept" = "application/vnd.github+json"
+      "User-Agent" = "ChessGo-Installer"
+    }
+    $response = Invoke-RestMethod -Uri $releaseApiUrl -Headers $headers -TimeoutSec 12
+    $sha = [string]$response.sha
+    if ($sha -notmatch "^[0-9a-fA-F]{40}$") {
+      throw "GitHub returned an invalid release identifier."
+    }
+    return $sha.ToLowerInvariant()
+  } catch {
+    Write-Warning "The remote release version could not be checked: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Get-GitReleaseSha([string]$folder, [string]$gitPath) {
+  if (-not (Test-Path -LiteralPath (Join-Path $folder ".git"))) {
+    return $null
+  }
+  try {
+    $sha = (& $gitPath -C $folder rev-parse HEAD 2>$null | Select-Object -First 1).Trim()
+    if ($LASTEXITCODE -eq 0 -and $sha -match "^[0-9a-fA-F]{40}$") {
+      return $sha.ToLowerInvariant()
+    }
+  } catch {
+  }
+  return $null
+}
+
+function Get-ArchiveReleaseSha([string]$folder) {
+  $marker = Join-Path $folder $releaseShaMarkerName
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+    return $null
+  }
+  try {
+    $sha = (Get-Content -LiteralPath $marker -Raw -Encoding ASCII).Trim()
+    if ($sha -match "^[0-9a-fA-F]{40}$") {
+      return $sha.ToLowerInvariant()
+    }
+  } catch {
+  }
+  return $null
+}
+
+function Test-ReleaseAtSha([string]$folder, [string]$sha, [string]$gitPath) {
+  if (-not $sha -or -not (Test-ChessGoRelease $folder)) {
+    return $false
+  }
+  $localSha = if (Test-Path -LiteralPath (Join-Path $folder ".git")) {
+    Get-GitReleaseSha $folder $gitPath
+  } else {
+    Get-ArchiveReleaseSha $folder
+  }
+  return $localSha -eq $sha
+}
+
+function Invoke-GitPull([string]$folder, [string]$gitPath) {
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & $gitPath -C $folder pull --ff-only origin $releaseBranch 2>&1 | Out-Host
+    return $LASTEXITCODE -eq 0
+  } catch {
+    Write-Host $_.Exception.Message
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+function Invoke-GitClone([string]$folder, [string]$gitPath) {
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & $gitPath clone --branch $releaseBranch --single-branch $repositoryUrl $folder 2>&1 | Out-Host
+    return $LASTEXITCODE -eq 0
+  } catch {
+    Write-Host $_.Exception.Message
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+function Install-ReleaseArchive([string]$targetFolder, [string]$releaseSha, [string]$gitPath) {
+  if ($releaseSha -notmatch "^[0-9a-fA-F]{40}$") {
+    throw "A valid release identifier is required for archive download."
+  }
+
+  $safeTarget = Assert-PathInside $targetFolder $managedRoot "Archive release folder"
+  $tempRoot = Join-Path $env:TEMP ("ChessGo-" + [Guid]::NewGuid().ToString("N"))
+  $safeTempRoot = Assert-PathInside $tempRoot $env:TEMP "Temporary download folder"
+  $zipPath = Join-Path $safeTempRoot "release.zip"
+  $extractPath = Join-Path $safeTempRoot "expanded"
+  $backupPath = $null
+
+  try {
+    New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+    $archiveUrl = "$releaseArchiveBaseUrl/$releaseSha"
+    Write-Host "Downloading the ChessGo release archive..."
+    Invoke-WebRequest `
+      -Uri $archiveUrl `
+      -Headers @{ "User-Agent" = "ChessGo-Installer" } `
+      -UseBasicParsing `
+      -TimeoutSec 90 `
+      -OutFile $zipPath
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+
+    $candidate = Get-ChildItem -LiteralPath $extractPath -Directory |
+      Where-Object { Test-ChessGoRelease $_.FullName } |
+      Select-Object -First 1
+    if (-not $candidate) {
+      throw "The downloaded ChessGo release archive is incomplete or invalid."
+    }
+
+    [IO.File]::WriteAllText(
+      (Join-Path $candidate.FullName $releaseShaMarkerName),
+      $releaseSha.ToLowerInvariant(),
+      [Text.Encoding]::ASCII
+    )
+
+    New-Item -ItemType Directory -Path $managedRoot -Force | Out-Null
+    if (Test-Path -LiteralPath $safeTarget) {
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $backupPath = Assert-PathInside "$safeTarget.backup-$timestamp" $managedRoot "Archive backup folder"
+      Move-Item -LiteralPath $safeTarget -Destination $backupPath
+    }
+
+    try {
+      Move-Item -LiteralPath $candidate.FullName -Destination $safeTarget
+      if (-not (Test-ReleaseAtSha $safeTarget $releaseSha $gitPath)) {
+        throw "The downloaded ChessGo release could not be verified."
+      }
+    } catch {
+      if (Test-Path -LiteralPath $safeTarget) {
+        Remove-SafeDirectory $safeTarget $managedRoot
+      }
+      if ($backupPath -and (Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $safeTarget)) {
+        Move-Item -LiteralPath $backupPath -Destination $safeTarget
+      }
+      throw
+    }
+    Write-Host "Release archive installed successfully."
+    return $safeTarget
+  } finally {
+    Remove-SafeDirectory $safeTempRoot $env:TEMP
+  }
+}
+
+function Resolve-GitBackedRelease(
+  [string]$folder,
+  [string]$gitPath,
+  [string]$remoteSha,
+  [string]$updateMessage
+) {
+  $localSha = Get-GitReleaseSha $folder $gitPath
+  if ($remoteSha -and $localSha -eq $remoteSha -and (Test-ChessGoRelease $folder)) {
+    Write-Host "ChessGo is already up to date."
+    return $folder
+  }
+  if ($remoteSha -and (Test-ReleaseAtSha $archiveReleaseDir $remoteSha $gitPath)) {
+    Write-Host "Using the current downloaded ChessGo release."
+    return $archiveReleaseDir
+  }
+
+  Write-Host $updateMessage
+  if (Invoke-GitPull $folder $gitPath) {
+    return $folder
+  }
+  if ($remoteSha) {
+    Write-Warning "Git update is unavailable. Switching to the GitHub release archive."
+    return Install-ReleaseArchive $archiveReleaseDir $remoteSha $gitPath
+  }
+
+  Write-Warning "Git update failed and the remote version could not be checked. The local plugin files will be installed."
+  return $folder
+}
+
+function Resolve-ChessGoRelease(
+  [string]$initialSourceDir,
+  [string]$gitPath,
+  [string]$remoteSha
+) {
+  $scriptIsInRelease =
+    (Test-Path -LiteralPath (Join-Path $initialSourceDir ".git")) -and
+    (Test-ChessGoRelease $initialSourceDir)
+  if ($scriptIsInRelease) {
+    return Resolve-GitBackedRelease `
+      $initialSourceDir `
+      $gitPath `
+      $remoteSha `
+      "Updating the current ChessGo release folder..."
+  }
+
+  $managedGit = Join-Path $managedReleaseDir ".git"
+  if (Test-Path -LiteralPath $managedGit) {
+    return Resolve-GitBackedRelease `
+      $managedReleaseDir `
+      $gitPath `
+      $remoteSha `
+      "Updating ChessGo in: $managedReleaseDir"
+  }
+  if ($remoteSha -and (Test-ReleaseAtSha $archiveReleaseDir $remoteSha $gitPath)) {
+    Write-Host "Using the current downloaded ChessGo release."
+    return $archiveReleaseDir
+  }
+
+  if (Test-Path -LiteralPath $managedReleaseDir) {
+    $safeManagedRelease = Assert-PathInside $managedReleaseDir $managedRoot "Managed release folder"
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $managedBackup = Assert-PathInside "$safeManagedRelease.backup-$timestamp" $managedRoot "Managed backup folder"
+    Move-Item -LiteralPath $safeManagedRelease -Destination $managedBackup
+    Write-Host "Existing non-Git folder backed up to: $managedBackup"
+  }
+
+  New-Item -ItemType Directory -Path $managedRoot -Force | Out-Null
+  Write-Host "Cloning the ChessGo release branch..."
+  if (Invoke-GitClone $managedReleaseDir $gitPath) {
+    return $managedReleaseDir
+  }
+  if ($remoteSha) {
+    Write-Warning "Git clone is unavailable. Switching to the GitHub release archive."
+    return Install-ReleaseArchive $archiveReleaseDir $remoteSha $gitPath
+  }
+  throw "Git clone failed and the release archive version could not be checked."
+}
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -127,40 +382,12 @@ try {
     Write-Host ""
   }
 
-  $scriptIsInRelease = (Test-Path -LiteralPath (Join-Path $sourceDir ".git")) -and (Test-ChessGoRelease $sourceDir)
-  if ($scriptIsInRelease) {
-    Write-Host "Updating the current ChessGo release folder..."
-    & $gitPath -C $sourceDir pull --ff-only origin $releaseBranch
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "Git update failed. The local plugin files will be installed."
-    }
-    Write-Host ""
-  } else {
-    $sourceDir = $managedReleaseDir
-    $managedGit = Join-Path $managedReleaseDir ".git"
-    if (Test-Path -LiteralPath $managedGit) {
-      Write-Host "Updating ChessGo in: $managedReleaseDir"
-      & $gitPath -C $managedReleaseDir pull --ff-only origin $releaseBranch
-      if ($LASTEXITCODE -ne 0) {
-        throw "The existing ChessGo release could not be updated."
-      }
-    } else {
-      if (Test-Path -LiteralPath $managedReleaseDir) {
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $managedBackup = "$managedReleaseDir.backup-$timestamp"
-        Move-Item -LiteralPath $managedReleaseDir -Destination $managedBackup
-        Write-Host "Existing non-Git folder backed up to: $managedBackup"
-      }
-      $managedParent = Split-Path -Parent $managedReleaseDir
-      New-Item -ItemType Directory -Path $managedParent -Force | Out-Null
-      Write-Host "Cloning the ChessGo release branch..."
-      & $gitPath clone --branch $releaseBranch --single-branch $repositoryUrl $managedReleaseDir
-      if ($LASTEXITCODE -ne 0) {
-        throw "Git clone failed with exit code $LASTEXITCODE."
-      }
-    }
-    Write-Host ""
+  $remoteReleaseSha = Get-RemoteReleaseSha
+  if ($remoteReleaseSha) {
+    Write-Host "Remote release: $($remoteReleaseSha.Substring(0, 7))"
   }
+  $sourceDir = Resolve-ChessGoRelease $sourceDir $gitPath $remoteReleaseSha
+  Write-Host ""
 
   if (-not (Test-ChessGoRelease $sourceDir)) {
     throw "The ChessGo release folder is incomplete or invalid: $sourceDir"
