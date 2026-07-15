@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptAiCandidate,
-  defaultAiPrompt,
   reconcileAiItemStates,
   summarizeAiCandidates
 } from "../src/domain/aiCandidates";
@@ -38,9 +37,5 @@ describe("AI candidate state", () => {
     const second = acceptAiCandidate(first, first.candidates[1]!.id);
     expect(second.candidates.map((slot) => slot.status)).toEqual(["ready", "accepted"]);
     expect(summarizeAiCandidates([second])).toMatchObject({ total: 2, completed: 2, accepted: 1 });
-  });
-
-  it("creates a readable default prompt from the Excel item name", () => {
-    expect(defaultAiPrompt(item)).toContain("抹布");
   });
 });

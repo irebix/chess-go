@@ -19,7 +19,12 @@ export interface HolopixWorkflowOverrides {
   requestNonce: number;
   confirmCost: boolean;
   filenamePrefix: string;
-  promptOverride?: string;
+}
+
+export interface HolopixPromptSource {
+  kind: "text" | "node" | "unknown";
+  label: string;
+  detail: string;
 }
 
 export function prepareHolopixWorkflow(
@@ -43,9 +48,6 @@ export function prepareHolopixWorkflow(
   save.node.inputs.filename_prefix = options.filenamePrefix;
   save.node.inputs.images = [generate.id, 0];
 
-  const prompt = options.promptOverride?.trim();
-  if (prompt) generate.node.inputs.prompt = prompt;
-
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)
     ? Math.min(240, Math.max(30, timeoutInput))
@@ -56,6 +58,34 @@ export function prepareHolopixWorkflow(
     generateNodeId: generate.id,
     saveNodeId: save.id,
     timeoutSeconds
+  };
+}
+
+export function describeHolopixPromptSource(workflow: ComfyWorkflow): HolopixPromptSource {
+  const generate = findOnlyNode(workflow, "HolopixGenerate");
+  const prompt = generate.node.inputs.prompt;
+  if (typeof prompt === "string" && prompt.trim()) {
+    return {
+      kind: "text",
+      label: "HolopixGenerate.prompt",
+      detail: prompt.trim()
+    };
+  }
+  if (Array.isArray(prompt) && typeof prompt[0] === "string") {
+    const sourceId = prompt[0];
+    const source = workflow[sourceId];
+    if (source) {
+      return {
+        kind: "node",
+        label: source._meta?.title?.trim() || source.class_type,
+        detail: `${source.class_type} · 节点 ${sourceId}`
+      };
+    }
+  }
+  return {
+    kind: "unknown",
+    label: "HolopixGenerate.prompt",
+    detail: "工作流中的提示词输入未配置。"
   };
 }
 

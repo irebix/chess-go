@@ -9,7 +9,8 @@ import {
 } from "../domain/aiCandidates";
 import { filterItemsByGroups } from "../domain/sheetGroups";
 import type { ImportedWorkbook } from "../services/WorkbookService";
-import { generateHolopixImages } from "../ai/holopixClient";
+import { generateHolopixImages, loadHolopixPromptSource } from "../ai/holopixClient";
+import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
 import { toErrorMessage } from "../utils/errors";
 
@@ -24,7 +25,6 @@ interface AiGenerationPanelProps {
   items: AssetCandidate[];
   thumbnails: Record<string, ThumbnailRecord>;
   externalBusy: boolean;
-  currentPsdAvailable: boolean;
   requestThumbnail: (entry: string) => void;
   onThumbnailError: (entry: string) => void;
   onStatus: (message: string, level?: "info" | "warn" | "error") => void;
@@ -39,7 +39,6 @@ export function AiGenerationPanel({
   items,
   thumbnails,
   externalBusy,
-  currentPsdAvailable,
   requestThumbnail,
   onThumbnailError,
   onStatus,
@@ -53,6 +52,7 @@ export function AiGenerationPanel({
   const [tab, setTab] = useState<MatrixTab>("matrix");
   const [running, setRunning] = useState(false);
   const [syncingCandidateId, setSyncingCandidateId] = useState<string | null>(null);
+  const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
   const [panelMessage, setPanelMessage] = useState("导入 Excel 并选择棋子链后，可使用内嵌图片生成候选。");
   const abortRef = useRef<AbortController | null>(null);
 
@@ -105,6 +105,27 @@ export function AiGenerationPanel({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
+    let active = true;
+    void loadHolopixPromptSource().then(
+      (source) => {
+        if (active) setPromptSource(source);
+      },
+      (error) => {
+        if (active) {
+          setPromptSource({
+            kind: "unknown",
+            label: "Holopix.json",
+            detail: `读取工作流提示词失败：${toErrorMessage(error)}`
+          });
+        }
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     onBusyChange(running || Boolean(syncingCandidateId));
     return () => onBusyChange(false);
   }, [onBusyChange, running, syncingCandidateId]);
@@ -118,15 +139,13 @@ export function AiGenerationPanel({
       const slotIndexes = state.candidates.flatMap((candidate, index) =>
         candidate.status === "idle" || candidate.status === "failed" ? [index] : []
       );
-      return slotIndexes.length ? [{ item, state, slotIndexes }] : [];
+      return slotIndexes.length ? [{ item, slotIndexes }] : [];
     });
     const totalCandidates = jobs.reduce((count, job) => count + job.slotIndexes.length, 0);
     if (!totalCandidates) {
       setPanelMessage("当前棋子链没有待生成或失败的候选。");
       return;
     }
-    if (!confirmHolopixCost(totalCandidates)) return;
-
     const controller = new AbortController();
     abortRef.current = controller;
     setRunning(true);
@@ -149,7 +168,6 @@ export function AiGenerationPanel({
           const images = await runItemGeneration(
             workbook,
             job.item,
-            job.state,
             job.slotIndexes.length,
             controller.signal
           );
@@ -191,7 +209,7 @@ export function AiGenerationPanel({
   async function handleRegenerate(item: AssetCandidate, slotIndex: number): Promise<void> {
     if (!workbook || disabled) return;
     const state = states[item.key];
-    if (!state || !selectedExcelImage(item) || !confirmHolopixCost(1)) return;
+    if (!state || !selectedExcelImage(item)) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setRunning(true);
@@ -202,7 +220,7 @@ export function AiGenerationPanel({
       error: undefined
     })));
     try {
-      const images = await runItemGeneration(workbook, item, state, 1, controller.signal);
+      const images = await runItemGeneration(workbook, item, 1, controller.signal);
       setStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
         ...slot,
         status: "ready",
@@ -247,29 +265,6 @@ export function AiGenerationPanel({
     }
   }
 
-  function updatePrompt(value: string): void {
-    if (!selectedItem) return;
-    setStates((current) => {
-      const state = current[selectedItem.key];
-      return state ? {
-        ...current,
-        [selectedItem.key]: { ...state, prompt: value, promptDirty: true }
-      } : current;
-    });
-  }
-
-  function restoreAutomaticPrompt(): void {
-    if (!selectedItem) return;
-    setStates((current) => {
-      const state = current[selectedItem.key];
-      return state ? {
-        ...current,
-        [selectedItem.key]: { ...state, promptDirty: false }
-      } : current;
-    });
-    setPanelMessage("已恢复 Holopix 图片转提示词节点；文本框仅保留为可编辑模板。");
-  }
-
   return (
     <section className={`panel-section ai-panel ${open ? "is-open" : ""}`}>
       <div
@@ -297,7 +292,7 @@ export function AiGenerationPanel({
             <span className={`ai-status-dot ${workbook && referenceItems.length ? "is-ready" : ""}`} />
             <span>
               {workbook
-                ? `${currentPsdAvailable ? "当前 PSD 已建立" : "尚未打开生成 PSD"} · 参考图取自 Excel 内嵌图片`
+                ? "当前 PSD 已建立 · 参考图取自 Excel 内嵌图片"
                 : "请先在“生成 PSD”中导入 Excel"}
             </span>
           </div>
@@ -424,31 +419,23 @@ export function AiGenerationPanel({
           {selectedItem && selectedState ? (
             <div className="ai-prompt-editor">
               <div className="ai-prompt-heading">
-                <span>当前提示词</span>
-                <small>{selectedItem.assetCode}</small>
+                <span>工作流提示词</span>
+                <small>Holopix.json</small>
               </div>
-              <strong>{selectedItem.name || selectedItem.assetCode}</strong>
-              <textarea
-                value={selectedState.prompt}
-                disabled={disabled}
-                aria-label={`${selectedItem.assetCode} 的 Holopix 提示词`}
-                onChange={(event) => updatePrompt(event.currentTarget.value)}
-              />
-              <div className="ai-prompt-actions">
-                <button className="compact" disabled={disabled || !selectedState.promptDirty} onClick={restoreAutomaticPrompt}>
-                  {selectedState.promptDirty ? "恢复图片自动提示词" : "当前使用图片自动提示词"}
-                </button>
-                <button
-                  className="primary"
-                  disabled={disabled || !selectedExcelImage(selectedItem)}
-                  onClick={() => void handleRegenerate(selectedItem, firstRegenerationSlot(selectedState))}
-                >生成新候选</button>
-              </div>
+              <strong>{promptSource?.label ?? "正在读取工作流……"}</strong>
+              <small className="ai-prompt-source-detail">
+                {promptSource?.detail ?? "提示词完全由 HolopixGenerate.prompt 的节点值或连线决定。"}
+              </small>
+              <button
+                className="primary"
+                disabled={disabled || !selectedExcelImage(selectedItem)}
+                onClick={() => void handleRegenerate(selectedItem, firstRegenerationSlot(selectedState))}
+              >生成新候选</button>
             </div>
           ) : null}
 
           <div className="ai-panel-message" role="status">{panelMessage}</div>
-          <small className="ai-cost-note">每次提交前都会确认 Holopix 计费；停止等待不会撤销已提交的远程任务。</small>
+          <small className="ai-cost-note">点击生成后将直接提交 Holopix 工作流；停止等待不会撤销已提交的远程任务。</small>
         </div>
       ) : null}
     </section>
@@ -508,7 +495,6 @@ function CandidateCell({
 async function runItemGeneration(
   workbook: ImportedWorkbook,
   item: AssetCandidate,
-  state: AiItemState,
   candidateCount: number,
   signal: AbortSignal
 ) {
@@ -527,7 +513,6 @@ async function runItemGeneration(
     referenceMediaType: mediaType,
     candidateCount,
     assetCode: item.assetCode,
-    promptOverride: state.promptDirty ? state.prompt : undefined,
     signal
   });
 }
@@ -586,12 +571,6 @@ function firstRegenerationSlot(state: AiItemState): number {
   if (idle >= 0) return idle;
   const ready = state.candidates.findIndex((candidate) => candidate.status === "ready");
   return ready >= 0 ? ready : 0;
-}
-
-function confirmHolopixCost(candidateCount: number): boolean {
-  return window.confirm(
-    `即将向 Holopix 提交 ${candidateCount} 张候选图。该操作会产生 Holopix 点数消耗，是否继续？`
-  );
 }
 
 function safeFilePart(value: string): string {

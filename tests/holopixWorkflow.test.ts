@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertHolopixWorkflow,
+  describeHolopixPromptSource,
   prepareHolopixWorkflow,
   splitHolopixBatches,
   type ComfyWorkflow
@@ -49,16 +50,22 @@ describe("Holopix workflow adapter", () => {
     expect(workflow["7"]!.inputs.confirm_cost).toBe(false);
   });
 
-  it("uses manual prompt text only when supplied", () => {
-    const prepared = prepareHolopixWorkflow(workflow, {
-      imageName: "uploaded.png",
-      batchSize: 1,
-      requestNonce: 456,
-      confirmCost: true,
-      filenamePrefix: "Holopix/ChessGo/103001",
-      promptOverride: "manual prompt"
+  it("reports the workflow node that supplies the prompt", () => {
+    expect(describeHolopixPromptSource(workflow)).toEqual({
+      kind: "node",
+      label: "HolopixImageToPrompt",
+      detail: "HolopixImageToPrompt · 节点 6"
     });
-    expect(prepared.workflow["7"]!.inputs.prompt).toBe("manual prompt");
+  });
+
+  it("reports literal prompt text directly from the workflow", () => {
+    const literalWorkflow = JSON.parse(JSON.stringify(workflow)) as ComfyWorkflow;
+    literalWorkflow["7"]!.inputs.prompt = "prompt stored in workflow";
+    expect(describeHolopixPromptSource(literalWorkflow)).toEqual({
+      kind: "text",
+      label: "HolopixGenerate.prompt",
+      detail: "prompt stored in workflow"
+    });
   });
 
   it("splits unsupported three-image requests into valid Holopix batches", () => {

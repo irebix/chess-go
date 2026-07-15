@@ -764,21 +764,22 @@ export function App(): React.ReactElement {
         </section>
       ) : null}
 
-      <AiGenerationPanel
-        workbook={workbook}
-        activeGroups={activeGroups}
-        items={scopedItems}
-        thumbnails={thumbnails}
-        externalBusy={busy}
-        currentPsdAvailable={Boolean(referenceDocument)}
-        requestThumbnail={requestThumbnail}
-        onThumbnailError={handleThumbnailDecodeError}
-        onStatus={(detail, level = "info") => {
-          setMessage(detail);
-          appendLog(makeLog(level, "holopix.ai", detail));
-        }}
-        onBusyChange={setAiBusy}
-      />
+      {referenceDocument ? (
+        <AiGenerationPanel
+          workbook={workbook}
+          activeGroups={activeGroups}
+          items={scopedItems}
+          thumbnails={thumbnails}
+          externalBusy={busy}
+          requestThumbnail={requestThumbnail}
+          onThumbnailError={handleThumbnailDecodeError}
+          onStatus={(detail, level = "info") => {
+            setMessage(detail);
+            appendLog(makeLog(level, "holopix.ai", detail));
+          }}
+          onBusyChange={setAiBusy}
+        />
+      ) : null}
 
       <section className={`panel-section generator-panel ${showGenerator ? "is-open" : ""}`}>
         <div

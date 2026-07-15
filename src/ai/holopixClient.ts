@@ -2,9 +2,11 @@ import { storage } from "uxp";
 import type { AiGeneratedImage } from "../domain/aiCandidates";
 import {
   assertHolopixWorkflow,
+  describeHolopixPromptSource,
   prepareHolopixWorkflow,
   splitHolopixBatches,
-  type ComfyWorkflow
+  type ComfyWorkflow,
+  type HolopixPromptSource
 } from "./holopixWorkflow";
 
 const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
@@ -43,7 +45,6 @@ export interface HolopixGenerationOptions {
   referenceMediaType: string;
   candidateCount: number;
   assetCode: string;
-  promptOverride?: string;
   signal?: AbortSignal;
   onBatchStarted?: (completedCandidates: number, totalCandidates: number) => void;
 }
@@ -70,8 +71,7 @@ export async function generateHolopixImages(
       batchSize,
       requestNonce: makeRequestNonce(batchIndex),
       confirmCost: true,
-      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`,
-      promptOverride: options.promptOverride
+      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`
     });
     const promptId = await queuePrompt(prepared.workflow, options.signal);
     const images = await waitForImages(
@@ -87,6 +87,10 @@ export async function generateHolopixImages(
   }
 
   return results;
+}
+
+export async function loadHolopixPromptSource(): Promise<HolopixPromptSource> {
+  return describeHolopixPromptSource(await loadBundledHolopixWorkflow());
 }
 
 async function loadBundledHolopixWorkflow(): Promise<ComfyWorkflow> {

@@ -25,8 +25,6 @@ export interface AiCandidateSlot {
 
 export interface AiItemState {
   itemKey: string;
-  prompt: string;
-  promptDirty: boolean;
   candidates: AiCandidateSlot[];
 }
 
@@ -41,11 +39,6 @@ export interface AiCandidateStats {
 
 const SLOT_LABELS = ["A", "B", "C", "D"] as const;
 
-export function defaultAiPrompt(item: Pick<AssetCandidate, "assetCode" | "name">): string {
-  const subject = item.name?.trim() || item.assetCode.trim() || "棋子";
-  return `单个${subject}，保持参考图主体特征，休闲合成游戏图标风格，主体居中，轮廓清晰。`;
-}
-
 export function reconcileAiItemStates(
   current: Record<string, AiItemState>,
   items: AssetCandidate[],
@@ -57,8 +50,6 @@ export function reconcileAiItemStates(
     const previous = current[item.key];
     next[item.key] = {
       itemKey: item.key,
-      prompt: previous?.prompt ?? defaultAiPrompt(item),
-      promptDirty: previous?.promptDirty ?? false,
       candidates: Array.from({ length: count }, (_, index) => {
         const existing = previous?.candidates[index];
         return existing ?? {
