@@ -45,6 +45,7 @@ module.exports = (_env, argv) => ({
     new CopyWebpackPlugin({
       patterns: [
         { from: "manifest.json", to: "manifest.json" },
+        { from: "Holopix.json", to: "Holopix.json" },
         { from: "src/index.html", to: "index.html" },
         { from: "src/styles.css", to: "styles.css" }
       ]

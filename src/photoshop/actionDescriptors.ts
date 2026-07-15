@@ -152,3 +152,14 @@ export function placeEmbeddedDescriptor(sessionToken: string): ActionDescriptor 
     _options: { dialogOptions: "dontDisplay" }
   };
 }
+
+export function replacePlacedLayerContentsDescriptor(sessionToken: string): ActionDescriptor {
+  return {
+    _obj: "placedLayerReplaceContents",
+    null: {
+      _path: sessionToken,
+      _kind: "local"
+    },
+    _options: { dialogOptions: "dontDisplay" }
+  };
+}

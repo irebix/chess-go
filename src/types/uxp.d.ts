@@ -26,6 +26,7 @@ declare module "uxp" {
       isFile?: boolean;
       isFolder?: boolean;
       createFile(name: string, options?: { overwrite?: boolean }): Promise<File>;
+      getEntry?(name: string): Promise<File | Folder>;
       getEntries?(): Promise<Array<File | Folder>>;
     }
 
@@ -33,6 +34,7 @@ declare module "uxp" {
       getFileForOpening(options?: { types?: string[]; allowMultiple?: boolean }): Promise<File | File[] | null>;
       getFileForSaving(suggestedName: string, options?: { types?: string[] }): Promise<File | null>;
       getTemporaryFolder(): Promise<Folder>;
+      getPluginFolder?(): Promise<Folder>;
       getFolder(): Promise<Folder | null>;
       getFsUrl?(entry: File | Folder): string | { href?: string; toString(): string };
       getNativePath?(entry: File | Folder): string;

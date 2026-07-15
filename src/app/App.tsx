@@ -46,6 +46,7 @@ import {
   type ReferenceDocumentState
 } from "../photoshop/referenceViewController";
 import { PLUGIN_VERSION } from "../pluginMetadata";
+import { AiGenerationPanel } from "./AiGenerationPanel";
 
 type UiPhase =
   | "idle"
@@ -114,6 +115,7 @@ export function App(): React.ReactElement {
   const [batchImageFeedbackByGroup, setBatchImageFeedbackByGroup] = useState<Record<string, BatchImageFeedback>>({});
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
   );
@@ -128,7 +130,7 @@ export function App(): React.ReactElement {
 
   const busy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
-    phase === "diagnosing" || phase === "generating";
+    phase === "diagnosing" || phase === "generating" || aiBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -761,6 +763,22 @@ export function App(): React.ReactElement {
           ) : null}
         </section>
       ) : null}
+
+      <AiGenerationPanel
+        workbook={workbook}
+        activeGroups={activeGroups}
+        items={scopedItems}
+        thumbnails={thumbnails}
+        externalBusy={busy}
+        currentPsdAvailable={Boolean(referenceDocument)}
+        requestThumbnail={requestThumbnail}
+        onThumbnailError={handleThumbnailDecodeError}
+        onStatus={(detail, level = "info") => {
+          setMessage(detail);
+          appendLog(makeLog(level, "holopix.ai", detail));
+        }}
+        onBusyChange={setAiBusy}
+      />
 
       <section className={`panel-section generator-panel ${showGenerator ? "is-open" : ""}`}>
         <div

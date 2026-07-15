@@ -9,6 +9,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $distFolder = Join-Path $projectRoot "dist"
 $runtimeFiles = @(
   "manifest.json",
+  "Holopix.json",
   "index.html",
   "main.js",
   "main.js.LICENSE.txt",

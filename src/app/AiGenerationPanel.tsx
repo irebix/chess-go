@@ -1,0 +1,599 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { AssetCandidate, SheetGroup } from "../domain/models";
+import {
+  acceptAiCandidate,
+  reconcileAiItemStates,
+  summarizeAiCandidates,
+  type AiCandidateSlot,
+  type AiItemState
+} from "../domain/aiCandidates";
+import { filterItemsByGroups } from "../domain/sheetGroups";
+import type { ImportedWorkbook } from "../services/WorkbookService";
+import { generateHolopixImages } from "../ai/holopixClient";
+import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
+import { toErrorMessage } from "../utils/errors";
+
+interface ThumbnailRecord {
+  state: "loading" | "ready" | "error";
+  url?: string;
+}
+
+interface AiGenerationPanelProps {
+  workbook: ImportedWorkbook | null;
+  activeGroups: SheetGroup[];
+  items: AssetCandidate[];
+  thumbnails: Record<string, ThumbnailRecord>;
+  externalBusy: boolean;
+  currentPsdAvailable: boolean;
+  requestThumbnail: (entry: string) => void;
+  onThumbnailError: (entry: string) => void;
+  onStatus: (message: string, level?: "info" | "warn" | "error") => void;
+  onBusyChange: (busy: boolean) => void;
+}
+
+type MatrixTab = "matrix" | "accepted";
+
+export function AiGenerationPanel({
+  workbook,
+  activeGroups,
+  items,
+  thumbnails,
+  externalBusy,
+  currentPsdAvailable,
+  requestThumbnail,
+  onThumbnailError,
+  onStatus,
+  onBusyChange
+}: AiGenerationPanelProps): React.ReactElement {
+  const [open, setOpen] = useState(true);
+  const [candidateCount, setCandidateCount] = useState(2);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [states, setStates] = useState<Record<string, AiItemState>>({});
+  const [selectedItemKey, setSelectedItemKey] = useState("");
+  const [tab, setTab] = useState<MatrixTab>("matrix");
+  const [running, setRunning] = useState(false);
+  const [syncingCandidateId, setSyncingCandidateId] = useState<string | null>(null);
+  const [panelMessage, setPanelMessage] = useState("导入 Excel 并选择棋子链后，可使用内嵌图片生成候选。");
+  const abortRef = useRef<AbortController | null>(null);
+
+  const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
+  const groupItems = useMemo(
+    () => selectedGroup ? filterItemsByGroups(items, [selectedGroup]) : [],
+    [items, selectedGroup]
+  );
+  const referenceItems = useMemo(
+    () => groupItems.filter((item) => Boolean(selectedExcelImage(item))),
+    [groupItems]
+  );
+  const itemStates = groupItems.flatMap((item) => states[item.key] ? [states[item.key]!] : []);
+  const stats = summarizeAiCandidates(itemStates);
+  const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
+  const selectedState = selectedItem ? states[selectedItem.key] : undefined;
+  const disabled = externalBusy || running || Boolean(syncingCandidateId);
+  const referenceItemKeys = useMemo(() => new Set(referenceItems.map((item) => item.key)), [referenceItems]);
+  const remainingCount = itemStates.reduce(
+    (count, state) => count + (referenceItemKeys.has(state.itemKey)
+      ? state.candidates.filter((candidate) => candidate.status === "idle" || candidate.status === "failed").length
+      : 0),
+    0
+  );
+
+  useEffect(() => {
+    if (!activeGroups.length) {
+      setSelectedGroupId("");
+      return;
+    }
+    if (!activeGroups.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(activeGroups[0]!.id);
+    }
+  }, [activeGroups, selectedGroupId]);
+
+  useEffect(() => {
+    setStates((current) => reconcileAiItemStates(current, groupItems, candidateCount));
+    if (!groupItems.some((item) => item.key === selectedItemKey)) {
+      setSelectedItemKey(groupItems[0]?.key ?? "");
+    }
+  }, [candidateCount, groupItems, selectedItemKey]);
+
+  useEffect(() => {
+    for (const item of groupItems) {
+      const image = selectedExcelImage(item);
+      if (image && !thumbnails[image.anchor.archiveEntry]) requestThumbnail(image.anchor.archiveEntry);
+    }
+  }, [groupItems, requestThumbnail, thumbnails]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    onBusyChange(running || Boolean(syncingCandidateId));
+    return () => onBusyChange(false);
+  }, [onBusyChange, running, syncingCandidateId]);
+
+  async function handleBulkGenerate(): Promise<void> {
+    if (!workbook || !selectedGroup || running) return;
+    const snapshot = reconcileAiItemStates(states, groupItems, candidateCount);
+    const jobs = referenceItems.flatMap((item) => {
+      const state = snapshot[item.key];
+      if (!state) return [];
+      const slotIndexes = state.candidates.flatMap((candidate, index) =>
+        candidate.status === "idle" || candidate.status === "failed" ? [index] : []
+      );
+      return slotIndexes.length ? [{ item, state, slotIndexes }] : [];
+    });
+    const totalCandidates = jobs.reduce((count, job) => count + job.slotIndexes.length, 0);
+    if (!totalCandidates) {
+      setPanelMessage("当前棋子链没有待生成或失败的候选。");
+      return;
+    }
+    if (!confirmHolopixCost(totalCandidates)) return;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setRunning(true);
+    setStates(markSlots(snapshot, jobs, "queued"));
+    setPanelMessage(`已提交 ${jobs.length} 个参考图，共 ${totalCandidates} 张候选；并发数 2。`);
+    onStatus(`Holopix 批量生成开始：${jobs.length} 项，${totalCandidates} 张候选。`);
+
+    let completedJobs = 0;
+    let failedJobs = 0;
+    let nextJob = 0;
+    const worker = async (): Promise<void> => {
+      while (nextJob < jobs.length) {
+        const job = jobs[nextJob++]!;
+        try {
+          setStates((current) => updateSlotIndexes(current, job.item.key, job.slotIndexes, (slot) => ({
+            ...slot,
+            status: "generating",
+            error: undefined
+          })));
+          const images = await runItemGeneration(
+            workbook,
+            job.item,
+            job.state,
+            job.slotIndexes.length,
+            controller.signal
+          );
+          setStates((current) => updateSlotIndexes(current, job.item.key, job.slotIndexes, (slot, offset) => ({
+            ...slot,
+            status: "ready",
+            image: images[offset]!,
+            error: undefined
+          })));
+        } catch (error) {
+          failedJobs += 1;
+          const detail = toErrorMessage(error);
+          setStates((current) => updateSlotIndexes(current, job.item.key, job.slotIndexes, (slot) => ({
+            ...slot,
+            status: "failed",
+            error: detail
+          })));
+          onStatus(`Holopix ${job.item.assetCode} 生成失败：${detail}`, "error");
+        } finally {
+          completedJobs += 1;
+          setPanelMessage(`批次进度 ${completedJobs}/${jobs.length}${failedJobs ? `；失败 ${failedJobs}` : ""}。`);
+        }
+      }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, () => worker()));
+      const detail = failedJobs
+        ? `Holopix 批量结束：${jobs.length - failedJobs} 项成功，${failedJobs} 项失败，可点击失败格重试。`
+        : `Holopix 批量完成：${jobs.length} 项，共 ${totalCandidates} 张候选。`;
+      setPanelMessage(detail);
+      onStatus(detail, failedJobs ? "warn" : "info");
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+      setRunning(false);
+    }
+  }
+
+  async function handleRegenerate(item: AssetCandidate, slotIndex: number): Promise<void> {
+    if (!workbook || disabled) return;
+    const state = states[item.key];
+    if (!state || !selectedExcelImage(item) || !confirmHolopixCost(1)) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setRunning(true);
+    setSelectedItemKey(item.key);
+    setStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
+      ...slot,
+      status: "generating",
+      error: undefined
+    })));
+    try {
+      const images = await runItemGeneration(workbook, item, state, 1, controller.signal);
+      setStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
+        ...slot,
+        status: "ready",
+        image: images[0]!,
+        error: undefined
+      })));
+      setPanelMessage(`${item.assetCode} 的候选 ${state.candidates[slotIndex]?.label ?? ""} 已重新生成。`);
+      onStatus(`Holopix 单格重生成完成：${item.assetCode}。`);
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      setStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
+        ...slot,
+        status: "failed",
+        error: detail
+      })));
+      setPanelMessage(`生成失败：${detail}`);
+      onStatus(`Holopix ${item.assetCode} 单格生成失败：${detail}`, "error");
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+      setRunning(false);
+    }
+  }
+
+  async function handleAccept(item: AssetCandidate, candidate: AiCandidateSlot): Promise<void> {
+    if (!candidate.image || disabled) return;
+    setSelectedItemKey(item.key);
+    setStates((current) => {
+      const state = current[item.key];
+      return state ? { ...current, [item.key]: acceptAiCandidate(state, candidate.id) } : current;
+    });
+    setSyncingCandidateId(candidate.id);
+    try {
+      const result = await backfillAiCandidate(item.assetCode, candidate.image.url);
+      setPanelMessage(result.detail);
+      onStatus(result.detail, result.applied ? "info" : "warn");
+    } catch (error) {
+      const detail = `候选已选中，但回填 PSD 失败：${toErrorMessage(error)}`;
+      setPanelMessage(detail);
+      onStatus(detail, "error");
+    } finally {
+      setSyncingCandidateId(null);
+    }
+  }
+
+  function updatePrompt(value: string): void {
+    if (!selectedItem) return;
+    setStates((current) => {
+      const state = current[selectedItem.key];
+      return state ? {
+        ...current,
+        [selectedItem.key]: { ...state, prompt: value, promptDirty: true }
+      } : current;
+    });
+  }
+
+  function restoreAutomaticPrompt(): void {
+    if (!selectedItem) return;
+    setStates((current) => {
+      const state = current[selectedItem.key];
+      return state ? {
+        ...current,
+        [selectedItem.key]: { ...state, promptDirty: false }
+      } : current;
+    });
+    setPanelMessage("已恢复 Holopix 图片转提示词节点；文本框仅保留为可编辑模板。");
+  }
+
+  return (
+    <section className={`panel-section ai-panel ${open ? "is-open" : ""}`}>
+      <div
+        className="panel-section-toggle ai-panel-toggle"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setOpen((value) => !value);
+          }
+        }}
+      >
+        <span className={`panel-disclosure ${open ? "is-open" : ""}`} aria-hidden="true">
+          {open ? "⌄" : ">"}
+        </span>
+        <span>AI 生成</span>
+        <small className="ai-panel-count">{stats.completed} / {stats.total || candidateCount}</small>
+      </div>
+      {open ? (
+        <div className="panel-section-content ai-panel-content">
+          <div className="ai-connection-card">
+            <span className={`ai-status-dot ${workbook && referenceItems.length ? "is-ready" : ""}`} />
+            <span>
+              {workbook
+                ? `${currentPsdAvailable ? "当前 PSD 已建立" : "尚未打开生成 PSD"} · 参考图取自 Excel 内嵌图片`
+                : "请先在“生成 PSD”中导入 Excel"}
+            </span>
+          </div>
+
+          <div className="ai-generation-card">
+            <div className="ai-generation-summary">
+              <span>检测到 <strong>{referenceItems.length}</strong> 个参考图</span>
+              <div className="ai-stepper" aria-label="每个棋子候选数量">
+                <button
+                  className="compact"
+                  disabled={disabled || candidateCount <= 1}
+                  onClick={() => setCandidateCount((value) => Math.max(1, value - 1))}
+                >−</button>
+                <strong>{candidateCount}</strong>
+                <button
+                  className="compact"
+                  disabled={disabled || candidateCount >= 4}
+                  onClick={() => setCandidateCount((value) => Math.min(4, value + 1))}
+                >＋</button>
+              </div>
+            </div>
+            <small>每个节点生成候选 · 工作流参数直接读取 Holopix.json</small>
+            <button
+              className="primary ai-generate-all"
+              disabled={disabled || !workbook || !selectedGroup || !referenceItems.length || remainingCount === 0}
+              onClick={() => void handleBulkGenerate()}
+            >
+              {running
+                ? `生成中 ${stats.completed}/${stats.total}`
+                : stats.completed
+                  ? `继续生成未完成的 ${remainingCount} 张`
+                  : `生成 ${referenceItems.length * candidateCount} 张候选`}
+            </button>
+          </div>
+
+          <div className="ai-progress-card">
+            <div><span>批次进度</span><strong>{stats.completed} / {stats.total}</strong></div>
+            <progress value={stats.completed} max={Math.max(1, stats.total)} />
+            <small>
+              {stats.completed} 已完成　{stats.generating} 生成中　{stats.queued} 排队　{stats.failed} 失败
+            </small>
+          </div>
+
+          <div className="ai-tabs">
+            <button className={tab === "matrix" ? "is-active" : ""} onClick={() => setTab("matrix")}>候选矩阵</button>
+            <button className={tab === "accepted" ? "is-active" : ""} onClick={() => setTab("accepted")}>已选链预览</button>
+          </div>
+
+          {activeGroups.length ? (
+            <div className="ai-group-select">
+              <label htmlFor="ai-group-select">棋子链</label>
+              <select
+                id="ai-group-select"
+                value={selectedGroup?.id ?? ""}
+                disabled={disabled}
+                onChange={(event) => setSelectedGroupId(event.currentTarget.value)}
+              >
+                {activeGroups.map((group) => (
+                  <option key={group.id} value={group.id}>{group.label}</option>
+                ))}
+              </select>
+              <small>已选 {activeGroups.length} 条链</small>
+            </div>
+          ) : null}
+
+          {tab === "matrix" ? (
+            <div className="ai-matrix-shell">
+              <div className="ai-matrix-header">
+                <span>链节点</span><span>参考</span><span>候选</span>
+              </div>
+              <div className="ai-matrix-list">
+                {groupItems.map((item, index) => {
+                  const reference = selectedExcelImage(item);
+                  const thumbnail = reference ? thumbnails[reference.anchor.archiveEntry] : undefined;
+                  const state = states[item.key];
+                  const active = selectedItem?.key === item.key;
+                  return (
+                    <div
+                      className={`ai-matrix-row ${active ? "is-active" : ""}`}
+                      key={item.key}
+                      onClick={() => setSelectedItemKey(item.key)}
+                    >
+                      <div className="ai-node-copy">
+                        <span className="ai-node-index">{index + 1}</span>
+                        <span><strong>{item.name || item.assetCode}</strong><small>{item.assetCode}</small></span>
+                      </div>
+                      <ReferencePreview
+                        item={item}
+                        thumbnail={thumbnail}
+                        onError={() => reference && onThumbnailError(reference.anchor.archiveEntry)}
+                      />
+                      <div className="ai-candidate-strip">
+                        {state?.candidates.map((candidate, slotIndex) => (
+                          <CandidateCell
+                            key={candidate.id}
+                            candidate={candidate}
+                            syncing={syncingCandidateId === candidate.id}
+                            disabled={disabled}
+                            onAccept={() => void handleAccept(item, candidate)}
+                            onRegenerate={() => void handleRegenerate(item, slotIndex)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!groupItems.length ? <div className="ai-empty">请先在“生成 PSD”中选择至少一条棋子链。</div> : null}
+              </div>
+            </div>
+          ) : (
+            <div className="ai-accepted-grid">
+              {groupItems.map((item) => {
+                const accepted = states[item.key]?.candidates.find((candidate) => candidate.status === "accepted");
+                return (
+                  <div className="ai-accepted-item" key={item.key}>
+                    {accepted?.image ? <img src={accepted.image.url} alt={item.name || item.assetCode} /> : <span>未选择</span>}
+                    <small>{item.name || item.assetCode}</small>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {selectedItem && selectedState ? (
+            <div className="ai-prompt-editor">
+              <div className="ai-prompt-heading">
+                <span>当前提示词</span>
+                <small>{selectedItem.assetCode}</small>
+              </div>
+              <strong>{selectedItem.name || selectedItem.assetCode}</strong>
+              <textarea
+                value={selectedState.prompt}
+                disabled={disabled}
+                aria-label={`${selectedItem.assetCode} 的 Holopix 提示词`}
+                onChange={(event) => updatePrompt(event.currentTarget.value)}
+              />
+              <div className="ai-prompt-actions">
+                <button className="compact" disabled={disabled || !selectedState.promptDirty} onClick={restoreAutomaticPrompt}>
+                  {selectedState.promptDirty ? "恢复图片自动提示词" : "当前使用图片自动提示词"}
+                </button>
+                <button
+                  className="primary"
+                  disabled={disabled || !selectedExcelImage(selectedItem)}
+                  onClick={() => void handleRegenerate(selectedItem, firstRegenerationSlot(selectedState))}
+                >生成新候选</button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="ai-panel-message" role="status">{panelMessage}</div>
+          <small className="ai-cost-note">每次提交前都会确认 Holopix 计费；停止等待不会撤销已提交的远程任务。</small>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ReferencePreview({
+  item,
+  thumbnail,
+  onError
+}: {
+  item: AssetCandidate;
+  thumbnail?: ThumbnailRecord;
+  onError: () => void;
+}): React.ReactElement {
+  return (
+    <span className="ai-reference-preview">
+      {thumbnail?.state === "ready" && thumbnail.url
+        ? <img src={thumbnail.url} alt={`${item.name || item.assetCode} Excel 参考图`} onError={onError} />
+        : <small>{thumbnail?.state === "loading" ? "加载中" : selectedExcelImage(item) ? "未预览" : "无图片"}</small>}
+    </span>
+  );
+}
+
+function CandidateCell({
+  candidate,
+  syncing,
+  disabled,
+  onAccept,
+  onRegenerate
+}: {
+  candidate: AiCandidateSlot;
+  syncing: boolean;
+  disabled: boolean;
+  onAccept: () => void;
+  onRegenerate: () => void;
+}): React.ReactElement {
+  const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
+  return (
+    <button
+      className={`ai-candidate-cell is-${candidate.status}`}
+      disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
+      title={candidate.error || (interactive ? "点击选中并回填 PSD" : "点击生成或重试")}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (interactive) onAccept();
+        else onRegenerate();
+      }}
+    >
+      {candidate.image ? <img src={candidate.image.url} alt={`候选 ${candidate.label}`} /> : null}
+      <span className="ai-candidate-badge">{candidate.label}</span>
+      <small>{syncing ? "回填中" : candidateStatusLabel(candidate)}</small>
+    </button>
+  );
+}
+
+async function runItemGeneration(
+  workbook: ImportedWorkbook,
+  item: AssetCandidate,
+  state: AiItemState,
+  candidateCount: number,
+  signal: AbortSignal
+) {
+  const reference = selectedExcelImage(item);
+  if (!reference) throw new Error("Excel 中没有可用参考图。");
+  const referenceBytes = await workbook.reader.archive.readBinary(reference.anchor.archiveEntry);
+  const extension = reference.anchor.mediaType === "jpeg" ? "jpg" : reference.anchor.mediaType === "png" ? "png" : "bin";
+  const mediaType = reference.anchor.mediaType === "jpeg"
+    ? "image/jpeg"
+    : reference.anchor.mediaType === "png"
+      ? "image/png"
+      : "application/octet-stream";
+  return generateHolopixImages({
+    referenceBytes,
+    referenceFileName: `chess-go-${safeFilePart(item.assetCode)}-${Date.now()}.${extension}`,
+    referenceMediaType: mediaType,
+    candidateCount,
+    assetCode: item.assetCode,
+    promptOverride: state.promptDirty ? state.prompt : undefined,
+    signal
+  });
+}
+
+function selectedExcelImage(item: AssetCandidate) {
+  return item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId)
+    ?? item.imageCandidates[0];
+}
+
+function markSlots(
+  current: Record<string, AiItemState>,
+  jobs: Array<{ item: AssetCandidate; slotIndexes: number[] }>,
+  status: AiCandidateSlot["status"]
+): Record<string, AiItemState> {
+  let next = current;
+  for (const job of jobs) {
+    next = updateSlotIndexes(next, job.item.key, job.slotIndexes, (slot) => ({ ...slot, status, error: undefined }));
+  }
+  return next;
+}
+
+function updateSlotIndexes(
+  current: Record<string, AiItemState>,
+  itemKey: string,
+  slotIndexes: number[],
+  update: (slot: AiCandidateSlot, offset: number) => AiCandidateSlot
+): Record<string, AiItemState> {
+  const state = current[itemKey];
+  if (!state) return current;
+  const offsetByIndex = new Map(slotIndexes.map((slotIndex, offset) => [slotIndex, offset]));
+  return {
+    ...current,
+    [itemKey]: {
+      ...state,
+      candidates: state.candidates.map((slot, index) => {
+        const offset = offsetByIndex.get(index);
+        return offset === undefined ? slot : update(slot, offset);
+      })
+    }
+  };
+}
+
+function candidateStatusLabel(candidate: AiCandidateSlot): string {
+  if (candidate.status === "idle") return "待生成";
+  if (candidate.status === "queued") return "排队中";
+  if (candidate.status === "generating") return "生成中";
+  if (candidate.status === "ready") return "可选择";
+  if (candidate.status === "accepted") return "已选";
+  return "失败 · 重试";
+}
+
+function firstRegenerationSlot(state: AiItemState): number {
+  const failed = state.candidates.findIndex((candidate) => candidate.status === "failed");
+  if (failed >= 0) return failed;
+  const idle = state.candidates.findIndex((candidate) => candidate.status === "idle");
+  if (idle >= 0) return idle;
+  const ready = state.candidates.findIndex((candidate) => candidate.status === "ready");
+  return ready >= 0 ? ready : 0;
+}
+
+function confirmHolopixCost(candidateCount: number): boolean {
+  return window.confirm(
+    `即将向 Holopix 提交 ${candidateCount} 张候选图。该操作会产生 Holopix 点数消耗，是否继续？`
+  );
+}
+
+function safeFilePart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
+}

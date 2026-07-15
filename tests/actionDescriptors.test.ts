@@ -5,6 +5,7 @@ import {
   makeArtboardColorDescriptor,
   makeArtboardTransparentDescriptor,
   moveLayerDescriptor,
+  replacePlacedLayerContentsDescriptor,
   selectLayerDescriptor,
   setLayerGroupExpandedDescriptor
 } from "../src/photoshop/actionDescriptors";
@@ -108,6 +109,17 @@ describe("artboard action descriptors", () => {
         ]
       },
       to: false,
+      _options: { dialogOptions: "dontDisplay" }
+    });
+  });
+
+  it("replaces the selected placed layer from a UXP session token", () => {
+    expect(replacePlacedLayerContentsDescriptor("session-token")).toEqual({
+      _obj: "placedLayerReplaceContents",
+      null: {
+        _path: "session-token",
+        _kind: "local"
+      },
       _options: { dialogOptions: "dontDisplay" }
     });
   });

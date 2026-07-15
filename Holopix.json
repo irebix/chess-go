@@ -1,0 +1,127 @@
+{
+  "1": {
+    "inputs": {
+      "image": "holopix-workflow-reference.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "HolopixUploadReference",
+    "_meta": {
+      "title": "Holopix 上传参考图"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model_id": 6768,
+      "strength": 0.8
+    },
+    "class_type": "HolopixModelStack",
+    "_meta": {
+      "title": "模型 1：油光水滑图标"
+    }
+  },
+  "4": {
+    "inputs": {
+      "model_id": 7088,
+      "strength": 0.7,
+      "previous_models": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "HolopixModelStack",
+    "_meta": {
+      "title": "模型 2：欧卡场景——LSY"
+    }
+  },
+  "5": {
+    "inputs": {
+      "model_id": 858,
+      "strength": 0.6,
+      "previous_models": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "HolopixModelStack",
+    "_meta": {
+      "title": "模型 3：日韩风格等距道具模型 | HOLO-V1"
+    }
+  },
+  "6": {
+    "inputs": {
+      "reference": [
+        "2",
+        0
+      ],
+      "models": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "HolopixImageToPrompt",
+    "_meta": {
+      "title": "Holopix 图片转提示词"
+    }
+  },
+  "7": {
+    "inputs": {
+      "aspect_ratio": "1:1",
+      "batch_size": "1",
+      "request_nonce": 0,
+      "confirm_cost": true,
+      "timeout_seconds": 150,
+      "prompt": [
+        "6",
+        0
+      ],
+      "models": [
+        "5",
+        0
+      ],
+      "reference": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "HolopixGenerate",
+    "_meta": {
+      "title": "三模型生成（Excel 参考图）"
+    }
+  },
+  "8": {
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "预览图像"
+    }
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "Holopix/ChessGo/Holopix",
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  }
+}
