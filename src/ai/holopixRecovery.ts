@@ -6,8 +6,14 @@ interface RecoveryImage {
   type?: string;
 }
 
+interface RecoveryOutput {
+  images?: RecoveryImage[];
+  text?: unknown;
+}
+
 interface RecoveryEntry {
-  outputs?: Record<string, { images?: RecoveryImage[] }>;
+  outputs?: Record<string, RecoveryOutput>;
+  prompt?: unknown;
 }
 
 export function collectRecentHolopixImages(
@@ -20,6 +26,7 @@ export function collectRecentHolopixImages(
   const seen = new Set<string>();
 
   for (const entry of Object.values(history)) {
+    const promptText = extractRecoveredPromptText(entry);
     for (const output of Object.values(entry.outputs ?? {})) {
       for (const image of output.images ?? []) {
         if (!image.filename || (image.type ?? "output") !== "output") continue;
@@ -27,7 +34,7 @@ export function collectRecentHolopixImages(
         const safeName = image.filename.replace(/_\d+_\.[^.]+$/i, "");
         const assetCode = codeBySafeName.get(safeName);
         if (!assetCode) continue;
-        const generated = toGeneratedImage(image, baseUrl);
+        const generated = toGeneratedImage(image, baseUrl, promptText);
         if (seen.has(generated.url)) continue;
         seen.add(generated.url);
         (recovered[assetCode] ??= []).push(generated);
@@ -41,12 +48,50 @@ export function collectRecentHolopixImages(
   return recovered;
 }
 
-function toGeneratedImage(image: RecoveryImage, baseUrl: string): AiGeneratedImage {
+function extractRecoveredPromptText(entry: RecoveryEntry): string | undefined {
+  for (const output of Object.values(entry.outputs ?? {})) {
+    const text = normalizeOutputText(output.text);
+    if (text) return text;
+  }
+
+  const workflow = extractWorkflow(entry.prompt);
+  if (!workflow) return undefined;
+  for (const node of Object.values(workflow)) {
+    if (node?.class_type !== "HolopixGenerate") continue;
+    const prompt = node.inputs?.prompt;
+    if (typeof prompt === "string" && prompt.trim()) return prompt.trim();
+  }
+  return undefined;
+}
+
+function normalizeOutputText(value: unknown): string | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function extractWorkflow(value: unknown): Record<string, { class_type?: string; inputs?: Record<string, unknown> }> | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined;
+  const workflow = value[2];
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) return undefined;
+  return workflow as Record<string, { class_type?: string; inputs?: Record<string, unknown> }>;
+}
+
+function toGeneratedImage(
+  image: RecoveryImage,
+  baseUrl: string,
+  promptText?: string
+): AiGeneratedImage {
   const filename = image.filename!;
   const subfolder = image.subfolder ?? "";
   const type = image.type ?? "output";
   const query = new URLSearchParams({ filename, subfolder, type });
-  return { filename, subfolder, type, url: `${baseUrl}/view?${query.toString()}` };
+  return {
+    filename,
+    subfolder,
+    type,
+    url: `${baseUrl}/view?${query.toString()}`,
+    promptText
+  };
 }
 
 function normalizeSubfolder(value: string | undefined): string {

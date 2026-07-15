@@ -19,6 +19,7 @@ export interface AiGeneratedImage {
   subfolder: string;
   type: string;
   url: string;
+  promptText?: string;
   preview?: AiCandidatePreview;
   previewError?: string;
 }

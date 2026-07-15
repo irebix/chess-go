@@ -66,7 +66,7 @@ export function AiGenerationPanel({
   const [syncingCandidateId, setSyncingCandidateId] = useState<string | null>(null);
   const [openingCandidateId, setOpeningCandidateId] = useState<string | null>(null);
   const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
-  const [panelMessage, setPanelMessage] = useState("导入 Excel 并选择棋子链后，可仅用工作流提示词生成候选。");
+  const [panelMessage, setPanelMessage] = useState("Excel 参考图只用于 Holopix 图生文，生成节点仅接收返回的文字提示词。");
   const abortRef = useRef<AbortController | null>(null);
 
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
@@ -74,11 +74,25 @@ export function AiGenerationPanel({
     () => selectedGroup ? filterItemsByGroups(items, [selectedGroup]) : [],
     [items, selectedGroup]
   );
-  const generationItems = groupItems;
+  const generationItems = useMemo(
+    () => groupItems.filter((item) => Boolean(selectedExcelImage(item))),
+    [groupItems]
+  );
   const itemStates = groupItems.flatMap((item) => states[item.key] ? [states[item.key]!] : []);
   const stats = summarizeAiCandidates(itemStates);
   const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
+  const runtimePromptTexts = useMemo(() => {
+    if (!selectedItem) return [];
+    const prompts = states[selectedItem.key]?.candidates.flatMap((candidate) => {
+      const promptText = candidate.image?.promptText?.trim();
+      return promptText ? [promptText] : [];
+    }) ?? [];
+    return Array.from(new Set(prompts));
+  }, [selectedItem, states]);
   const disabled = externalBusy || running || recovering || Boolean(syncingCandidateId) || Boolean(openingCandidateId);
+  const promptDisplay = runtimePromptTexts.length > 1
+    ? runtimePromptTexts.map((prompt, index) => `批次 ${index + 1}\n${prompt}`).join("\n\n")
+    : runtimePromptTexts[0] ?? promptSource?.detail ?? "正在读取工作流提示词来源……";
   const remainingCount = itemStates.reduce(
     (count, state) => count + state.candidates.filter(
       (candidate) => candidate.status === "idle" || candidate.status === "failed"
@@ -97,11 +111,11 @@ export function AiGenerationPanel({
   }, [activeGroups, selectedGroupId]);
 
   useEffect(() => {
-    setStates((current) => reconcileAiItemStates(current, groupItems, candidateCount));
+    setStates((current) => reconcileAiItemStates(current, generationItems, candidateCount));
     if (!groupItems.some((item) => item.key === selectedItemKey)) {
       setSelectedItemKey(groupItems[0]?.key ?? "");
     }
-  }, [candidateCount, groupItems, selectedItemKey]);
+  }, [candidateCount, generationItems, groupItems, selectedItemKey]);
 
   useEffect(() => {
     for (const item of groupItems) {
@@ -120,10 +134,7 @@ export function AiGenerationPanel({
         active = false;
       };
     }
-    void loadHolopixPromptSource({
-      itemName: selectedItem.name || selectedItem.assetCode,
-      assetCode: selectedItem.assetCode
-    }).then(
+    void loadHolopixPromptSource().then(
       (source) => {
         if (active) setPromptSource(source);
       },
@@ -162,7 +173,7 @@ export function AiGenerationPanel({
         0
       );
       setStates((current) => {
-        const next = reconcileAiItemStates(current, groupItems, candidateCount);
+        const next = reconcileAiItemStates(current, generationItems, candidateCount);
         for (const item of generationItems) {
           const images = recovered[item.assetCode] ?? [];
           const state = next[item.key];
@@ -199,7 +210,7 @@ export function AiGenerationPanel({
 
   async function handleBulkGenerate(): Promise<void> {
     if (!workbook || !selectedGroup || running) return;
-    const snapshot = reconcileAiItemStates(states, groupItems, candidateCount);
+    const snapshot = reconcileAiItemStates(states, generationItems, candidateCount);
     const jobs = generationItems.flatMap((item) => {
       const state = snapshot[item.key];
       if (!state) return [];
@@ -217,7 +228,7 @@ export function AiGenerationPanel({
     abortRef.current = controller;
     setRunning(true);
     setStates(markSlots(snapshot, jobs, "queued"));
-    setPanelMessage(`已提交 ${jobs.length} 个节点的文本提示词，共 ${totalCandidates} 张方图候选；使用安全单队列。`);
+    setPanelMessage(`将为 ${jobs.length} 个节点先执行参考图生文，再提交 ${totalCandidates} 张 1:1 文生图候选；使用安全单队列。`);
     onStatus(`Holopix 批量生成开始：${jobs.length} 项，${totalCandidates} 张候选。`);
 
     let completedJobs = 0;
@@ -234,6 +245,7 @@ export function AiGenerationPanel({
             error: undefined
           })));
           const images = await runItemGeneration(
+            workbook,
             job.item,
             job.slotIndexes.length,
             controller.signal,
@@ -289,6 +301,7 @@ export function AiGenerationPanel({
     })));
     try {
       const images = await runItemGeneration(
+        workbook,
         item,
         1,
         controller.signal,
@@ -383,7 +396,7 @@ export function AiGenerationPanel({
             <span className={`ai-status-dot ${workbook && generationItems.length ? "is-ready" : ""}`} />
             <span>
               {workbook
-                ? "当前 PSD 已建立 · Holopix 仅接收工作流文本提示词"
+                ? "当前 PSD 已建立 · 参考图只用于图生文，生成节点不接图片"
                 : "请先在“生成 PSD”中导入 Excel"}
             </span>
           </div>
@@ -391,17 +404,17 @@ export function AiGenerationPanel({
           {selectedItem ? (
             <div className="ai-prompt-editor">
               <div className="ai-prompt-heading">
-                <span>Holopix 实际提示词</span>
-                <small>HolopixGenerate.prompt</small>
+                <span>Holopix 图生文实际提示词</span>
+                <small>ImageToPrompt → Generate</small>
               </div>
               <textarea
                 readOnly
-                value={promptSource?.detail ?? "正在读取当前节点提示词……"}
-                aria-label="当前节点实际提交给 Holopix 的提示词"
+                value={promptDisplay}
+                aria-label="Holopix 图片转提示词节点返回的实际提示词"
               />
               <small className="ai-prompt-source-detail">
-                当前节点：{selectedItem.name || selectedItem.assetCode} · 仅替换工作流中的
-                {" {{name}} / {{assetCode}} "}占位符，不读取或上传参考图。
+                当前节点：{selectedItem.name || selectedItem.assetCode} · Excel 参考图只连接到
+                HolopixImageToPrompt；HolopixGenerate 只接收其文字输出。生成或恢复后显示真实文本。
               </small>
             </div>
           ) : null}
@@ -423,7 +436,7 @@ export function AiGenerationPanel({
                 >＋</button>
               </div>
             </div>
-            <small>仅发送提示词 · 固定 1:1 并规范化为 1024×1024</small>
+            <small>图生文 → 文生图 · 生成节点无参考图 · 固定 1:1 / 1024×1024</small>
             <button
               className="primary ai-generate-all"
               disabled={disabled || !workbook || !selectedGroup || !generationItems.length || remainingCount === 0}
@@ -508,6 +521,7 @@ export function AiGenerationPanel({
                             onRegenerate={() => void handleRegenerate(item, slotIndex)}
                           />
                         ))}
+                        {!state ? <small className="ai-no-reference">无参考图，无法图生文</small> : null}
                       </div>
                     </div>
                   );
@@ -541,7 +555,7 @@ export function AiGenerationPanel({
           )}
 
           <div className="ai-panel-message" role="status">{panelMessage}</div>
-          <small className="ai-cost-note">点击生成后直接提交提示词-only 工作流；停止等待不会撤销已提交的远程任务。</small>
+          <small className="ai-cost-note">点击生成后直接执行图生文，再以该文本提交文生图；停止等待不会撤销已提交的远程任务。</small>
         </div>
       ) : null}
     </section>
@@ -579,12 +593,21 @@ function CandidateCell({
 }): React.ReactElement {
   const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
   const preview = candidate.image?.preview;
+  const actionable = !disabled && (
+    candidate.status === "ready" || candidate.status === "idle" || candidate.status === "failed"
+  );
+  const activate = (): void => {
+    if (!actionable) return;
+    if (candidate.status === "ready") onAccept();
+    else onRegenerate();
+  };
   return (
-    <button
-      type="button"
-      className={`ai-candidate-cell is-${candidate.status}`}
-      disabled={disabled || candidate.status === "queued" || candidate.status === "generating" || candidate.status === "accepted"}
+    <div
+      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""}`}
+      role="button"
+      tabIndex={actionable ? 0 : -1}
       aria-pressed={candidate.status === "accepted"}
+      aria-disabled={!actionable}
       title={candidate.error || candidate.image?.previewError || (
         candidate.status === "accepted"
           ? "已选中并回填 Photoshop"
@@ -592,9 +615,12 @@ function CandidateCell({
             ? "点击图片选中并回填 Photoshop"
             : "点击生成或重试"
       )}
-      onClick={() => {
-        if (interactive) onAccept();
-        else onRegenerate();
+      onClick={activate}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activate();
+        }
       }}
     >
       {interactive ? (
@@ -604,7 +630,7 @@ function CandidateCell({
       ) : (
         <span className="ai-candidate-generate">{candidateStatusLabel(candidate)}</span>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -648,15 +674,31 @@ function SafeCandidateCanvas({
 }
 
 async function runItemGeneration(
+  workbook: ImportedWorkbook,
   item: AssetCandidate,
   candidateCount: number,
   signal: AbortSignal,
   onStage: (message: string) => void
 ) {
+  const reference = selectedExcelImage(item);
+  if (!reference) throw new Error("Excel 中没有可用于 Holopix 图生文的参考图。");
+  const referenceBytes = await workbook.reader.archive.readBinary(reference.anchor.archiveEntry);
+  const extension = reference.anchor.mediaType === "jpeg"
+    ? "jpg"
+    : reference.anchor.mediaType === "png"
+      ? "png"
+      : "bin";
+  const mediaType = reference.anchor.mediaType === "jpeg"
+    ? "image/jpeg"
+    : reference.anchor.mediaType === "png"
+      ? "image/png"
+      : "application/octet-stream";
   return generateHolopixImages({
+    referenceBytes,
+    referenceFileName: `chess-go-${safeFilePart(item.assetCode)}-${Date.now()}.${extension}`,
+    referenceMediaType: mediaType,
     candidateCount,
     assetCode: item.assetCode,
-    itemName: item.name || item.assetCode,
     signal,
     onStage
   });
@@ -665,6 +707,10 @@ async function runItemGeneration(
 function selectedExcelImage(item: AssetCandidate) {
   return item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId)
     ?? item.imageCandidates[0];
+}
+
+function safeFilePart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
 }
 
 function markSlots(

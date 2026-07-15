@@ -10,22 +10,16 @@ export interface PreparedHolopixWorkflow {
   workflow: ComfyWorkflow;
   generateNodeId: string;
   saveNodeId: string;
+  promptCaptureNodeId: string;
   timeoutSeconds: number;
-  promptText: string;
 }
 
 export interface HolopixWorkflowOverrides {
+  imageName: string;
   batchSize: 1 | 2 | 4;
   requestNonce: number;
   confirmCost: boolean;
   filenamePrefix: string;
-  itemName: string;
-  assetCode: string;
-}
-
-export interface HolopixPromptVariables {
-  itemName: string;
-  assetCode: string;
 }
 
 export interface HolopixPromptSource {
@@ -39,16 +33,22 @@ export function prepareHolopixWorkflow(
   options: HolopixWorkflowOverrides
 ): PreparedHolopixWorkflow {
   const workflow = cloneWorkflow(baseWorkflow);
+  const loadImage = findOnlyNode(workflow, "LoadImage");
+  const uploadReference = findOnlyNode(workflow, "HolopixUploadReference");
+  const imageToPrompt = findOnlyNode(workflow, "HolopixImageToPrompt");
   const generate = findOnlyNode(workflow, "HolopixGenerate");
   const square = findOnlyNode(workflow, "ImageScale");
   const save = findOnlyNode(workflow, "SaveImage");
-  const promptText = resolveHolopixPromptText(workflow, options);
+  const promptCapture = findOnlyNode(workflow, "easy showAnything");
 
+  loadImage.node.inputs.image = options.imageName;
+  uploadReference.node.inputs.image = [loadImage.id, 0];
+  imageToPrompt.node.inputs.reference = [uploadReference.id, 0];
+  generate.node.inputs.prompt = [imageToPrompt.id, 0];
   generate.node.inputs.aspect_ratio = "1:1";
   generate.node.inputs.batch_size = String(options.batchSize);
   generate.node.inputs.request_nonce = options.requestNonce;
   generate.node.inputs.confirm_cost = options.confirmCost;
-  generate.node.inputs.prompt = promptText;
   delete generate.node.inputs.reference;
   square.node.inputs.image = [generate.id, 0];
   square.node.inputs.width = 1024;
@@ -56,6 +56,7 @@ export function prepareHolopixWorkflow(
   square.node.inputs.crop = "center";
   save.node.inputs.filename_prefix = options.filenamePrefix;
   save.node.inputs.images = [square.id, 0];
+  promptCapture.node.inputs.anything = [imageToPrompt.id, 0];
 
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)
@@ -66,41 +67,30 @@ export function prepareHolopixWorkflow(
     workflow,
     generateNodeId: generate.id,
     saveNodeId: save.id,
-    timeoutSeconds,
-    promptText
+    promptCaptureNodeId: promptCapture.id,
+    timeoutSeconds
   };
 }
 
-export function describeHolopixPromptSource(
-  workflow: ComfyWorkflow,
-  variables?: HolopixPromptVariables
-): HolopixPromptSource {
+export function describeHolopixPromptSource(workflow: ComfyWorkflow): HolopixPromptSource {
   const generate = findOnlyNode(workflow, "HolopixGenerate");
   const prompt = generate.node.inputs.prompt;
-  if (typeof prompt === "string" && prompt.trim()) {
-    return {
-      kind: "text",
-      label: variables ? "HolopixGenerate.prompt · 当前节点" : "HolopixGenerate.prompt",
-      detail: variables ? resolvePromptTemplate(prompt, variables) : prompt.trim()
-    };
+  if (Array.isArray(prompt) && typeof prompt[0] === "string") {
+    const sourceId = prompt[0];
+    const source = workflow[sourceId];
+    if (source?.class_type === "HolopixImageToPrompt") {
+      return {
+        kind: "node",
+        label: source._meta?.title?.trim() || "Holopix 图片转提示词",
+        detail: `等待生成或恢复后显示该节点返回的实际提示词（节点 ${sourceId}）。`
+      };
+    }
   }
   return {
     kind: "unknown",
     label: "HolopixGenerate.prompt",
-    detail: "工作流必须在 HolopixGenerate.prompt 中直接配置文本提示词。"
+    detail: "工作流必须把 HolopixImageToPrompt 的文本输出连接到 HolopixGenerate.prompt。"
   };
-}
-
-export function resolveHolopixPromptText(
-  workflow: ComfyWorkflow,
-  variables: HolopixPromptVariables
-): string {
-  const generate = findOnlyNode(workflow, "HolopixGenerate");
-  const prompt = generate.node.inputs.prompt;
-  if (typeof prompt !== "string" || !prompt.trim()) {
-    throw new Error("HolopixGenerate.prompt 必须是非空文本；提示词-only 模式不接受参考图或提示词节点连线。");
-  }
-  return resolvePromptTemplate(prompt, variables);
 }
 
 export function splitHolopixBatches(candidateCount: number): Array<1 | 2 | 4> {
@@ -118,28 +108,46 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
     throw new Error("Holopix.json 不是有效的 ComfyUI API 工作流对象。");
   }
   const workflow = value as ComfyWorkflow;
-  for (const classType of ["HolopixGenerate", "ImageScale", "SaveImage"]) {
+  for (const classType of [
+    "LoadImage",
+    "HolopixUploadReference",
+    "HolopixImageToPrompt",
+    "HolopixGenerate",
+    "ImageScale",
+    "SaveImage",
+    "easy showAnything"
+  ]) {
     findOnlyNode(workflow, classType);
   }
-  const forbidden = Object.entries(workflow).find(([, node]) =>
-    ["LoadImage", "HolopixUploadReference", "HolopixImageToPrompt"].includes(node.class_type)
+
+  const uploadReference = findOnlyNode(workflow, "HolopixUploadReference");
+  const imageToPrompt = findOnlyNode(workflow, "HolopixImageToPrompt");
+  const generate = findOnlyNode(workflow, "HolopixGenerate");
+  const promptCapture = findOnlyNode(workflow, "easy showAnything");
+  assertConnection(
+    imageToPrompt.node.inputs.reference,
+    uploadReference.id,
+    "HolopixImageToPrompt.reference 必须连接 HolopixUploadReference。"
   );
-  if (forbidden) {
-    throw new Error(`Holopix.json 当前为提示词-only 模式，不能包含参考图节点 ${forbidden[1].class_type}（节点 ${forbidden[0]}）。`);
+  assertConnection(
+    generate.node.inputs.prompt,
+    imageToPrompt.id,
+    "HolopixGenerate.prompt 必须连接 HolopixImageToPrompt。"
+  );
+  assertConnection(
+    promptCapture.node.inputs.anything,
+    imageToPrompt.id,
+    "实际提示词记录节点必须连接 HolopixImageToPrompt。"
+  );
+  if ("reference" in generate.node.inputs) {
+    throw new Error("HolopixGenerate 不能连接 reference；参考图只能用于前置图生文节点。");
   }
-  resolveHolopixPromptText(workflow, { itemName: "验证节点", assetCode: "validation" });
 }
 
-function resolvePromptTemplate(template: string, variables: HolopixPromptVariables): string {
-  const assetCode = variables.assetCode.trim() || "未编号";
-  const itemName = variables.itemName.trim() || assetCode;
-  const resolved = template
-    .split("{{name}}").join(itemName)
-    .split("{{itemName}}").join(itemName)
-    .split("{{assetCode}}").join(assetCode)
-    .trim();
-  if (!resolved) throw new Error("HolopixGenerate.prompt 解析后为空。");
-  return resolved;
+function assertConnection(value: unknown, expectedNodeId: string, message: string): void {
+  if (!Array.isArray(value) || value[0] !== expectedNodeId || value[1] !== 0) {
+    throw new Error(message);
+  }
 }
 
 function cloneWorkflow(workflow: ComfyWorkflow): ComfyWorkflow {

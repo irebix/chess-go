@@ -13,12 +13,17 @@ import {
   prepareHolopixWorkflow,
   splitHolopixBatches,
   type ComfyWorkflow,
-  type HolopixPromptVariables,
   type HolopixPromptSource
 } from "./holopixWorkflow";
 
 const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
 let workflowPromise: Promise<ComfyWorkflow> | null = null;
+
+interface UploadedImage {
+  name: string;
+  subfolder?: string;
+  type?: string;
+}
 
 interface QueueResponse {
   prompt_id?: string;
@@ -32,8 +37,13 @@ interface HistoryImage {
   type?: string;
 }
 
+interface HistoryOutput {
+  images?: HistoryImage[];
+  text?: unknown;
+}
+
 interface HistoryEntry {
-  outputs?: Record<string, { images?: HistoryImage[] }>;
+  outputs?: Record<string, HistoryOutput>;
   status?: {
     completed?: boolean;
     status_str?: string;
@@ -42,9 +52,11 @@ interface HistoryEntry {
 }
 
 export interface HolopixGenerationOptions {
+  referenceBytes: Uint8Array;
+  referenceFileName: string;
+  referenceMediaType: string;
   candidateCount: number;
   assetCode: string;
-  itemName: string;
   signal?: AbortSignal;
   onBatchStarted?: (completedCandidates: number, totalCandidates: number) => void;
   onStage?: (message: string) => void;
@@ -81,7 +93,8 @@ export async function generateHolopixImages(
 ): Promise<AiGeneratedImage[]> {
   const baseWorkflow = await loadBundledHolopixWorkflow();
   await checkHolopixAvailability(options.signal);
-  options.onStage?.("已读取 Holopix.json 文本提示词；未上传参考图。");
+  const uploaded = await uploadReference(options, options.signal);
+  options.onStage?.("Excel 参考图已上传；仅用于 Holopix 图生文节点。");
   const batches = splitHolopixBatches(options.candidateCount);
   const results: AiGeneratedImage[] = [];
 
@@ -90,25 +103,30 @@ export async function generateHolopixImages(
     const batchSize = batches[batchIndex]!;
     options.onBatchStarted?.(results.length, options.candidateCount);
     const prepared = prepareHolopixWorkflow(baseWorkflow, {
+      imageName: uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name,
       batchSize,
       requestNonce: makeRequestNonce(batchIndex),
       confirmCost: true,
-      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`,
-      itemName: options.itemName,
-      assetCode: options.assetCode
+      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`
     });
     const promptId = await queuePrompt(prepared.workflow, options.signal);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已提交。`);
-    const images = await waitForImages(
+    const generated = await waitForImages(
       promptId,
       prepared.saveNodeId,
+      prepared.promptCaptureNodeId,
       prepared.timeoutSeconds + 45,
       options.signal
     );
+    const images = generated.images;
     if (images.length < batchSize) {
       throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
     }
-    const selectedImages = images.slice(0, batchSize);
+    const selectedImages = images.slice(0, batchSize).map((image) => ({
+      ...image,
+      promptText: generated.promptText
+    }));
+    options.onStage?.(`Holopix 图生文实际提示词：${summarizePrompt(generated.promptText)}`);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
     results.push(...await loadSafePreviews(selectedImages, options.signal, options.onStage));
   }
@@ -154,10 +172,8 @@ async function createSafePreview(
   return decodeHolopixSafeJpeg(response.bytes, response.mediaType);
 }
 
-export async function loadHolopixPromptSource(
-  variables?: HolopixPromptVariables
-): Promise<HolopixPromptSource> {
-  return describeHolopixPromptSource(await loadBundledHolopixWorkflow(), variables);
+export async function loadHolopixPromptSource(): Promise<HolopixPromptSource> {
+  return describeHolopixPromptSource(await loadBundledHolopixWorkflow());
 }
 
 async function loadBundledHolopixWorkflow(): Promise<ComfyWorkflow> {
@@ -182,6 +198,24 @@ async function loadBundledHolopixWorkflow(): Promise<ComfyWorkflow> {
   return workflowPromise;
 }
 
+async function uploadReference(
+  options: Pick<HolopixGenerationOptions, "referenceBytes" | "referenceFileName" | "referenceMediaType">,
+  signal?: AbortSignal
+): Promise<UploadedImage> {
+  const copy = new Uint8Array(options.referenceBytes.byteLength);
+  copy.set(options.referenceBytes);
+  const form = new FormData();
+  form.append("image", new Blob([copy.buffer], { type: options.referenceMediaType }), options.referenceFileName);
+  form.append("overwrite", "true");
+  const response = await fetchJson(`${DEFAULT_COMFY_URL}/upload/image`, {
+    method: "POST",
+    body: form,
+    signal
+  }, 45_000) as UploadedImage;
+  if (!response?.name) throw new Error("ComfyUI 上传参考图后未返回文件名。");
+  return response;
+}
+
 async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promise<string> {
   const response = await fetchJson(`${DEFAULT_COMFY_URL}/prompt`, {
     method: "POST",
@@ -203,9 +237,10 @@ async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promi
 async function waitForImages(
   promptId: string,
   saveNodeId: string,
+  promptCaptureNodeId: string,
   timeoutSeconds: number,
   signal?: AbortSignal
-): Promise<AiGeneratedImage[]> {
+): Promise<{ images: AiGeneratedImage[]; promptText: string }> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
@@ -226,14 +261,28 @@ async function waitForImages(
       const executionError = findExecutionError(entry.status?.messages);
       if (executionError) throw new Error(executionError);
       const images = entry.outputs?.[saveNodeId]?.images ?? [];
-      if (images.length) return images.map(toGeneratedImage);
+      const promptText = extractCapturedPrompt(entry.outputs?.[promptCaptureNodeId]?.text);
+      if (images.length && promptText) {
+        return { images: images.map(toGeneratedImage), promptText };
+      }
       if (entry.status?.completed || entry.status?.status_str === "error") {
-        throw new Error("Holopix 工作流已结束，但 SaveImage 节点没有输出图片。");
+        if (!images.length) throw new Error("Holopix 工作流已结束，但 SaveImage 节点没有输出图片。");
+        throw new Error("Holopix 工作流已生成图片，但未记录 HolopixImageToPrompt 的实际提示词。");
       }
     }
     await delay(1000, signal);
   }
   throw new Error(`等待 Holopix 生成超时（${timeoutSeconds} 秒）。`);
+}
+
+function extractCapturedPrompt(value: unknown): string | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function summarizePrompt(promptText: string): string {
+  const compact = promptText.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact;
 }
 
 async function waitForPreviewImage(
