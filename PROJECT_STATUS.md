@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-15  
-当前发布版本：`0.3.1`
+当前发布版本：`0.3.2`
 
 ## 一句话摘要
 
@@ -11,8 +11,8 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.3.1`（以 `git log -1` 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.3.1`（以 `git log -1` 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.3.2`（以 `git log -1` 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.3.2`（以 `git log -1` 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
@@ -32,7 +32,8 @@
 - 可统一修改原生画板背景颜色，也可隐藏为透明并恢复设置颜色。
 - 布局元数据存放在默认折叠的隐藏数据组，供分组框与底板控制使用。
 - “AI 生成”与“当前 PSD”使用相同的自动识别条件，仅在当前文档是可识别的棋子归档 PSD 时显示；参考图固定取当前棋子链中已选择的 Excel 内嵌图片。
-- Holopix 候选数可设为 `1–4`；按棋子并发 `2` 项，三张候选自动拆为 Holopix 支持的 `2 + 1` 批次。
+- Holopix 候选数可设为 `1–4`；按棋子使用安全单队列，三张候选自动拆为 Holopix 支持的 `2 + 1` 批次。
+- 候选原图只用于 PSD 回填；面板顺序读取 ComfyUI 转码的小型 JPEG，并以内存 data URL 显示，避免 Photoshop 25.4 的 UXP 直接加载本机 HTTP 原图时发生原生闪退。
 - 候选矩阵使用 `1:1` 参考图和候选缩略图，显示排队/生成/完成/失败/已选状态；支持失败重试、单格重生成和已选链预览。
 - 提示词完全沿用 `HolopixGenerate.prompt` 在 `Holopix.json` 中配置的文本或节点连线；模型、强度、比例、超时等参数也直接读取工作流，不生成或覆盖提示词。
 - 点击生成后直接提交 Holopix 工作流，不显示二次确认弹窗；自动化验证不提交真实生成任务。
@@ -64,22 +65,23 @@
 - `0.2.7`：无关联图片改为非阻断提醒；继续生成不含参考图的画板与空白智能对象，并保留分组框和底板控制。
 - `0.3.0`：接入 Excel 参考图 → Holopix → AI 候选矩阵 → 画板智能对象回填流程；增加 UXP 兼容面板、付费确认、批量并发、单格重试和可直接编辑的 `Holopix.json`。
 - `0.3.1`：根据诊断包修复 UXP `Manifest entry not found` 网络权限；AI 栏跟随当前 PSD 自动显隐，缩略图改为 `1:1`，提示词只来自工作流，并取消生成前弹窗。
+- `0.3.2`：根据 Photoshop 原生崩溃记录和 ComfyUI 输出时间线，移除候选区对本机 HTTP 原图的直接渲染，改用顺序读取的受限 JPEG data URL；生成并发降为单队列并补充阶段日志。
 
 ## 验证状态
 
 - 最近一次 `pnpm verify`：通过。
 - TypeScript strict：通过。
-- Vitest：`24` 个测试文件、`88/88` 测试通过。
-- Webpack production build：通过；仅有 `main.js` 体积建议警告（约 392 KiB），不是构建失败。
+- Vitest：`25` 个测试文件、`90/90` 测试通过。
+- Webpack production build：通过；仅有 `main.js` 体积建议警告（约 395 KiB），不是构建失败。
 - `dist` 与发布仓库运行文件哈希一致。
 - `main` 与 `release` 在整理本文档前均为干净工作区并与远端一致。
 
 ## 仍需人工验证
 
-- 重启 Photoshop 使 `0.3.1` Manifest 生效；确认普通 PSD 不显示“AI 生成”，识别到棋子归档 PSD 后在“当前 PSD”和“生成 PSD”之间自动显示。
+- 重启 Photoshop 使 `0.3.2` 生效；确认普通 PSD 不显示“AI 生成”，识别到棋子归档 PSD 后在“当前 PSD”和“生成 PSD”之间自动显示。
 - 启动本机 `127.0.0.1:8188` 的 ComfyUI，并确认 `HolopixUploadReference`、`HolopixImageToPrompt`、`HolopixGenerate`、`SaveImage` 节点可用。
 - 导入含内嵌图片的 Excel、选择棋子链；确认参考图和候选缩略图均为 `1:1`，工作流提示词卡显示 `HolopixGenerate.prompt` 的文本或来源节点。
-- 点击生成时确认不再出现二次弹窗，并执行一次真实 Holopix 生成；选择候选，确认对应 assetCode 画板的空白智能对象被替换，其他画板和参考图不变。
+- 点击生成时确认不再出现二次弹窗，并执行一次真实 Holopix 生成；重点确认首张候选出现时 Photoshop 不再闪退，然后选择候选，确认对应 assetCode 画板的空白智能对象被替换，其他画板和参考图不变。
 - 修改发布目录的 `Holopix.json` 模型、强度或比例后重载插件，确认面板提交沿用节点参数。
 - 在 Photoshop 中确认仍显示 `智能对象边长 1024`、`画板间距 50`。
 - 修改两个值、关闭并重新打开插件或重启 Photoshop，确认恢复上次合法输入。

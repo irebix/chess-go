@@ -13,6 +13,8 @@ export interface AiGeneratedImage {
   subfolder: string;
   type: string;
   url: string;
+  previewDataUrl?: string;
+  previewError?: string;
 }
 
 export interface AiCandidateSlot {

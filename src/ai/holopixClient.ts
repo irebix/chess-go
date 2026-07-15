@@ -1,5 +1,6 @@
 import { storage } from "uxp";
 import type { AiGeneratedImage } from "../domain/aiCandidates";
+import { buildHolopixPreviewUrl, encodeHolopixPreviewDataUrl } from "./holopixPreview";
 import {
   assertHolopixWorkflow,
   describeHolopixPromptSource,
@@ -47,6 +48,7 @@ export interface HolopixGenerationOptions {
   assetCode: string;
   signal?: AbortSignal;
   onBatchStarted?: (completedCandidates: number, totalCandidates: number) => void;
+  onStage?: (message: string) => void;
 }
 
 export async function checkHolopixAvailability(signal?: AbortSignal): Promise<void> {
@@ -59,6 +61,7 @@ export async function generateHolopixImages(
   const baseWorkflow = await loadBundledHolopixWorkflow();
   await checkHolopixAvailability(options.signal);
   const uploaded = await uploadReference(options, options.signal);
+  options.onStage?.("参考图已上传到 ComfyUI。");
   const batches = splitHolopixBatches(options.candidateCount);
   const results: AiGeneratedImage[] = [];
 
@@ -74,6 +77,7 @@ export async function generateHolopixImages(
       filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`
     });
     const promptId = await queuePrompt(prepared.workflow, options.signal);
+    options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已提交。`);
     const images = await waitForImages(
       promptId,
       prepared.saveNodeId,
@@ -83,10 +87,59 @@ export async function generateHolopixImages(
     if (images.length < batchSize) {
       throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
     }
-    results.push(...images.slice(0, batchSize));
+    const selectedImages = images.slice(0, batchSize);
+    options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
+    results.push(...await loadSafePreviews(selectedImages, options));
   }
 
   return results;
+}
+
+async function loadSafePreviews(
+  images: AiGeneratedImage[],
+  options: Pick<HolopixGenerationOptions, "signal" | "onStage">
+): Promise<AiGeneratedImage[]> {
+  const results: AiGeneratedImage[] = [];
+  for (let index = 0; index < images.length; index += 1) {
+    throwIfAborted(options.signal);
+    const image = images[index]!;
+    try {
+      const previewDataUrl = await fetchPreviewDataUrl(image, options.signal);
+      results.push({ ...image, previewDataUrl });
+      options.onStage?.(`安全缩略图 ${index + 1}/${images.length} 已读取。`);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const previewError = error instanceof Error ? error.message : String(error);
+      results.push({ ...image, previewError });
+      options.onStage?.(`安全缩略图 ${index + 1}/${images.length} 读取失败；原图仍可回填：${previewError}`);
+    }
+  }
+  return results;
+}
+
+async function fetchPreviewDataUrl(
+  image: AiGeneratedImage,
+  signal?: AbortSignal
+): Promise<string> {
+  const controller = new AbortController();
+  const abortFromExternal = (): void => controller.abort();
+  signal?.addEventListener("abort", abortFromExternal, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(buildHolopixPreviewUrl(image, DEFAULT_COMFY_URL), {
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}。`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return encodeHolopixPreviewDataUrl(bytes, response.headers.get("content-type"));
+  } catch (error) {
+    if (signal?.aborted) throw abortError();
+    if (controller.signal.aborted) throw new Error("读取 Holopix 安全缩略图超时。");
+    throw new Error(`读取 Holopix 安全缩略图失败：${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromExternal);
+  }
 }
 
 export async function loadHolopixPromptSource(): Promise<HolopixPromptSource> {

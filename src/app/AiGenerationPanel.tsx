@@ -32,6 +32,7 @@ interface AiGenerationPanelProps {
 }
 
 type MatrixTab = "matrix" | "accepted";
+const AI_GENERATION_CONCURRENCY = 1;
 
 export function AiGenerationPanel({
   workbook,
@@ -150,7 +151,7 @@ export function AiGenerationPanel({
     abortRef.current = controller;
     setRunning(true);
     setStates(markSlots(snapshot, jobs, "queued"));
-    setPanelMessage(`已提交 ${jobs.length} 个参考图，共 ${totalCandidates} 张候选；并发数 2。`);
+    setPanelMessage(`已提交 ${jobs.length} 个参考图，共 ${totalCandidates} 张候选；使用安全单队列。`);
     onStatus(`Holopix 批量生成开始：${jobs.length} 项，${totalCandidates} 张候选。`);
 
     let completedJobs = 0;
@@ -160,6 +161,7 @@ export function AiGenerationPanel({
       while (nextJob < jobs.length) {
         const job = jobs[nextJob++]!;
         try {
+          onStatus(`Holopix ${job.item.assetCode} 开始生成 ${job.slotIndexes.length} 张候选。`);
           setStates((current) => updateSlotIndexes(current, job.item.key, job.slotIndexes, (slot) => ({
             ...slot,
             status: "generating",
@@ -169,7 +171,8 @@ export function AiGenerationPanel({
             workbook,
             job.item,
             job.slotIndexes.length,
-            controller.signal
+            controller.signal,
+            (message) => onStatus(`Holopix ${job.item.assetCode}：${message}`)
           );
           setStates((current) => updateSlotIndexes(current, job.item.key, job.slotIndexes, (slot, offset) => ({
             ...slot,
@@ -194,7 +197,7 @@ export function AiGenerationPanel({
     };
 
     try {
-      await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(AI_GENERATION_CONCURRENCY, jobs.length) }, () => worker()));
       const detail = failedJobs
         ? `Holopix 批量结束：${jobs.length - failedJobs} 项成功，${failedJobs} 项失败，可点击失败格重试。`
         : `Holopix 批量完成：${jobs.length} 项，共 ${totalCandidates} 张候选。`;
@@ -220,7 +223,13 @@ export function AiGenerationPanel({
       error: undefined
     })));
     try {
-      const images = await runItemGeneration(workbook, item, 1, controller.signal);
+      const images = await runItemGeneration(
+        workbook,
+        item,
+        1,
+        controller.signal,
+        (message) => onStatus(`Holopix ${item.assetCode}：${message}`)
+      );
       setStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
         ...slot,
         status: "ready",
@@ -408,7 +417,9 @@ export function AiGenerationPanel({
                 const accepted = states[item.key]?.candidates.find((candidate) => candidate.status === "accepted");
                 return (
                   <div className="ai-accepted-item" key={item.key}>
-                    {accepted?.image ? <img src={accepted.image.url} alt={item.name || item.assetCode} /> : <span>未选择</span>}
+                    {accepted?.image?.previewDataUrl
+                      ? <img src={accepted.image.previewDataUrl} alt={item.name || item.assetCode} />
+                      : <span>{accepted?.image ? "预览不可用" : "未选择"}</span>}
                     <small>{item.name || item.assetCode}</small>
                   </div>
                 );
@@ -478,14 +489,16 @@ function CandidateCell({
     <button
       className={`ai-candidate-cell is-${candidate.status}`}
       disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
-      title={candidate.error || (interactive ? "点击选中并回填 PSD" : "点击生成或重试")}
+      title={candidate.error || candidate.image?.previewError || (interactive ? "点击选中并回填 PSD" : "点击生成或重试")}
       onClick={(event) => {
         event.stopPropagation();
         if (interactive) onAccept();
         else onRegenerate();
       }}
     >
-      {candidate.image ? <img src={candidate.image.url} alt={`候选 ${candidate.label}`} /> : null}
+      {candidate.image?.previewDataUrl
+        ? <img src={candidate.image.previewDataUrl} alt={`候选 ${candidate.label}`} />
+        : null}
       <span className="ai-candidate-badge">{candidate.label}</span>
       <small>{syncing ? "回填中" : candidateStatusLabel(candidate)}</small>
     </button>
@@ -496,7 +509,8 @@ async function runItemGeneration(
   workbook: ImportedWorkbook,
   item: AssetCandidate,
   candidateCount: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onStage: (message: string) => void
 ) {
   const reference = selectedExcelImage(item);
   if (!reference) throw new Error("Excel 中没有可用参考图。");
@@ -513,7 +527,8 @@ async function runItemGeneration(
     referenceMediaType: mediaType,
     candidateCount,
     assetCode: item.assetCode,
-    signal
+    signal,
+    onStage
   });
 }
 
@@ -559,8 +574,8 @@ function candidateStatusLabel(candidate: AiCandidateSlot): string {
   if (candidate.status === "idle") return "待生成";
   if (candidate.status === "queued") return "排队中";
   if (candidate.status === "generating") return "生成中";
-  if (candidate.status === "ready") return "可选择";
-  if (candidate.status === "accepted") return "已选";
+  if (candidate.status === "ready") return candidate.image?.previewDataUrl ? "可选择" : "已完成";
+  if (candidate.status === "accepted") return candidate.image?.previewDataUrl ? "已选" : "已选 · 无预览";
   return "失败 · 重试";
 }
 
