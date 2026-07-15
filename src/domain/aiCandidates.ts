@@ -8,11 +8,19 @@ export type AiCandidateStatus =
   | "accepted"
   | "failed";
 
+export interface AiCandidatePreview {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+}
+
 export interface AiGeneratedImage {
   filename: string;
   subfolder: string;
   type: string;
   url: string;
+  preview?: AiCandidatePreview;
+  previewError?: string;
 }
 
 export interface AiCandidateSlot {

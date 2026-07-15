@@ -4,6 +4,7 @@ import {
   acceptAiCandidate,
   reconcileAiItemStates,
   summarizeAiCandidates,
+  type AiCandidatePreview,
   type AiCandidateSlot,
   type AiItemState
 } from "../domain/aiCandidates";
@@ -15,6 +16,10 @@ import {
   recoverRecentHolopixImages
 } from "../ai/holopixClient";
 import { openHolopixCandidateExternally } from "../ai/holopixExternalPreview";
+import {
+  buildHolopixCanvasRuns,
+  HOLOPIX_CANVAS_PREVIEW_SIZE
+} from "../ai/holopixSafePreview";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
 import { toErrorMessage } from "../utils/errors";
@@ -142,7 +147,12 @@ export function AiGenerationPanel({
     if (!selectedGroup || disabled || !referenceItems.length) return;
     setRecovering(true);
     try {
-      const recovered = await recoverRecentHolopixImages(referenceItems.map((item) => item.assetCode));
+      const recovered = await recoverRecentHolopixImages(
+        referenceItems.map((item) => item.assetCode),
+        candidateCount,
+        undefined,
+        (message) => onStatus(`Holopix 安全预览：${message}`)
+      );
       const recoveredCount = referenceItems.reduce(
         (count, item) => count + Math.min(candidateCount, recovered[item.assetCode]?.length ?? 0),
         0
@@ -498,8 +508,13 @@ export function AiGenerationPanel({
                       ? <button
                           className="ai-accepted-view"
                           disabled={disabled}
+                          title="点击在系统浏览器查看原图"
                           onClick={() => void handleView(item, accepted)}
-                        >{openingCandidateId === accepted.id ? "打开中" : "系统查看"}</button>
+                        >
+                          {accepted.image.preview
+                            ? <SafeCandidateCanvas preview={accepted.image.preview} />
+                            : <span>{openingCandidateId === accepted.id ? "打开中" : "系统查看"}</span>}
+                        </button>
                       : <span>未选择</span>}
                     <small>{item.name || item.assetCode}</small>
                   </div>
@@ -570,14 +585,18 @@ function CandidateCell({
   onRegenerate: () => void;
 }): React.ReactElement {
   const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
+  const preview = candidate.image?.preview;
   return (
     <div
       className={`ai-candidate-cell is-${candidate.status}`}
-      title={candidate.error || (interactive ? "先在系统浏览器查看，再选用并回填 PSD" : "点击生成或重试")}
+      title={candidate.error || candidate.image?.previewError || (interactive ? "面板内为安全缩略图；外看可打开原图" : "点击生成或重试")}
     >
       <span className="ai-candidate-badge">{candidate.label}</span>
       {interactive ? (
         <>
+          {preview
+            ? <SafeCandidateCanvas preview={preview} />
+            : <small className="ai-candidate-preview-fallback">预览失败</small>}
           <button
             className="ai-candidate-view"
             disabled={disabled}
@@ -585,7 +604,7 @@ function CandidateCell({
               event.stopPropagation();
               onPreview();
             }}
-          >{opening ? "打开中" : "查看"}</button>
+          >{opening ? "…" : "外看"}</button>
           <button
             className="ai-candidate-accept"
             disabled={disabled || candidate.status === "accepted"}
@@ -606,6 +625,45 @@ function CandidateCell({
         >{candidateStatusLabel(candidate)}</button>
       )}
     </div>
+  );
+}
+
+function SafeCandidateCanvas({
+  preview
+}: {
+  preview: AiCandidatePreview;
+}): React.ReactElement {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [renderFailed, setRenderFailed] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("当前 UXP 不支持 Canvas 2D 上下文。");
+      context.clearRect(0, 0, HOLOPIX_CANVAS_PREVIEW_SIZE, HOLOPIX_CANVAS_PREVIEW_SIZE);
+      for (const run of buildHolopixCanvasRuns(preview)) {
+        context.fillStyle = run.color;
+        context.fillRect(run.x, run.y, run.width, 1);
+      }
+      setRenderFailed(false);
+    } catch (error) {
+      console.error("Holopix Canvas 安全预览绘制失败", error);
+      setRenderFailed(true);
+    }
+  }, [preview]);
+
+  if (renderFailed) return <small className="ai-candidate-preview-fallback">预览失败</small>;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="ai-candidate-preview-canvas"
+      width={HOLOPIX_CANVAS_PREVIEW_SIZE}
+      height={HOLOPIX_CANVAS_PREVIEW_SIZE}
+      aria-label="Holopix 安全候选缩略图"
+    />
   );
 }
 
