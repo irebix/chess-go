@@ -11,12 +11,20 @@ import {
 } from "../services/WorkbookService";
 import { exportParsingManifest } from "../services/ParsingManifestService";
 import { ThumbnailCache } from "../services/ThumbnailCache";
+import { generateBatch } from "../photoshop/batchGenerator";
 import {
   DEFAULT_EDITABLE_CANVAS_SIZE,
+  MAX_ARTBOARD_SPACING,
   MAX_EDITABLE_CANVAS_SIZE,
+  MIN_ARTBOARD_SPACING,
   MIN_EDITABLE_CANVAS_SIZE,
-  generateBatch
-} from "../photoshop/batchGenerator";
+  isValidArtboardSpacing,
+  isValidEditableCanvasSize
+} from "../domain/generationSettings";
+import {
+  loadGenerationSettings,
+  saveGenerationSettings
+} from "../services/GenerationSettingsService";
 import { formatLog, makeLog, type LogEvent } from "../utils/logging";
 import { toErrorMessage, UserCancelledError } from "../utils/errors";
 import { defaultBatchBaseName } from "../utils/fileNames";
@@ -77,6 +85,7 @@ const LARGE_WORKBOOK_BYTES = 250 * 1024 * 1024;
 const MAX_LIVE_THUMBNAILS = 32;
 
 export function App(): React.ReactElement {
+  const [initialGenerationSettings] = useState(() => loadGenerationSettings());
   const [phase, setPhase] = useState<UiPhase>("idle");
   const [workbook, setWorkbook] = useState<ImportedWorkbook | null>(null);
   const [sheetName, setSheetName] = useState("");
@@ -96,8 +105,12 @@ export function App(): React.ReactElement {
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [groupArtboardBusy, setGroupArtboardBusy] = useState(false);
   const [artboardBackgroundBusy, setArtboardBackgroundBusy] = useState<"color" | "visibility" | null>(null);
-  const [editableCanvasSizeInput, setEditableCanvasSizeInput] = useState(String(DEFAULT_EDITABLE_CANVAS_SIZE));
-  const [generationSpacingInput, setGenerationSpacingInput] = useState("100");
+  const [editableCanvasSizeInput, setEditableCanvasSizeInput] = useState(
+    String(initialGenerationSettings.editableCanvasSize)
+  );
+  const [generationSpacingInput, setGenerationSpacingInput] = useState(
+    String(initialGenerationSettings.artboardSpacing)
+  );
   const [batchImageFeedbackByGroup, setBatchImageFeedbackByGroup] = useState<Record<string, BatchImageFeedback>>({});
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
@@ -141,6 +154,17 @@ export function App(): React.ReactElement {
   const formattedLogs = useMemo(() => logs.map(formatLog).join("\n"), [logs]);
 
   useEffect(() => watchActiveReferenceDocument(setReferenceDocument), []);
+
+  useEffect(() => {
+    const editableCanvasSize = Number(editableCanvasSizeInput);
+    const artboardSpacing = Number(generationSpacingInput);
+    if (!isValidEditableCanvasSize(editableCanvasSize) || !isValidArtboardSpacing(artboardSpacing)) return;
+    saveGenerationSettings({
+      version: 1,
+      editableCanvasSize,
+      artboardSpacing
+    });
+  }, [editableCanvasSizeInput, generationSpacingInput]);
 
   useEffect(() => {
     if (!referenceDocument || initialPsdLayoutApplied.current) return;
@@ -497,19 +521,15 @@ export function App(): React.ReactElement {
   async function handleGenerate(): Promise<void> {
     if (!workbook) return;
     const editableCanvasSize = Number(editableCanvasSizeInput);
-    if (
-      !Number.isInteger(editableCanvasSize) ||
-      editableCanvasSize < MIN_EDITABLE_CANVAS_SIZE ||
-      editableCanvasSize > MAX_EDITABLE_CANVAS_SIZE
-    ) {
+    if (!isValidEditableCanvasSize(editableCanvasSize)) {
       const detail = `智能对象边长请输入 ${MIN_EDITABLE_CANVAS_SIZE}–${MAX_EDITABLE_CANVAS_SIZE} 之间的整数。`;
       setMessage(detail);
       presentError(detail, "generator");
       return;
     }
     const spacing = Number(generationSpacingInput);
-    if (!Number.isInteger(spacing) || spacing < 0 || spacing > 1000) {
-      const detail = "画板间距请输入 0–1000 之间的整数。";
+    if (!isValidArtboardSpacing(spacing)) {
+      const detail = `画板间距请输入 ${MIN_ARTBOARD_SPACING}–${MAX_ARTBOARD_SPACING} 之间的整数。`;
       setMessage(detail);
       presentError(detail, "generator");
       return;
@@ -943,8 +963,8 @@ export function App(): React.ReactElement {
                   id="generation-spacing"
                   className="generation-setting-input"
                   type="number"
-                  min="0"
-                  max="1000"
+                  min={MIN_ARTBOARD_SPACING}
+                  max={MAX_ARTBOARD_SPACING}
                   step="1"
                   aria-label="生成画板的横向和纵向间距"
                   value={generationSpacingInput}

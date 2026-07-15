@@ -1,6 +1,11 @@
 import { action, app, constants, core } from "photoshop";
 import { storage } from "uxp";
 import type { AssetCandidate, PsdTemplate, SheetGroup } from "../domain/models";
+import {
+  MAX_EDITABLE_CANVAS_SIZE,
+  MIN_EDITABLE_CANVAS_SIZE,
+  isValidEditableCanvasSize
+} from "../domain/generationSettings";
 import { calculateContainTransform } from "../domain/contain";
 import { layoutItems, splitIntoVolumes } from "../domain/layout";
 import type { ImportedWorkbook } from "../services/WorkbookService";
@@ -32,9 +37,6 @@ import {
 } from "./artboardBackgroundController";
 
 const EDITABLE_CANVAS_PLACED_SIZE = 148;
-export const DEFAULT_EDITABLE_CANVAS_SIZE = 1024;
-export const MIN_EDITABLE_CANVAS_SIZE = 1;
-export const MAX_EDITABLE_CANVAS_SIZE = 30000;
 
 export interface BatchProgress {
   stage: string;
@@ -257,11 +259,7 @@ async function createEditableCanvasSource(
 }
 
 function assertEditableCanvasSize(size: number): void {
-  if (
-    !Number.isInteger(size) ||
-    size < MIN_EDITABLE_CANVAS_SIZE ||
-    size > MAX_EDITABLE_CANVAS_SIZE
-  ) {
+  if (!isValidEditableCanvasSize(size)) {
     throw new Error(
       `智能对象边长请输入 ${MIN_EDITABLE_CANVAS_SIZE}–${MAX_EDITABLE_CANVAS_SIZE} 之间的整数。`
     );
