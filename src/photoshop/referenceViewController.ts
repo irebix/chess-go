@@ -267,20 +267,20 @@ function activeDocument(): DocumentLike | null {
 
 function inspectDocument(document: DocumentLike): ReferenceDocumentState | null {
   const scan = scanReferences(document, true);
-  if (!scan.referenceLayers.length) return null;
+  const groupArtboards = inspectGroupArtboardOverlay(document);
+  const artboardBackgrounds = inspectArtboardBackgrounds(document);
+  if (!scan.referenceLayers.length && !groupArtboards.available && !artboardBackgrounds.available) return null;
 
   const collection = layerComps(document);
   const referenceComp = collection ? findLayerComp(collection, REFERENCE_COMP_NAME) : undefined;
   const restoreComp = collection ? findLayerComp(collection, RESTORE_COMP_NAME) : undefined;
   const comment = parseReferenceComment(referenceComp?.comment);
   const mode = comment?.mode === "reference" && restoreComp ? "reference" : "normal";
-  const groupArtboards = inspectGroupArtboardOverlay(document);
-  const artboardBackgrounds = inspectArtboardBackgrounds(document);
 
   return {
     documentId: document.id,
     documentName: document.name,
-    artboardCount: scan.artboards.length,
+    artboardCount: Math.max(scan.artboards.length, artboardBackgrounds.count),
     referenceCount: scan.referenceLayers.length,
     referenceVisible: scan.referenceLayers.some((layer) => layer.visible),
     mode,

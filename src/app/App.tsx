@@ -708,28 +708,32 @@ export function App(): React.ReactElement {
           </div>
           {showCurrentPsd ? (
             <div className="panel-section-content reference-control-content">
-              <div className="reference-control-actions">
-                <button
-                  className="compact"
-                  disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy) || !referenceDocument.supported}
-                  onClick={() => void handleReferenceViewToggle()}
-                >
-                  {referenceBusy
-                    ? "正在切换……"
-                    : referenceDocument.referenceVisible ? "隐藏参考图" : "仅显示参考图"}
-                </button>
-                {referenceDocument.groupArtboardsAvailable ? (
-                  <button
-                    className="compact"
-                    disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
-                    onClick={() => void handleGroupArtboardToggle()}
-                  >
-                    {groupArtboardBusy
-                      ? "正在切换……"
-                      : referenceDocument.groupArtboardsVisible ? "隐藏分组框" : "显示分组框"}
-                  </button>
-                ) : null}
-              </div>
+              {referenceDocument.referenceCount > 0 || referenceDocument.groupArtboardsAvailable ? (
+                <div className="reference-control-actions">
+                  {referenceDocument.referenceCount > 0 ? (
+                    <button
+                      className="compact"
+                      disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy) || !referenceDocument.supported}
+                      onClick={() => void handleReferenceViewToggle()}
+                    >
+                      {referenceBusy
+                        ? "正在切换……"
+                        : referenceDocument.referenceVisible ? "隐藏参考图" : "仅显示参考图"}
+                    </button>
+                  ) : null}
+                  {referenceDocument.groupArtboardsAvailable ? (
+                    <button
+                      className="compact"
+                      disabled={busy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
+                      onClick={() => void handleGroupArtboardToggle()}
+                    >
+                      {groupArtboardBusy
+                        ? "正在切换……"
+                        : referenceDocument.groupArtboardsVisible ? "隐藏分组框" : "显示分组框"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {referenceDocument.artboardBackgroundsAvailable ? (
                 <div className="reference-control-actions">
                   <button
@@ -1126,7 +1130,7 @@ export function App(): React.ReactElement {
                           );
                         }) : (
                           <div className="candidate no-image">
-                            <span className="thumb-placeholder">无图片</span>
+                            <span className="thumb-placeholder">无关联图片</span>
                             <span className="candidate-copy">
                               <strong>{item.assetCode || "（缺少 assetCode）"}</strong>
                               <span>{item.name || "（无名称）"}</span>

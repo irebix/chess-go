@@ -46,7 +46,7 @@ function item(
 describe("item view", () => {
   it("filters by issue and prefix", () => {
     const items = [
-      item("ds_1", 0, { issue: { code: "IMAGE_MISSING", severity: "error", message: "missing" } }),
+      item("ds_1", 0, { issue: { code: "IMAGE_MISSING", severity: "warning", message: "missing" } }),
       item("c_1", 1, { prefix: "c", issue: { code: "NUMERIC_ID_MISSING", severity: "warning", message: "id" } }),
       item("ds_2", 2)
     ];
@@ -54,6 +54,7 @@ describe("item view", () => {
     expect(filterAndSortItems(items, { filter: "imageMissing", prefix: "all", sort: "source" })).toHaveLength(1);
     expect(filterAndSortItems(items, { filter: "warning", prefix: "c", sort: "source" })[0]?.assetCode).toBe("c_1");
     expect(filterAndSortItems(items, { filter: "ready", prefix: "all", sort: "source" }).map((value) => value.assetCode)).toEqual([
+      "ds_1",
       "c_1",
       "ds_2"
     ]);

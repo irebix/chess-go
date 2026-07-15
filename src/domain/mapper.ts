@@ -218,7 +218,9 @@ function validateCandidate(item: AssetCandidate): ValidationIssue[] {
   if (item.assetCode && item.prefix === "other") {
     issues.push(issue("NON_STANDARD_PREFIX", "warning", "非标准 assetCode 前缀。", item));
   }
-  if (item.imageCandidates.length === 0) issues.push(issue("IMAGE_MISSING", "error", "未找到关联图片。", item));
+  if (item.imageCandidates.length === 0) {
+    issues.push(issue("IMAGE_MISSING", "warning", "未找到关联图片；将生成不含参考图的空画板。", item));
+  }
   if (item.imageCandidates.length > 0 && !item.selectedImageId) {
     issues.push(issue("IMAGE_SELECTION_MISSING", "error", "尚未选择关联图片。", item));
   }

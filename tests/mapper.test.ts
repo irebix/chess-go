@@ -132,6 +132,22 @@ describe("asset mapper", () => {
     expect(item?.selected).toBe(true);
   });
 
+  it("keeps a missing associated image as a non-blocking warning", () => {
+    const [item] = mapAssets(
+      parsed(
+        [cell("B1", 1, 2, "1001"), cell("B2", 2, 2, "名称"), cell("B3", 3, 2, "ds_test1")],
+        []
+      )
+    );
+
+    expect(item?.issues).toContainEqual(expect.objectContaining({
+      code: "IMAGE_MISSING",
+      severity: "warning"
+    }));
+    expect(item?.selectedImageId).toBeUndefined();
+    expect(item?.selected).toBe(true);
+  });
+
   it("defaults multiple images to the lower project row and allows an explicit switch", () => {
     const [item] = mapAssets(
       parsed(

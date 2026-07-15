@@ -129,9 +129,16 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
             assertNotCancelled(context);
             const placement = layout.placements[itemIndex]!;
             const image = selectedImage(placement.item);
-            const bytes = await options.workbook.reader.archive.readBinary(image.anchor.archiveEntry);
-            const extension = image.anchor.mediaType === "jpeg" ? "jpg" : image.anchor.mediaType === "png" ? "png" : extensionOf(image.anchor.archiveEntry);
-            const temporaryImage = await writeTemporaryImageWithName(bytes, placement.item.assetCode, extension);
+            let temporaryImage: storage.File | null = null;
+            if (image) {
+              const bytes = await options.workbook.reader.archive.readBinary(image.anchor.archiveEntry);
+              const extension = image.anchor.mediaType === "jpeg"
+                ? "jpg"
+                : image.anchor.mediaType === "png"
+                  ? "png"
+                  : extensionOf(image.anchor.archiveEntry);
+              temporaryImage = await writeTemporaryImageWithName(bytes, placement.item.assetCode, extension);
+            }
             try {
               const beforeIds = new Set(document.layers.map((layer) => layer.id));
               await action.batchPlay([makeArtboardDescriptor(placement.item.assetCode, placement.rect)], {});
@@ -148,13 +155,15 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
                 }
               }
 
-              const token = storage.localFileSystem.createSessionToken(temporaryImage);
-              await action.batchPlay([placeEmbeddedDescriptor(token)], {});
-              const placedLayer = document.activeLayers[0];
-              if (!placedLayer) throw new Error(`图片置入失败：${placement.item.assetCode}`);
-              placedLayer.name = REFERENCE_LAYER_NAME;
-              await placedLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
-              await fitLayer(placedLayer, placement.rect, options.template);
+              if (temporaryImage) {
+                const token = storage.localFileSystem.createSessionToken(temporaryImage);
+                await action.batchPlay([placeEmbeddedDescriptor(token)], {});
+                const placedLayer = document.activeLayers[0];
+                if (!placedLayer) throw new Error(`图片置入失败：${placement.item.assetCode}`);
+                placedLayer.name = REFERENCE_LAYER_NAME;
+                await placedLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
+                await fitLayer(placedLayer, placement.rect, options.template);
+              }
 
               await action.batchPlay([placeEmbeddedDescriptor(editableCanvasToken)], {});
               const editableCanvasLayer = document.activeLayers[0];
@@ -164,7 +173,7 @@ export async function generateBatch(options: BatchGenerationOptions): Promise<Vo
               await fitEditableCanvasLayer(editableCanvasLayer, placement.rect);
 
             } finally {
-              await deleteTemporaryFile(temporaryImage);
+              if (temporaryImage) await deleteTemporaryFile(temporaryImage);
             }
 
             completed += 1;
@@ -352,9 +361,7 @@ async function readSmartObjectTransformBounds(layerId: number) {
 }
 
 function selectedImage(item: AssetCandidate) {
-  const image = item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId);
-  if (!image) throw new Error(`项目 ${item.assetCode} 尚未选择图片。`);
-  return image;
+  return item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId);
 }
 
 function assertNotCancelled(context: ModalExecutionContext): void {
