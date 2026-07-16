@@ -783,12 +783,6 @@ button:disabled {
 /* Holopix candidate matrix. Keep this section to UXP-safe flex, fixed cells and
    ordinary overflow; browser-only prototype features such as sticky columns,
    container queries and max-content sizing are intentionally not used. */
-.ai-panel-count {
-  margin-left: auto;
-  color: var(--uxp-host-text-color-secondary, #b8b8b8);
-  font-weight: 400;
-}
-
 .ai-panel-content {
   display: flex;
   flex-direction: column;
@@ -938,29 +932,42 @@ button:disabled {
   gap: 8px;
 }
 
-.ai-group-select label {
-  flex: 0 0 auto;
-}
-
 .ai-group-select select {
   min-width: 0;
   flex: 1 1 auto;
 }
 
-.ai-group-select small {
-  flex: 0 0 auto;
-}
-
 .ai-matrix-shell {
-  overflow-x: auto;
   border: 1px solid var(--uxp-host-border-color, #555);
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.08);
 }
 
+.ai-matrix-viewport {
+  overflow: hidden;
+  border-radius: 4px 4px 0 0;
+}
+
+.ai-matrix-content {
+  width: 100%;
+}
+
+.ai-matrix-horizontal-scroll {
+  width: 100%;
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-matrix-horizontal-spacer {
+  height: 1px;
+}
+
 .ai-matrix-header,
 .ai-matrix-row {
   display: flex;
+  width: 100%;
   min-width: 350px;
   align-items: center;
 }
@@ -979,7 +986,7 @@ button:disabled {
 }
 
 .ai-matrix-header span:nth-child(2) {
-  width: 62px;
+  width: 80px;
 }
 
 .ai-matrix-header span:last-child {
@@ -1032,18 +1039,6 @@ button:disabled {
   font-size: 10px;
 }
 
-.ai-node-index {
-  display: flex;
-  width: 23px;
-  height: 23px;
-  flex: 0 0 23px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #909090;
-  border-radius: 50%;
-  font-size: 11px;
-}
-
 .ai-reference-preview,
 .ai-candidate-cell {
   position: relative;
@@ -1079,7 +1074,16 @@ button:disabled {
   min-width: 64px;
   flex: 0 0 auto;
   gap: 7px;
+  margin-left: 10px;
   padding-bottom: 1px;
+}
+
+.ai-candidate-slot {
+  position: relative;
+  display: block;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
 }
 
 .ai-candidate-cell {
@@ -1126,6 +1130,27 @@ button:disabled {
 
 .ai-candidate-preview-canvas {
   width: 64px;
+}
+
+.ai-candidate-image-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  display: block;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.ai-candidate-image {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .ai-candidate-canvas-host {
@@ -1222,18 +1247,87 @@ button:disabled {
   text-align: center;
 }
 
+.ai-prompt-textarea-shell {
+  position: relative;
+  box-sizing: border-box;
+  align-self: stretch;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
 .ai-prompt-editor textarea {
   display: block;
+  box-sizing: border-box;
   width: 100%;
   min-height: 86px;
-  resize: vertical;
-  padding: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  resize: none;
+  padding: 8px 22px 8px 8px;
   border: 1px solid var(--uxp-host-border-color, #666);
   border-radius: 4px;
+  outline: none;
   color: inherit;
-  background: rgba(0, 0, 0, 0.2);
+  background: #383838;
   font: inherit;
   line-height: 1.5;
+  scrollbar-width: none;
+}
+
+.ai-prompt-editor textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.ai-prompt-resize-handle {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: flex;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.ai-prompt-resize-handle::before {
+  display: block;
+  width: 8px;
+  height: 6px;
+  border-top: 1px solid var(--uxp-host-text-color-secondary, #aaa);
+  border-bottom: 1px solid var(--uxp-host-text-color-secondary, #aaa);
+  background: linear-gradient(
+    to bottom,
+    transparent 2px,
+    var(--uxp-host-text-color-secondary, #aaa) 2px,
+    var(--uxp-host-text-color-secondary, #aaa) 3px,
+    transparent 3px
+  );
+  content: "";
+  opacity: 0.75;
+}
+
+.ai-prompt-resize-handle:hover::before {
+  opacity: 1;
+}
+
+.ai-prompt-editor-bottom {
+  box-sizing: border-box;
+  width: auto;
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.ai-regenerate-selected {
+  width: 100%;
 }
 
 .ai-prompt-source-detail {
