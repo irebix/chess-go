@@ -12,8 +12,8 @@ const groups: GroupLayoutMetadataGroup[] = [
     label: "配方",
     rect: { left: 24, top: 14, right: 420, bottom: 220 },
     members: [
-      { artboardId: 101, row: 0, col: 0 },
-      { artboardId: 102, row: 0, col: 1 }
+      { artboardId: 101, row: 0, col: 0, name: "清洁布" },
+      { artboardId: 102, row: 0, col: 1, name: "海绵块" }
     ]
   },
   {

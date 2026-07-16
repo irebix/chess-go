@@ -46,7 +46,7 @@ export interface AiCandidateStats {
   accepted: number;
 }
 
-const SLOT_LABELS = ["A", "B", "C", "D"] as const;
+export type AiCandidateAction = "backfill" | "generate" | null;
 
 export function reconcileAiItemStates(
   current: Record<string, AiItemState>,
@@ -57,19 +57,46 @@ export function reconcileAiItemStates(
   const next: Record<string, AiItemState> = { ...current };
   for (const item of items) {
     const previous = current[item.key];
+    const preservedCount = previous?.candidates.reduce(
+      (lastUsedIndex, candidate, index) => candidate.status === "idle" ? lastUsedIndex : index + 1,
+      0
+    ) ?? 0;
+    const slotCount = Math.max(count, preservedCount);
     next[item.key] = {
       itemKey: item.key,
-      candidates: Array.from({ length: count }, (_, index) => {
+      candidates: Array.from({ length: slotCount }, (_, index) => {
         const existing = previous?.candidates[index];
         return existing ?? {
           id: `${item.key}:${index}`,
-          label: SLOT_LABELS[index]!,
+          label: aiCandidateSlotLabel(index),
           status: "idle" as const
         };
       })
     };
   }
   return next;
+}
+
+export function appendAiCandidateSlots(
+  item: AiItemState,
+  candidateCount: number
+): AiItemState {
+  const count = normalizeCandidateCount(candidateCount);
+  const startIndex = item.candidates.length;
+  return {
+    ...item,
+    candidates: [
+      ...item.candidates,
+      ...Array.from({ length: count }, (_, offset) => {
+        const index = startIndex + offset;
+        return {
+          id: `${item.itemKey}:${index}`,
+          label: aiCandidateSlotLabel(index),
+          status: "queued" as const
+        };
+      })
+    ]
+  };
 }
 
 export function acceptAiCandidate(
@@ -100,7 +127,41 @@ export function summarizeAiCandidates(states: AiItemState[]): AiCandidateStats {
   };
 }
 
+export function aiCandidateAction(candidate: AiCandidateSlot): AiCandidateAction {
+  if (candidate.image && (candidate.status === "ready" || candidate.status === "accepted")) {
+    return "backfill";
+  }
+  if (candidate.status === "idle" || candidate.status === "failed") return "generate";
+  return null;
+}
+
+export function isAiCandidateActionDisabled(
+  candidate: AiCandidateSlot,
+  generationDisabled: boolean,
+  backfillDisabled: boolean
+): boolean {
+  const action = aiCandidateAction(candidate);
+  if (action === "backfill") return backfillDisabled;
+  if (action === "generate") return generationDisabled;
+  return true;
+}
+
 export function normalizeCandidateCount(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.min(4, Math.max(1, Math.round(value)));
+}
+
+export function aiCandidateSlotLabel(index: number): string {
+  let value = Math.max(0, Math.floor(index)) + 1;
+  let label = "";
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
+
+export function selectedAiReferenceImage(item: AssetCandidate) {
+  return item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId);
 }

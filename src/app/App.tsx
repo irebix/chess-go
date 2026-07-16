@@ -46,6 +46,7 @@ import {
   type ReferenceDocumentState
 } from "../photoshop/referenceViewController";
 import { PLUGIN_VERSION } from "../pluginMetadata";
+import type { PsdAiReference } from "../photoshop/psdAiReference";
 import { AiGenerationPanel } from "./AiGenerationPanel";
 
 type UiPhase =
@@ -84,6 +85,29 @@ interface UiError {
 
 const LARGE_WORKBOOK_BYTES = 250 * 1024 * 1024;
 const MAX_LIVE_THUMBNAILS = 32;
+
+function psdOnlyAssetCandidate(
+  assetCode: string,
+  sourceOrder: number,
+  itemName?: string
+): AssetCandidate {
+  const underscore = assetCode.indexOf("_");
+  return {
+    key: `psd:${assetCode}`,
+    assetCode,
+    name: itemName?.trim() || assetCode,
+    prefix: underscore >= 0 ? assetCode.slice(0, underscore + 1) : "",
+    sheetName: "当前 PSD",
+    codeCell: `PSD${sourceOrder + 1}`,
+    codeRow: sourceOrder + 1,
+    codeCol: 1,
+    sourceGroupId: "psd",
+    sourceOrder,
+    imageCandidates: [],
+    issues: [],
+    selected: true
+  };
+}
 
 export function App(): React.ReactElement {
   const [initialGenerationSettings] = useState(() => loadGenerationSettings());
@@ -128,9 +152,10 @@ export function App(): React.ReactElement {
   const thumbnailQueue = useRef<ThumbnailTask[]>([]);
   const thumbnailActiveCount = useRef(0);
 
-  const busy =
+  const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
-    phase === "diagnosing" || phase === "generating" || aiBusy;
+    phase === "diagnosing" || phase === "generating";
+  const busy = nonAiBusy || aiBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -141,6 +166,53 @@ export function App(): React.ReactElement {
     () => applyScopedTaskValidation(filterItemsByGroups(items, activeGroups)),
     [items, activeGroups]
   );
+  const aiPsdReferences = useMemo<PsdAiReference[]>(
+    () => referenceDocument?.aiNodes.map((node) => ({
+      ...node,
+      documentId: referenceDocument.documentId
+    })) ?? [],
+    [referenceDocument?.aiNodes, referenceDocument?.documentId]
+  );
+  const aiPsdItems = useMemo(() => aiPsdReferences.map((reference, index) => {
+    const excelItem = items.find((item) => item.assetCode === reference.assetCode);
+    return {
+      ...(excelItem ?? psdOnlyAssetCandidate(reference.assetCode, index, reference.itemName)),
+      name: excelItem?.name?.trim() || reference.itemName?.trim() || reference.assetCode,
+      key: `psd:${reference.documentId}:${reference.artboardId}`,
+      sheetName: reference.groupLabel,
+      codeCell: `PSD${index + 1}`,
+      codeRow: index + 1,
+      codeCol: 1,
+      sourceGroupId: reference.groupId,
+      sourceOrder: index,
+      selected: true
+    };
+  }), [aiPsdReferences, items]);
+  const aiPsdGroups = useMemo<SheetGroup[]>(() => {
+    const groupsById = new Map<string, SheetGroup>();
+    for (let index = 0; index < aiPsdReferences.length; index += 1) {
+      const reference = aiPsdReferences[index]!;
+      const row = index + 1;
+      const existing = groupsById.get(reference.groupId);
+      if (existing) {
+        existing.endRow = row;
+        existing.itemCount += 1;
+        existing.physicalSegments[0]!.endRow = row;
+        continue;
+      }
+      groupsById.set(reference.groupId, {
+        id: reference.groupId,
+        label: reference.groupLabel,
+        sourceCell: "PSD",
+        startRow: row,
+        endRow: row,
+        itemCount: 1,
+        physicalSegments: [{ ref: "PSD", startRow: row, endRow: row }],
+        inferredContinuation: false
+      });
+    }
+    return Array.from(groupsById.values());
+  }, [aiPsdReferences]);
   const selectedCount = scopedItems.filter((item) => item.selected).length;
   const blockedItemCount = scopedItems.filter((item) => hasErrors(item)).length;
   const selectedErrorCount = scopedItems
@@ -767,10 +839,11 @@ export function App(): React.ReactElement {
       {referenceDocument ? (
         <AiGenerationPanel
           workbook={workbook}
-          activeGroups={activeGroups}
-          items={scopedItems}
+          activeGroups={aiPsdGroups}
+          items={aiPsdItems}
+          psdReferences={aiPsdReferences}
           thumbnails={thumbnails}
-          externalBusy={busy}
+          externalBusy={nonAiBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
           requestThumbnail={requestThumbnail}
           onThumbnailError={handleThumbnailDecodeError}
           onStatus={(detail, level = "info") => {

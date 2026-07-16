@@ -1,5 +1,6 @@
 import { storage } from "uxp";
 import type { AiGeneratedImage } from "../domain/aiCandidates";
+import { COMFY_BASE_URL } from "./holopixEndpoint";
 import { collectRecentHolopixImages } from "./holopixRecovery";
 import {
   buildHolopixSafeJpegUrl,
@@ -16,7 +17,6 @@ import {
   type HolopixPromptSource
 } from "./holopixWorkflow";
 
-const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
 let workflowPromise: Promise<ComfyWorkflow> | null = null;
 
 interface UploadedImage {
@@ -40,6 +40,10 @@ interface HistoryImage {
 interface HistoryOutput {
   images?: HistoryImage[];
   text?: unknown;
+  string?: unknown;
+  value?: unknown;
+  result?: unknown;
+  output?: unknown;
 }
 
 interface HistoryEntry {
@@ -51,10 +55,7 @@ interface HistoryEntry {
   };
 }
 
-export interface HolopixGenerationOptions {
-  referenceBytes: Uint8Array;
-  referenceFileName: string;
-  referenceMediaType: string;
+interface HolopixGenerationCommonOptions {
   candidateCount: number;
   assetCode: string;
   signal?: AbortSignal;
@@ -62,8 +63,24 @@ export interface HolopixGenerationOptions {
   onStage?: (message: string) => void;
 }
 
+interface HolopixReferenceGenerationOptions {
+  referenceBytes: Uint8Array;
+  referenceFileName: string;
+  referenceMediaType: string;
+  itemName: string;
+}
+
+interface HolopixPromptGenerationOptions {
+  promptText: string;
+}
+
+export type HolopixGenerationOptions = HolopixGenerationCommonOptions & (
+  | HolopixReferenceGenerationOptions
+  | HolopixPromptGenerationOptions
+);
+
 export async function checkHolopixAvailability(signal?: AbortSignal): Promise<void> {
-  await fetchJson(`${DEFAULT_COMFY_URL}/system_stats`, { signal }, 10_000);
+  await fetchJson(`${COMFY_BASE_URL}/system_stats`, { signal }, 10_000);
 }
 
 export async function recoverRecentHolopixImages(
@@ -73,11 +90,11 @@ export async function recoverRecentHolopixImages(
   onStage?: (message: string) => void
 ): Promise<Record<string, AiGeneratedImage[]>> {
   const history = await fetchJson(
-    `${DEFAULT_COMFY_URL}/history?max_items=100`,
+    `${COMFY_BASE_URL}/history?max_items=100`,
     { signal },
     20_000
   ) as Record<string, HistoryEntry>;
-  const recovered = collectRecentHolopixImages(history, assetCodes, DEFAULT_COMFY_URL);
+  const recovered = collectRecentHolopixImages(history, assetCodes, COMFY_BASE_URL);
   const results: Record<string, AiGeneratedImage[]> = {};
   for (const assetCode of assetCodes) {
     const images = (recovered[assetCode] ?? []).slice(0, maxCandidates);
@@ -93,18 +110,29 @@ export async function generateHolopixImages(
 ): Promise<AiGeneratedImage[]> {
   const baseWorkflow = await loadBundledHolopixWorkflow();
   await checkHolopixAvailability(options.signal);
-  const uploaded = await uploadReference(options, options.signal);
-  options.onStage?.("Excel 参考图已上传；仅用于 Holopix 图生文节点。");
+  const suppliedPromptText = "promptText" in options ? options.promptText.trim() : undefined;
+  const itemName = "itemName" in options ? options.itemName.trim() : undefined;
+  let imageName: string | undefined;
+  if (suppliedPromptText) {
+    options.onStage?.("直接使用用户修改后的提示词；已跳过参考图上传与 QwenVL 提示词节点。");
+  } else if ("referenceBytes" in options) {
+    const uploaded = await uploadReference(options, options.signal);
+    imageName = uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name;
+    options.onStage?.("参考图已上传；仅用于 QwenVL 提示词节点。");
+  } else {
+    throw new Error("用户提示词不能为空。");
+  }
   const batches = splitHolopixBatches(options.candidateCount);
   const results: AiGeneratedImage[] = [];
-  let sharedPromptText: string | undefined;
+  let sharedPromptText = suppliedPromptText;
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     throwIfAborted(options.signal);
     const batchSize = batches[batchIndex]!;
     options.onBatchStarted?.(results.length, options.candidateCount);
     const prepared = prepareHolopixWorkflow(baseWorkflow, {
-      imageName: uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name,
+      ...(imageName ? { imageName } : {}),
+      ...(itemName ? { itemName } : {}),
       batchSize,
       requestNonce: makeRequestNonce(batchIndex),
       confirmCost: true,
@@ -125,18 +153,21 @@ export async function generateHolopixImages(
       throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
     }
     if (sharedPromptText && generated.promptText !== sharedPromptText) {
-      throw new Error("Holopix 后续批次没有沿用首批图生文提示词。");
+      throw new Error("Holopix 后续批次没有沿用首批 QwenVL 提示词。");
     }
+    const hadSharedPrompt = Boolean(sharedPromptText);
     const batchPromptText = sharedPromptText ?? generated.promptText;
     const selectedImages = images.slice(0, batchSize).map((image) => ({
       ...image,
       promptText: batchPromptText
     }));
-    if (!sharedPromptText) {
+    if (!hadSharedPrompt) {
       sharedPromptText = batchPromptText;
-      options.onStage?.(`Holopix 图生文实际提示词：${summarizePrompt(sharedPromptText)}`);
+      options.onStage?.(`QwenVL 实际提示词：${summarizePrompt(sharedPromptText)}`);
+    } else if (suppliedPromptText) {
+      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 直接使用用户提示词：${summarizePrompt(batchPromptText)}`);
     } else {
-      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 复用同一提示词：${summarizePrompt(sharedPromptText)}`);
+      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 复用同一提示词：${summarizePrompt(batchPromptText)}`);
     }
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
     results.push(...await loadSafePreviews(selectedImages, options.signal, options.onStage));
@@ -176,7 +207,7 @@ async function createSafePreview(
   const promptId = await queuePrompt(prepared.workflow, signal);
   const previewImage = await waitForPreviewImage(promptId, prepared.previewNodeId, 30, signal);
   const response = await fetchBinary(
-    buildHolopixSafeJpegUrl(previewImage, DEFAULT_COMFY_URL),
+    buildHolopixSafeJpegUrl(previewImage, COMFY_BASE_URL),
     signal,
     20_000
   );
@@ -210,7 +241,7 @@ async function loadBundledHolopixWorkflow(): Promise<ComfyWorkflow> {
 }
 
 async function uploadReference(
-  options: Pick<HolopixGenerationOptions, "referenceBytes" | "referenceFileName" | "referenceMediaType">,
+  options: HolopixReferenceGenerationOptions,
   signal?: AbortSignal
 ): Promise<UploadedImage> {
   const copy = new Uint8Array(options.referenceBytes.byteLength);
@@ -218,7 +249,7 @@ async function uploadReference(
   const form = new FormData();
   form.append("image", new Blob([copy.buffer], { type: options.referenceMediaType }), options.referenceFileName);
   form.append("overwrite", "true");
-  const response = await fetchJson(`${DEFAULT_COMFY_URL}/upload/image`, {
+  const response = await fetchJson(`${COMFY_BASE_URL}/upload/image`, {
     method: "POST",
     body: form,
     signal
@@ -228,7 +259,7 @@ async function uploadReference(
 }
 
 async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promise<string> {
-  const response = await fetchJson(`${DEFAULT_COMFY_URL}/prompt`, {
+  const response = await fetchJson(`${COMFY_BASE_URL}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -258,7 +289,7 @@ async function waitForImages(
     let history: Record<string, HistoryEntry>;
     try {
       history = await fetchJson(
-        `${DEFAULT_COMFY_URL}/history/${encodeURIComponent(promptId)}`,
+        `${COMFY_BASE_URL}/history/${encodeURIComponent(promptId)}`,
         { signal },
         12_000
       ) as Record<string, HistoryEntry>;
@@ -272,13 +303,13 @@ async function waitForImages(
       const executionError = findExecutionError(entry.status?.messages);
       if (executionError) throw new Error(executionError);
       const images = entry.outputs?.[saveNodeId]?.images ?? [];
-      const promptText = extractCapturedPrompt(entry.outputs?.[promptCaptureNodeId]?.text);
+      const promptText = extractCapturedPrompt(entry.outputs?.[promptCaptureNodeId]);
       if (images.length && promptText) {
         return { images: images.map(toGeneratedImage), promptText };
       }
       if (entry.status?.completed || entry.status?.status_str === "error") {
         if (!images.length) throw new Error("Holopix 工作流已结束，但 SaveImage 节点没有输出图片。");
-        throw new Error("Holopix 工作流已生成图片，但未记录 HolopixImageToPrompt 的实际提示词。");
+        throw new Error("Holopix 工作流已生成图片，但“提示词结果”没有记录 QwenVL 的实际提示词。");
       }
     }
     await delay(1000, signal);
@@ -287,8 +318,21 @@ async function waitForImages(
 }
 
 function extractCapturedPrompt(value: unknown): string | undefined {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+  if (typeof value === "string") return value.trim() || undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractCapturedPrompt(item);
+      if (text) return text;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ["text", "string", "value", "result", "output"]) {
+    const text = extractCapturedPrompt(record[key]);
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function summarizePrompt(promptText: string): string {
@@ -308,7 +352,7 @@ async function waitForPreviewImage(
     let history: Record<string, HistoryEntry>;
     try {
       history = await fetchJson(
-        `${DEFAULT_COMFY_URL}/history/${encodeURIComponent(promptId)}`,
+        `${COMFY_BASE_URL}/history/${encodeURIComponent(promptId)}`,
         { signal },
         12_000
       ) as Record<string, HistoryEntry>;
@@ -341,7 +385,7 @@ function toGeneratedImage(image: HistoryImage): AiGeneratedImage {
     filename: image.filename,
     subfolder,
     type,
-    url: `${DEFAULT_COMFY_URL}/view?${query.toString()}`
+    url: `${COMFY_BASE_URL}/view?${query.toString()}`
   };
 }
 
@@ -356,8 +400,8 @@ async function fetchJson(url: string, init?: RequestInit, timeoutMs = 15_000): P
     response = await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
     if (externalSignal?.aborted) throw abortError();
-    if (controller.signal.aborted) throw new Error(`连接本机 ComfyUI 超时（${Math.round(timeoutMs / 1000)} 秒）。`);
-    throw new Error(`无法连接本机 ComfyUI（${DEFAULT_COMFY_URL}）：${error instanceof Error ? error.message : String(error)}`);
+    if (controller.signal.aborted) throw new Error(`连接局域网 ComfyUI 超时（${Math.round(timeoutMs / 1000)} 秒）。`);
+    throw new Error(`无法连接局域网 ComfyUI（${COMFY_BASE_URL}）：${error instanceof Error ? error.message : String(error)}`);
   } finally {
     window.clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", abortFromExternal);

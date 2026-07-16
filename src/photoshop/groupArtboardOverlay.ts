@@ -81,6 +81,7 @@ export interface StoredItemArtboard {
   artboardId: number;
   row: number;
   col: number;
+  name?: string;
 }
 
 export interface GroupArtboardOverlayState {
@@ -165,6 +166,17 @@ export function inspectGroupArtboardOverlay(documentValue: unknown): GroupArtboa
     available: specifications.length > 0,
     visible: groupArtboards.some((artboard) => artboard.visible)
   };
+}
+
+export function readStoredGroupLayout(
+  documentValue: unknown
+): GroupLayoutMetadataGroup[] {
+  return readStoredSpecifications(documentValue as DocumentLike).map((group) => ({
+    artboardId: group.artboardId,
+    label: group.label,
+    rect: { ...group.rect },
+    members: group.members.map((member) => ({ ...member }))
+  }));
 }
 
 export async function showGroupArtboards(documentValue: unknown): Promise<void> {
@@ -339,7 +351,13 @@ function groupArtboardBounds(
     const sourceGroup = selectedGroups.find((group) => itemBelongsToGroup(placement.item.codeRow, group));
     const groupId = sourceGroup?.id ?? placement.item.sourceGroupId;
     const label = sourceGroup?.label ?? groupId;
-    const member = { artboardId: itemArtboardId!, row: placement.row, col: placement.col };
+    const itemName = placement.item.name?.trim();
+    const member = {
+      artboardId: itemArtboardId!,
+      row: placement.row,
+      col: placement.col,
+      ...(itemName ? { name: itemName } : {})
+    };
     const existing = boundsByGroup.get(groupId);
     if (existing) {
       existing.left = Math.min(existing.left, placement.rect.left - ARTBOARD_PADDING_X);

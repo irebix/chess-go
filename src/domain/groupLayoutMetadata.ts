@@ -22,6 +22,7 @@ export interface GroupLayoutMetadataMember {
   artboardId: number;
   row: number;
   col: number;
+  name?: string;
 }
 
 export interface GroupLayoutMetadataGroup {
@@ -41,7 +42,7 @@ export interface GroupLayoutMetadata {
 }
 
 type CompactRect = [number, number, number, number];
-type CompactMember = [number, number, number];
+type CompactMember = [number, number, number] | [number, number, number, string];
 type CompactGroup = [number, string, CompactRect, CompactMember[]];
 
 interface CompactGroupLayoutMetadata {
@@ -81,7 +82,7 @@ export function serializeGroupLayoutMetadata(
       group.artboardId,
       group.label,
       [group.rect.left, group.rect.top, group.rect.right, group.rect.bottom],
-      group.members.map((member) => [member.artboardId, member.row, member.col])
+      group.members.map(compactMemberFromMetadata)
     ])
   };
   return `${GROUP_LAYOUT_METADATA_TEXT_PREFIX}${utf8ToBase64Url(JSON.stringify(compact))}`;
@@ -179,12 +180,29 @@ function compactGroup(value: unknown): GroupLayoutMetadataGroup | undefined {
 }
 
 function compactMember(value: unknown): GroupLayoutMetadataMember | undefined {
-  if (!Array.isArray(value) || value.length !== 3) return undefined;
-  const [artboardId, row, col] = value;
-  if (!positiveInteger(artboardId) || !nonNegativeInteger(row) || !nonNegativeInteger(col)) {
+  if (!Array.isArray(value) || (value.length !== 3 && value.length !== 4)) return undefined;
+  const [artboardId, row, col, name] = value;
+  if (
+    !positiveInteger(artboardId) ||
+    !nonNegativeInteger(row) ||
+    !nonNegativeInteger(col) ||
+    (name !== undefined && !validItemName(name))
+  ) {
     return undefined;
   }
-  return { artboardId, row, col };
+  return {
+    artboardId,
+    row,
+    col,
+    ...(typeof name === "string" ? { name: name.trim() } : {})
+  };
+}
+
+function compactMemberFromMetadata(member: GroupLayoutMetadataMember): CompactMember {
+  const name = member.name?.trim();
+  return name
+    ? [member.artboardId, member.row, member.col, name]
+    : [member.artboardId, member.row, member.col];
 }
 
 function normalizeAndValidate(metadata: GroupLayoutMetadata): GroupLayoutMetadata {
@@ -220,6 +238,7 @@ function normalizeAndValidate(metadata: GroupLayoutMetadata): GroupLayoutMetadat
         !positiveInteger(member.artboardId) ||
         !nonNegativeInteger(member.row) ||
         !nonNegativeInteger(member.col) ||
+        (member.name !== undefined && !validItemName(member.name)) ||
         itemIds.has(member.artboardId) ||
         cells.has(cell)
       ) {
@@ -253,4 +272,8 @@ function nonNegativeInteger(value: unknown): value is number {
 
 function colorChannel(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 255;
+}
+
+function validItemName(value: unknown): value is string {
+  return typeof value === "string" && Boolean(value.trim()) && value.trim().length <= 256;
 }

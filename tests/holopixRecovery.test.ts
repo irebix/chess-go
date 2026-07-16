@@ -72,4 +72,17 @@ describe("Holopix candidate recovery", () => {
 
     expect(recovered.c_cleaning6?.[0]?.promptText).toBe("mop, square game icon");
   });
+
+  it("recovers QwenVL text recorded by the PreviewAny result node", () => {
+    const recovered = collectRecentHolopixImages({
+      qwen: { outputs: {
+        "9": { images: [
+          { filename: "c_cleaning3_00007_.png", subfolder: "Holopix/ChessGo", type: "output" }
+        ] },
+        "18": { value: ["一把绿色手柄的清洁刷，白色刷毛，等距视角。"] }
+      } }
+    }, ["c_cleaning3"], "http://127.0.0.1:8188");
+
+    expect(recovered.c_cleaning3?.[0]?.promptText).toBe("一把绿色手柄的清洁刷，白色刷毛，等距视角。");
+  });
 });

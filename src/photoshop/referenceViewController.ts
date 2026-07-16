@@ -2,6 +2,7 @@ import { action, app, core } from "photoshop";
 import {
   hideGroupArtboards,
   inspectGroupArtboardOverlay,
+  readStoredGroupLayout,
   showGroupArtboards
 } from "./groupArtboardOverlay";
 import {
@@ -11,6 +12,11 @@ import {
   setArtboardBackgroundColor,
   setArtboardBackgroundVisibility
 } from "./artboardBackgroundController";
+import {
+  listPsdAiTargetNodes,
+  scopePsdAiTargetNodes,
+  type PsdAiScopedNode
+} from "./aiCandidateTarget";
 
 export const REFERENCE_LAYER_NAME = "参考图";
 const EDITABLE_CANVAS_LAYER_NAME_PATTERN = /^\d+x\d+_空白智能对象$/;
@@ -102,7 +108,11 @@ export interface ReferenceDocumentState {
   artboardBackgroundsAvailable: boolean;
   artboardBackgroundsVisible: boolean;
   artboardBackgroundCount: number;
+  aiAssetCodes: string[];
+  aiNodes: PsdAiNode[];
 }
+
+export type PsdAiNode = PsdAiScopedNode;
 
 export interface ArtboardBackgroundColorChangeResult {
   state: ReferenceDocumentState;
@@ -276,6 +286,7 @@ function inspectDocument(document: DocumentLike): ReferenceDocumentState | null 
   const restoreComp = collection ? findLayerComp(collection, RESTORE_COMP_NAME) : undefined;
   const comment = parseReferenceComment(referenceComp?.comment);
   const mode = comment?.mode === "reference" && restoreComp ? "reference" : "normal";
+  const aiNodes = inspectPsdAiNodes(document);
 
   return {
     documentId: document.id,
@@ -289,8 +300,23 @@ function inspectDocument(document: DocumentLike): ReferenceDocumentState | null 
     groupArtboardsVisible: groupArtboards.visible,
     artboardBackgroundsAvailable: artboardBackgrounds.available,
     artboardBackgroundsVisible: artboardBackgrounds.visible,
-    artboardBackgroundCount: artboardBackgrounds.count
+    artboardBackgroundCount: artboardBackgrounds.count,
+    aiAssetCodes: aiNodes.map((node) => node.assetCode),
+    aiNodes
   };
+}
+
+function inspectPsdAiNodes(document: DocumentLike): PsdAiNode[] {
+  const groups = readStoredGroupLayout(document);
+  const expectedArtboardIds = groups.flatMap((group) =>
+    group.members.map((member) => member.artboardId)
+  );
+  const nodes = listPsdAiTargetNodes(
+    document,
+    REFERENCE_LAYER_NAME,
+    expectedArtboardIds.length ? expectedArtboardIds : undefined
+  );
+  return scopePsdAiTargetNodes(document.id, nodes, groups);
 }
 
 async function enterReferenceView(document: DocumentLike): Promise<void> {

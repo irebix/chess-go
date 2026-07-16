@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { discoverSheetGroups, filterItemsByGroups } from "../src/domain/sheetGroups";
+import {
+  discoverSheetGroups,
+  filterItemsByGroups,
+  filterSelectedItemsByGroups
+} from "../src/domain/sheetGroups";
 import type { AssetCandidate, ParsedSheet } from "../src/domain/models";
 
 function item(assetCode: string, codeRow: number, sourceOrder: number): AssetCandidate {
@@ -72,6 +76,19 @@ describe("sheet groups", () => {
       "ds_cake",
       "ds_mochi",
       "ds_soup"
+    ]);
+  });
+
+  it("keeps AI and PSD scope aligned by excluding unchecked items inside a selected chain", () => {
+    const items = [
+      item("ds_in_psd", 7, 0),
+      { ...item("ds_not_in_psd", 11, 1), selected: false },
+      item("ds_other_chain", 3, 2)
+    ];
+    const groups = discoverSheetGroups(sheet(), items);
+
+    expect(filterSelectedItemsByGroups(items, [groups[1]!]).map((value) => value.assetCode)).toEqual([
+      "ds_in_psd"
     ]);
   });
 

@@ -1,25 +1,4 @@
 {
-  "1": {
-    "inputs": {
-      "image": "holopix-workflow-reference.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "加载 Excel 参考图"
-    }
-  },
-  "2": {
-    "inputs": {
-      "image": [
-        "1",
-        0
-      ]
-    },
-    "class_type": "HolopixUploadReference",
-    "_meta": {
-      "title": "Holopix 上传参考图（仅供图生文）"
-    }
-  },
   "3": {
     "inputs": {
       "model_id": 6768,
@@ -58,31 +37,15 @@
       "title": "模型 3：日韩风格等距道具模型 | HOLO-V1"
     }
   },
-  "6": {
-    "inputs": {
-      "reference": [
-        "2",
-        0
-      ],
-      "models": [
-        "5",
-        0
-      ]
-    },
-    "class_type": "HolopixImageToPrompt",
-    "_meta": {
-      "title": "Holopix 图片转提示词"
-    }
-  },
   "7": {
     "inputs": {
       "aspect_ratio": "1:1",
       "batch_size": "1",
-      "request_nonce": 0,
+      "request_nonce": 649671187091443,
       "confirm_cost": true,
       "timeout_seconds": 150,
       "prompt": [
-        "6",
+        "12",
         0
       ],
       "models": [
@@ -124,16 +87,70 @@
       "title": "保存图像"
     }
   },
-  "10": {
+  "12": {
     "inputs": {
-      "anything": [
-        "6",
+      "model_name": "Qwen3-VL-2B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "🖼️ Detailed Description",
+      "custom_prompt": [
+        "14",
+        0
+      ],
+      "max_tokens": 192,
+      "keep_model_loaded": true,
+      "seed": 148865807,
+      "image": [
+        "16",
         0
       ]
     },
-    "class_type": "easy showAnything",
+    "class_type": "AILab_QwenVL",
     "_meta": {
-      "title": "记录 Holopix 实际提示词"
+      "title": "QwenVL"
+    }
+  },
+  "13": {
+    "inputs": {
+      "value": "清洁布"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "物件名字输入"
+    }
+  },
+  "14": {
+    "inputs": {
+      "f_string": "权威对象元数据：\n对象名称：{a}\n\n提供的对象名称是权威的。\n\n分析所附图片并写出一篇合适的流利中文说明。描述物体的轮廓，\n比例、可见成分、材料、颜色、表面纹理、\n方向、相机角度、构图\n\n仅使用视觉支持的细节。不要输出标签、要点、\n分析、JSON、标题或短语（例如“此图像显示”）。\n输出 60–100 个单词。",
+      "values.a": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "StringFormat",
+    "_meta": {
+      "title": "格式化文本"
+    }
+  },
+  "16": {
+    "inputs": {
+      "image": "图片_003_01.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载 Excel 参考图"
+    }
+  },
+  "18": {
+    "inputs": {
+      "source": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "提示词结果"
     }
   }
 }

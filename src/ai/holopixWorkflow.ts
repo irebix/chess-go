@@ -15,7 +15,8 @@ export interface PreparedHolopixWorkflow {
 }
 
 export interface HolopixWorkflowOverrides {
-  imageName: string;
+  imageName?: string;
+  itemName?: string;
   batchSize: 1 | 2 | 4;
   requestNonce: number;
   confirmCost: boolean;
@@ -35,18 +36,35 @@ export function prepareHolopixWorkflow(
 ): PreparedHolopixWorkflow {
   const workflow = cloneWorkflow(baseWorkflow);
   const loadImage = findOnlyNode(workflow, "LoadImage");
-  const uploadReference = findOnlyNode(workflow, "HolopixUploadReference");
-  const imageToPrompt = findOnlyNode(workflow, "HolopixImageToPrompt");
+  const itemName = findOnlyTitledNode(workflow, "物件名字输入", "PrimitiveStringMultiline");
+  const promptFormat = findOnlyNode(workflow, "StringFormat");
+  const qwenVl = findOnlyNode(workflow, "AILab_QwenVL");
   const generate = findOnlyNode(workflow, "HolopixGenerate");
   const square = findOnlyNode(workflow, "ImageScale");
   const save = findOnlyNode(workflow, "SaveImage");
-  const promptCapture = findOnlyNode(workflow, "easy showAnything");
+  const promptCapture = findOnlyTitledNode(workflow, "提示词结果", "PreviewAny");
 
-  loadImage.node.inputs.image = options.imageName;
-  uploadReference.node.inputs.image = [loadImage.id, 0];
-  imageToPrompt.node.inputs.reference = [uploadReference.id, 0];
   const promptText = options.promptText?.trim();
-  generate.node.inputs.prompt = promptText || [imageToPrompt.id, 0];
+  if (promptText) {
+    generate.node.inputs.prompt = promptText;
+    promptCapture.node.inputs.source = promptText;
+    delete workflow[loadImage.id];
+    delete workflow[itemName.id];
+    delete workflow[promptFormat.id];
+    delete workflow[qwenVl.id];
+  } else {
+    const imageName = options.imageName?.trim();
+    if (!imageName) throw new Error("QwenVL 提示词工作流缺少已上传的参考图。");
+    const resolvedItemName = options.itemName?.trim();
+    if (!resolvedItemName) throw new Error("QwenVL 提示词工作流缺少物品名称。");
+    loadImage.node.inputs.image = imageName;
+    itemName.node.inputs.value = resolvedItemName;
+    promptFormat.node.inputs["values.a"] = [itemName.id, 0];
+    qwenVl.node.inputs.custom_prompt = [promptFormat.id, 0];
+    qwenVl.node.inputs.image = [loadImage.id, 0];
+    generate.node.inputs.prompt = [qwenVl.id, 0];
+    promptCapture.node.inputs.source = [qwenVl.id, 0];
+  }
   generate.node.inputs.aspect_ratio = "1:1";
   generate.node.inputs.batch_size = String(options.batchSize);
   generate.node.inputs.request_nonce = options.requestNonce;
@@ -58,7 +76,6 @@ export function prepareHolopixWorkflow(
   square.node.inputs.crop = "center";
   save.node.inputs.filename_prefix = options.filenamePrefix;
   save.node.inputs.images = [square.id, 0];
-  promptCapture.node.inputs.anything = promptText || [imageToPrompt.id, 0];
 
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)
@@ -76,22 +93,23 @@ export function prepareHolopixWorkflow(
 
 export function describeHolopixPromptSource(workflow: ComfyWorkflow): HolopixPromptSource {
   const generate = findOnlyNode(workflow, "HolopixGenerate");
+  const promptCapture = findOnlyTitledNode(workflow, "提示词结果", "PreviewAny");
   const prompt = generate.node.inputs.prompt;
   if (Array.isArray(prompt) && typeof prompt[0] === "string") {
     const sourceId = prompt[0];
     const source = workflow[sourceId];
-    if (source?.class_type === "HolopixImageToPrompt") {
+    if (source?.class_type === "AILab_QwenVL") {
       return {
         kind: "node",
-        label: source._meta?.title?.trim() || "Holopix 图片转提示词",
-        detail: `等待生成或恢复后显示该节点返回的实际提示词（节点 ${sourceId}）。`
+        label: promptCapture.node._meta?.title?.trim() || "提示词结果",
+        detail: `等待生成或恢复后显示 QwenVL 返回的实际提示词（结果节点 ${promptCapture.id}）。`
       };
     }
   }
   return {
     kind: "unknown",
     label: "HolopixGenerate.prompt",
-    detail: "工作流必须把 HolopixImageToPrompt 的文本输出连接到 HolopixGenerate.prompt。"
+    detail: "工作流必须把 QwenVL 的文本输出连接到 HolopixGenerate.prompt。"
   };
 }
 
@@ -112,37 +130,50 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
   const workflow = value as ComfyWorkflow;
   for (const classType of [
     "LoadImage",
-    "HolopixUploadReference",
-    "HolopixImageToPrompt",
+    "PrimitiveStringMultiline",
+    "StringFormat",
+    "AILab_QwenVL",
     "HolopixGenerate",
     "ImageScale",
     "SaveImage",
-    "easy showAnything"
+    "PreviewAny"
   ]) {
     findOnlyNode(workflow, classType);
   }
 
-  const uploadReference = findOnlyNode(workflow, "HolopixUploadReference");
-  const imageToPrompt = findOnlyNode(workflow, "HolopixImageToPrompt");
+  const loadImage = findOnlyNode(workflow, "LoadImage");
+  const itemName = findOnlyTitledNode(workflow, "物件名字输入", "PrimitiveStringMultiline");
+  const promptFormat = findOnlyNode(workflow, "StringFormat");
+  const qwenVl = findOnlyNode(workflow, "AILab_QwenVL");
   const generate = findOnlyNode(workflow, "HolopixGenerate");
-  const promptCapture = findOnlyNode(workflow, "easy showAnything");
+  const promptCapture = findOnlyTitledNode(workflow, "提示词结果", "PreviewAny");
   assertConnection(
-    imageToPrompt.node.inputs.reference,
-    uploadReference.id,
-    "HolopixImageToPrompt.reference 必须连接 HolopixUploadReference。"
+    promptFormat.node.inputs["values.a"],
+    itemName.id,
+    "格式化文本 values.a 必须连接“物件名字输入”。"
+  );
+  assertConnection(
+    qwenVl.node.inputs.custom_prompt,
+    promptFormat.id,
+    "QwenVL.custom_prompt 必须连接格式化文本。"
+  );
+  assertConnection(
+    qwenVl.node.inputs.image,
+    loadImage.id,
+    "QwenVL.image 必须连接 LoadImage。"
   );
   assertConnection(
     generate.node.inputs.prompt,
-    imageToPrompt.id,
-    "HolopixGenerate.prompt 必须连接 HolopixImageToPrompt。"
+    qwenVl.id,
+    "HolopixGenerate.prompt 必须连接 QwenVL。"
   );
   assertConnection(
-    promptCapture.node.inputs.anything,
-    imageToPrompt.id,
-    "实际提示词记录节点必须连接 HolopixImageToPrompt。"
+    promptCapture.node.inputs.source,
+    qwenVl.id,
+    "“提示词结果”必须连接 QwenVL。"
   );
   if ("reference" in generate.node.inputs) {
-    throw new Error("HolopixGenerate 不能连接 reference；参考图只能用于前置图生文节点。");
+    throw new Error("HolopixGenerate 不能连接 reference；参考图只能用于前置 QwenVL 提示词节点。");
   }
 }
 
@@ -165,6 +196,25 @@ function findOnlyNode(workflow: ComfyWorkflow, classType: string): { id: string;
   const node = match[1];
   if (!node.inputs || typeof node.inputs !== "object") {
     throw new Error(`${classType} 节点缺少 inputs。`);
+  }
+  return { id: match[0], node };
+}
+
+function findOnlyTitledNode(
+  workflow: ComfyWorkflow,
+  title: string,
+  classType: string
+): { id: string; node: ComfyWorkflowNode } {
+  const matches = Object.entries(workflow).filter(([, node]) => (
+    node?.class_type === classType && node._meta?.title?.trim() === title
+  ));
+  if (matches.length !== 1) {
+    throw new Error(`Holopix.json 需要且只能包含 1 个标题为“${title}”的 ${classType} 节点，当前为 ${matches.length} 个。`);
+  }
+  const match = matches[0]!;
+  const node = match[1];
+  if (!node.inputs || typeof node.inputs !== "object") {
+    throw new Error(`${title} 节点缺少 inputs。`);
   }
   return { id: match[0], node };
 }

@@ -9,6 +9,10 @@ interface RecoveryImage {
 interface RecoveryOutput {
   images?: RecoveryImage[];
   text?: unknown;
+  string?: unknown;
+  value?: unknown;
+  result?: unknown;
+  output?: unknown;
 }
 
 interface RecoveryEntry {
@@ -81,7 +85,7 @@ export function collectRecentHolopixImages(
 
 function extractRecoveredPromptText(entry: RecoveryEntry): string | undefined {
   for (const output of Object.values(entry.outputs ?? {})) {
-    const text = normalizeOutputText(output.text);
+    const text = normalizeOutputText(output);
     if (text) return text;
   }
 
@@ -96,8 +100,21 @@ function extractRecoveredPromptText(entry: RecoveryEntry): string | undefined {
 }
 
 function normalizeOutputText(value: unknown): string | undefined {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+  if (typeof value === "string") return value.trim() || undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = normalizeOutputText(item);
+      if (text) return text;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ["text", "string", "value", "result", "output"]) {
+    const text = normalizeOutputText(record[key]);
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function extractWorkflow(value: unknown): Record<string, { class_type?: string; inputs?: Record<string, unknown> }> | undefined {

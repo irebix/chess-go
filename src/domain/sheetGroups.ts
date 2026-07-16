@@ -100,6 +100,10 @@ export function filterItemsByGroups(items: AssetCandidate[], groups: SheetGroup[
   return items.filter((item) => groups.some((group) => isRowInGroup(item.codeRow, group)));
 }
 
+export function filterSelectedItemsByGroups(items: AssetCandidate[], groups: SheetGroup[]): AssetCandidate[] {
+  return filterItemsByGroups(items, groups).filter((item) => item.selected);
+}
+
 function physicalSegment(
   range: MergedCellRange,
   cells: CellRecord[],
