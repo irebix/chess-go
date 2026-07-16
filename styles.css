@@ -1074,18 +1074,26 @@ button:disabled {
 }
 
 .ai-candidate-strip {
+  position: relative;
   display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
+  min-width: 64px;
+  flex: 0 0 auto;
   gap: 7px;
-  overflow-x: auto;
   padding-bottom: 1px;
 }
 
 .ai-candidate-cell {
+  z-index: 1;
+  margin: 0;
   padding: 0;
   color: inherit;
+  font: inherit;
   cursor: default;
+}
+
+.ai-candidate-cell.is-ready,
+.ai-candidate-cell.is-accepted {
+  background: rgba(0, 0, 0, 0.001);
 }
 
 .ai-candidate-cell.is-actionable {
@@ -1102,39 +1110,32 @@ button:disabled {
   border-color: #db6767;
 }
 
+.ai-candidate-strip-canvas,
 .ai-candidate-preview-canvas {
   position: absolute;
   top: 0;
-  right: 0;
-  bottom: 0;
   left: 0;
   display: block;
-  width: 64px;
   height: 64px;
   pointer-events: none;
 }
 
-.ai-candidate-select-surface {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 1;
+.ai-candidate-strip-canvas {
+  z-index: 0;
+}
+
+.ai-candidate-preview-canvas {
+  width: 64px;
+}
+
+.ai-candidate-canvas-host {
+  position: relative;
   display: block;
   width: 64px;
   height: 64px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.001);
-  color: transparent;
-  cursor: pointer;
-  pointer-events: auto;
 }
 
-.ai-candidate-select-surface:disabled {
+.ai-candidate-cell:disabled {
   opacity: 1;
   cursor: default;
 }
@@ -1155,17 +1156,12 @@ button:disabled {
   text-align: center;
 }
 
-.ai-candidate-generate {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  bottom: 3px;
-  left: 3px;
+.ai-candidate-status {
   display: flex;
+  width: 58px;
+  height: 58px;
   align-items: center;
   justify-content: center;
-  margin: 0;
-  border: 0;
   border-radius: 3px;
   color: #fff;
   background: rgba(0, 0, 0, 0.4);
