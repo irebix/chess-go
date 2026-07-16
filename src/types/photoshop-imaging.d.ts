@@ -7,10 +7,6 @@ declare module "photoshop" {
     colorSpace: string;
     components: number;
     componentSize: number;
-    hasAlpha: boolean;
-    getData(options?: { chunky?: boolean; fullRange?: boolean }): Promise<
-      Uint8Array | Uint16Array | Float32Array
-    >;
     dispose(): void;
   }
 

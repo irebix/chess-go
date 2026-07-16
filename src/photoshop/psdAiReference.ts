@@ -1,9 +1,5 @@
 import { core, imaging, imaging_beta } from "photoshop";
-import {
-  createUncompressedRgbaImageBlobResource,
-  type HolopixImageBlobResource
-} from "../ai/holopixImageBlob";
-import { rgbOrRgbaToRgba } from "../domain/imagePixels";
+import type { HolopixImageBlobResource } from "../ai/holopixImageBlob";
 import type { PsdAiNode } from "./referenceViewController";
 
 export interface PsdAiReference extends PsdAiNode {
@@ -28,30 +24,14 @@ export async function readPsdAiReferencePreview(
   targetHeight = 128
 ): Promise<HolopixImageBlobResource> {
   return runReferenceReadModal(`预览 ${reference.assetCode} 参考图`, async () => {
-    validateTargetHeight(targetHeight);
-    const result = await readPsdAiReferencePixels(reference, targetHeight, false);
-    try {
-      const imageData = result.imageData;
-      if (imageData.width < 1 || imageData.height < 1) {
-        throw new Error("图层没有可预览的像素。");
-      }
-      const pixels = await imageData.getData({ chunky: true });
-      if (!(pixels instanceof Uint8Array)) {
-        throw new Error(`Photoshop 返回了非 8-bit 参考图像素：${imageData.componentSize}-bit。`);
-      }
-      const rgba = rgbOrRgbaToRgba(pixels, imageData.width, imageData.height, imageData.components);
-      return createUncompressedRgbaImageBlobResource({
-        width: imageData.width,
-        height: imageData.height,
-        pixels: rgba
-      });
-    } catch (error) {
-      throw new Error(
-        `PSD 参考图 ${reference.assetCode}（图层 ${reference.referenceLayerId}）原始像素预览失败：${errorMessage(error)}`
-      );
-    } finally {
-      result.imageData.dispose();
+    const encoded = await encodePsdAiReference(reference, targetHeight, true);
+    if (typeof encoded !== "string") {
+      throw new Error("Photoshop 未返回 Base64 参考图缩略图。");
     }
+    return {
+      url: `data:image/jpeg;base64,${encoded}`,
+      revoke: () => undefined
+    };
   });
 }
 
