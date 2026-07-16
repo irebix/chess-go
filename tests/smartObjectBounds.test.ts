@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { smartObjectBoundsFromDescriptor } from "../src/photoshop/smartObjectBounds";
+import {
+  smartObjectBoundsFromDescriptor,
+  smartObjectGeometryFromDescriptor
+} from "../src/photoshop/smartObjectBounds";
 
 describe("smartObjectBoundsFromDescriptor", () => {
   it("reads the transformed four corners of a transparent smart object", () => {
@@ -16,6 +19,18 @@ describe("smartObjectBoundsFromDescriptor", () => {
         nonAffineTransform: [4, 8, 152, 8, 152, 156, 4, 156]
       }
     })).toEqual({ left: 4, top: 8, right: 152, bottom: 156 });
+  });
+
+  it("keeps the raw transform source and points for geometry diagnostics", () => {
+    expect(smartObjectGeometryFromDescriptor({
+      smartObjectMore: {
+        nonAffineTransform: [4, 8, 152, 8, 152, 156, 4, 156]
+      }
+    })).toEqual({
+      source: "nonAffineTransform",
+      points: [4, 8, 152, 8, 152, 156, 4, 156],
+      bounds: { left: 4, top: 8, right: 152, bottom: 156 }
+    });
   });
 
   it("rejects a missing transform", () => {

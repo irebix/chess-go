@@ -2,9 +2,12 @@ import { encode } from "jpeg-js";
 import { describe, expect, it } from "vitest";
 import {
   buildHolopixCanvasRuns,
+  buildHolopixCanvasStripRuns,
   buildHolopixSafeJpegUrl,
   decodeHolopixSafeJpeg,
+  holopixCanvasStripWidth,
   HOLOPIX_CANVAS_PREVIEW_SIZE,
+  HOLOPIX_CANVAS_SAMPLE_SIZE,
   HOLOPIX_SAFE_PREVIEW_MAX_BYTES,
   HOLOPIX_SAFE_PREVIEW_SIZE,
   prepareHolopixSafePreviewWorkflow
@@ -78,6 +81,7 @@ describe("Holopix safe preview", () => {
 
   it("converts RGBA pixels into basic Canvas fill rectangles", () => {
     expect(HOLOPIX_CANVAS_PREVIEW_SIZE).toBe(64);
+    expect(HOLOPIX_CANVAS_SAMPLE_SIZE).toBe(32);
     const pixels = new Uint8ClampedArray(4 * 2 * 4);
     for (let index = 0; index < pixels.length; index += 4) {
       const leftHalf = (index / 4) % 4 < 2;
@@ -94,6 +98,23 @@ describe("Holopix safe preview", () => {
       { x: 0, y: 1, width: 1, color: "rgb(255,0,0)" },
       { x: 1, y: 1, width: 1, color: "rgb(0,0,255)" }
     ]);
+  });
+
+  it("packs multiple previews into one row Canvas with quarter-size draw pressure", () => {
+    const pixels = new Uint8ClampedArray(96 * 96 * 4);
+    for (let index = 0; index < pixels.length; index += 4) {
+      pixels[index] = 64;
+      pixels[index + 1] = 128;
+      pixels[index + 2] = 192;
+      pixels[index + 3] = 255;
+    }
+    const preview = { width: 96, height: 96, pixels };
+    const runs = buildHolopixCanvasStripRuns([preview, preview]);
+
+    expect(holopixCanvasStripWidth(2)).toBe(135);
+    expect(runs).toHaveLength(64);
+    expect(runs[0]).toEqual({ x: 0, y: 0, width: 64, height: 2, color: "rgb(64,128,192)" });
+    expect(runs[32]).toEqual({ x: 71, y: 0, width: 64, height: 2, color: "rgb(64,128,192)" });
   });
 
   it("rejects unsafe paths and malformed preview responses", () => {

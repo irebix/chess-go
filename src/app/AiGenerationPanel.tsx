@@ -17,7 +17,8 @@ import {
 } from "../ai/holopixClient";
 import { openHolopixCandidateExternally } from "../ai/holopixExternalPreview";
 import {
-  buildHolopixCanvasRuns,
+  buildHolopixCanvasStripRuns,
+  holopixCanvasStripWidth,
   HOLOPIX_CANVAS_PREVIEW_SIZE
 } from "../ai/holopixSafePreview";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
@@ -68,6 +69,7 @@ export function AiGenerationPanel({
   const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
   const [panelMessage, setPanelMessage] = useState("Excel 参考图只用于 Holopix 图生文，生成节点仅接收返回的文字提示词。");
   const abortRef = useRef<AbortController | null>(null);
+  const canvasRedrawEpoch = useCanvasRedrawEpoch(open);
 
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
   const groupItems = useMemo(
@@ -332,14 +334,19 @@ export function AiGenerationPanel({
 
   async function handleAccept(item: AssetCandidate, candidate: AiCandidateSlot): Promise<void> {
     if (!candidate.image || disabled) return;
+    const geometryAudit: string[] = [];
     setSelectedItemKey(item.key);
-    setStates((current) => {
-      const state = current[item.key];
-      return state ? { ...current, [item.key]: acceptAiCandidate(state, candidate.id) } : current;
-    });
     setSyncingCandidateId(candidate.id);
     try {
-      const result = await backfillAiCandidate(item.assetCode, candidate.image.url);
+      const result = await backfillAiCandidate(
+        item.assetCode,
+        candidate.image.url,
+        (message) => geometryAudit.push(message)
+      );
+      setStates((current) => {
+        const state = current[item.key];
+        return state ? { ...current, [item.key]: acceptAiCandidate(state, candidate.id) } : current;
+      });
       setPanelMessage(result.detail);
       onStatus(result.detail, result.applied ? "info" : "warn");
     } catch (error) {
@@ -347,6 +354,7 @@ export function AiGenerationPanel({
       setPanelMessage(detail);
       onStatus(detail, "error");
     } finally {
+      for (const message of geometryAudit) onStatus(`回填几何 ${item.assetCode}：${message}`);
       setSyncingCandidateId(null);
     }
   }
@@ -511,18 +519,13 @@ export function AiGenerationPanel({
                         thumbnail={thumbnail}
                         onError={() => reference && onThumbnailError(reference.anchor.archiveEntry)}
                       />
-                      <div className="ai-candidate-strip">
-                        {state?.candidates.map((candidate, slotIndex) => (
-                          <CandidateCell
-                            key={candidate.id}
-                            candidate={candidate}
-                            disabled={disabled}
-                            onAccept={() => void handleAccept(item, candidate)}
-                            onRegenerate={() => void handleRegenerate(item, slotIndex)}
-                          />
-                        ))}
-                        {!state ? <small className="ai-no-reference">无参考图，无法图生文</small> : null}
-                      </div>
+                      <CandidateStrip
+                        candidates={state?.candidates}
+                        disabled={disabled}
+                        redrawEpoch={canvasRedrawEpoch}
+                        onAccept={(candidate) => void handleAccept(item, candidate)}
+                        onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
+                      />
                     </div>
                   );
                 })}
@@ -543,7 +546,7 @@ export function AiGenerationPanel({
                           onClick={() => void handleView(item, accepted)}
                         >
                           {accepted.image.preview
-                            ? <SafeCandidateCanvas preview={accepted.image.preview} />
+                            ? <SafeCandidateCanvas preview={accepted.image.preview} redrawEpoch={canvasRedrawEpoch} />
                             : <span>{openingCandidateId === accepted.id ? "打开中" : "系统查看"}</span>}
                         </button>
                       : <span>未选择</span>}
@@ -580,6 +583,44 @@ function ReferencePreview({
   );
 }
 
+function CandidateStrip({
+  candidates,
+  disabled,
+  redrawEpoch,
+  onAccept,
+  onRegenerate
+}: {
+  candidates?: AiCandidateSlot[];
+  disabled: boolean;
+  redrawEpoch: number;
+  onAccept: (candidate: AiCandidateSlot) => void;
+  onRegenerate: (slotIndex: number) => void;
+}): React.ReactElement {
+  const [rootRef, visible] = useNearViewport<HTMLDivElement>();
+  const previews = useMemo(
+    () => candidates?.map((candidate) => candidate.image?.preview) ?? [],
+    [candidates]
+  );
+
+  return (
+    <div className="ai-candidate-strip" ref={rootRef}>
+      {visible && previews.some(Boolean)
+        ? <CandidateCanvasSurface previews={previews} redrawEpoch={redrawEpoch} className="ai-candidate-strip-canvas" />
+        : null}
+      {candidates?.map((candidate, slotIndex) => (
+        <CandidateCell
+          key={candidate.id}
+          candidate={candidate}
+          disabled={disabled}
+          onAccept={() => onAccept(candidate)}
+          onRegenerate={() => onRegenerate(slotIndex)}
+        />
+      ))}
+      {!candidates ? <small className="ai-no-reference">无参考图，无法图生文</small> : null}
+    </div>
+  );
+}
+
 function CandidateCell({
   candidate,
   disabled,
@@ -602,8 +643,10 @@ function CandidateCell({
     else onRegenerate();
   };
   return (
-    <div
+    <button
       className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""}`}
+      disabled={disabled || candidate.status === "accepted" || candidate.status === "queued" || candidate.status === "generating"}
+      aria-label={candidate.status === "accepted" ? "已选中候选" : interactive ? "选择并回填候选" : candidateStatusLabel(candidate)}
       title={candidate.error || candidate.image?.previewError || (
         candidate.status === "accepted"
           ? "已选中并回填 Photoshop"
@@ -611,45 +654,48 @@ function CandidateCell({
             ? "点击图片选中并回填 Photoshop"
             : "点击生成或重试"
       )}
-      onClick={activate}
+      onClick={(event) => {
+        event.stopPropagation();
+        activate();
+      }}
     >
-      {interactive ? (
-        <>
-          {preview
-            ? <SafeCandidateCanvas preview={preview} />
-            : <small className="ai-candidate-preview-fallback">预览失败</small>}
-          <button
-            className="ai-candidate-select-surface"
-            disabled={disabled || candidate.status === "accepted"}
-            aria-label={candidate.status === "accepted" ? "已选中候选" : "选择并回填候选"}
-            onClick={(event) => {
-              event.stopPropagation();
-              activate();
-            }}
-          />
-        </>
-      ) : (
-        <button
-          className="ai-candidate-generate"
-          disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
-          onClick={(event) => {
-            event.stopPropagation();
-            activate();
-          }}
-        >{candidateStatusLabel(candidate)}</button>
-      )}
-    </div>
+      {interactive
+        ? preview ? null : <small className="ai-candidate-preview-fallback">预览失败</small>
+        : <span className="ai-candidate-status">{candidateStatusLabel(candidate)}</span>}
+    </button>
   );
 }
 
 function SafeCandidateCanvas({
-  preview
+  preview,
+  redrawEpoch
 }: {
   preview: AiCandidatePreview;
+  redrawEpoch: number;
+}): React.ReactElement {
+  const [rootRef, visible] = useNearViewport<HTMLSpanElement>();
+  return (
+    <span className="ai-candidate-canvas-host" ref={rootRef}>
+      {visible
+        ? <CandidateCanvasSurface previews={[preview]} redrawEpoch={redrawEpoch} className="ai-candidate-preview-canvas" />
+        : null}
+    </span>
+  );
+}
+
+function CandidateCanvasSurface({
+  previews,
+  redrawEpoch,
+  className
+}: {
+  previews: Array<AiCandidatePreview | undefined>;
+  redrawEpoch: number;
+  className: string;
 }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
-  const runs = useMemo(() => buildHolopixCanvasRuns(preview), [preview]);
+  const runs = useMemo(() => buildHolopixCanvasStripRuns(previews), [previews]);
+  const canvasWidth = holopixCanvasStripWidth(previews.length);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -657,29 +703,74 @@ function SafeCandidateCanvas({
     try {
       const context = canvas.getContext("2d");
       if (!context) throw new Error("当前 UXP 不支持 Canvas 2D 上下文。");
-      context.clearRect(0, 0, HOLOPIX_CANVAS_PREVIEW_SIZE, HOLOPIX_CANVAS_PREVIEW_SIZE);
+      context.clearRect(0, 0, canvasWidth, HOLOPIX_CANVAS_PREVIEW_SIZE);
       for (const run of runs) {
         context.fillStyle = run.color;
-        context.fillRect(run.x, run.y, run.width, 1);
+        context.fillRect(run.x, run.y, run.width, run.height);
       }
       setRenderFailed(false);
     } catch (error) {
       console.error("Holopix Canvas 安全预览绘制失败", error);
       setRenderFailed(true);
     }
-  }, [runs]);
+  }, [canvasWidth, redrawEpoch, runs]);
 
   if (renderFailed) return <small className="ai-candidate-preview-fallback">预览失败</small>;
 
   return (
     <canvas
       ref={canvasRef}
-      className="ai-candidate-preview-canvas"
-      width={HOLOPIX_CANVAS_PREVIEW_SIZE}
+      className={className}
+      width={canvasWidth}
       height={HOLOPIX_CANVAS_PREVIEW_SIZE}
+      style={{ width: `${canvasWidth}px`, height: `${HOLOPIX_CANVAS_PREVIEW_SIZE}px` }}
       aria-label="Holopix 安全候选缩略图"
     />
   );
+}
+
+function useNearViewport<T extends Element>(): [React.MutableRefObject<T | null>, boolean] {
+  const rootRef = useRef<T | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      setVisible(entries.some((entry) => entry.isIntersecting));
+    }, { root: null, rootMargin: "140px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return [rootRef, visible];
+}
+
+function useCanvasRedrawEpoch(enabled: boolean): number {
+  const [epoch, setEpoch] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let timer: number | undefined;
+    const scheduleRedraw = (): void => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setEpoch((current) => current + 1), 120);
+    };
+    document.addEventListener("scroll", scheduleRedraw, true);
+    window.addEventListener("resize", scheduleRedraw);
+    document.addEventListener("visibilitychange", scheduleRedraw);
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("scroll", scheduleRedraw, true);
+      window.removeEventListener("resize", scheduleRedraw);
+      document.removeEventListener("visibilitychange", scheduleRedraw);
+    };
+  }, [enabled]);
+
+  return epoch;
 }
 
 async function runItemGeneration(

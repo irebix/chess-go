@@ -5,10 +5,21 @@ export interface SmartObjectTransformBounds {
   bottom: number;
 }
 
+export interface SmartObjectTransformGeometry {
+  source: "transform" | "nonAffineTransform";
+  points: number[];
+  bounds: SmartObjectTransformBounds;
+}
+
 export function smartObjectBoundsFromDescriptor(descriptor: unknown): SmartObjectTransformBounds {
+  return smartObjectGeometryFromDescriptor(descriptor).bounds;
+}
+
+export function smartObjectGeometryFromDescriptor(descriptor: unknown): SmartObjectTransformGeometry {
   const root = asRecord(descriptor);
   const smartObjectMore = asRecord(root.smartObjectMore ?? root);
-  const transform = smartObjectMore.transform ?? smartObjectMore.nonAffineTransform;
+  const source = Array.isArray(smartObjectMore.transform) ? "transform" : "nonAffineTransform";
+  const transform = smartObjectMore[source];
   if (!Array.isArray(transform) || transform.length < 8) {
     throw new Error("Photoshop 未返回空白智能对象的变换四角。");
   }
@@ -20,10 +31,14 @@ export function smartObjectBoundsFromDescriptor(descriptor: unknown): SmartObjec
   const xs = [values[0]!, values[2]!, values[4]!, values[6]!];
   const ys = [values[1]!, values[3]!, values[5]!, values[7]!];
   return {
-    left: Math.min(...xs),
-    top: Math.min(...ys),
-    right: Math.max(...xs),
-    bottom: Math.max(...ys)
+    source,
+    points: values,
+    bounds: {
+      left: Math.min(...xs),
+      top: Math.min(...ys),
+      right: Math.max(...xs),
+      bottom: Math.max(...ys)
+    }
   };
 }
 

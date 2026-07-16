@@ -4,8 +4,16 @@ export interface CandidateTargetLayer {
   id: number;
   name: string;
   layers?: CandidateTargetLayerCollection;
+  boundsNoEffects?: CandidateLayerBounds;
   scale?: (horizontal: number, vertical: number, anchor: unknown) => Promise<void>;
   translate?: (horizontal: number, vertical: number) => Promise<void>;
+}
+
+export interface CandidateLayerBounds {
+  left: unknown;
+  top: unknown;
+  right: unknown;
+  bottom: unknown;
 }
 
 export interface CandidateTargetLayerCollection {
@@ -14,6 +22,7 @@ export interface CandidateTargetLayerCollection {
 }
 
 export interface CandidateTargetDocument {
+  id?: number;
   layers: CandidateTargetLayerCollection;
   artboards?: CandidateTargetLayerCollection;
 }
@@ -21,6 +30,7 @@ export interface CandidateTargetDocument {
 export interface EditableCanvasTarget {
   artboard: CandidateTargetLayer;
   layer: CandidateTargetLayer;
+  path: CandidateTargetLayer[];
 }
 
 export function isEditableCanvasLayerName(name: string): boolean {
@@ -38,17 +48,33 @@ export function findEditableCanvasTarget(
   document: CandidateTargetDocument,
   assetCode: string
 ): EditableCanvasTarget | undefined {
-  const topLayers = collectionValues(document.artboards ?? document.layers);
-  const artboard = topLayers.find((layer) => layer.name === assetCode)
-    ?? collectionValues(document.layers).find((layer) => layer.name === assetCode);
-  if (!artboard) return undefined;
-  const layer = allLayers(artboard.layers).find((candidate) => isEditableCanvasLayerName(candidate.name));
-  return layer ? { artboard, layer } : undefined;
+  return findEditableCanvasTargets(document, assetCode)[0];
 }
 
-function allLayers(collection: CandidateTargetLayerCollection | undefined): CandidateTargetLayer[] {
-  const values = collectionValues(collection);
-  return values.flatMap((layer) => [layer, ...allLayers(layer.layers)]);
+export function findEditableCanvasTargets(
+  document: CandidateTargetDocument,
+  assetCode: string
+): EditableCanvasTarget[] {
+  const topLayers = collectionValues(document.artboards ?? document.layers);
+  const artboards = topLayers.filter((layer) => layer.name === assetCode);
+  const fallbackArtboards = artboards.length
+    ? artboards
+    : collectionValues(document.layers).filter((layer) => layer.name === assetCode);
+  return fallbackArtboards.flatMap((artboard) =>
+    allLayerPaths(artboard.layers)
+      .filter(({ layer }) => isEditableCanvasLayerName(layer.name))
+      .map(({ layer, path }) => ({ artboard, layer, path }))
+  );
+}
+
+function allLayerPaths(
+  collection: CandidateTargetLayerCollection | undefined,
+  ancestors: CandidateTargetLayer[] = []
+): Array<{ layer: CandidateTargetLayer; path: CandidateTargetLayer[] }> {
+  return collectionValues(collection).flatMap((layer) => {
+    const path = [...ancestors, layer];
+    return [{ layer, path }, ...allLayerPaths(layer.layers, path)];
+  });
 }
 
 function collectionValues(collection: CandidateTargetLayerCollection | undefined): CandidateTargetLayer[] {
