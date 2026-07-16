@@ -1063,7 +1063,8 @@ button:disabled {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #fff;
 }
 
 .ai-reference-preview small {
@@ -1087,14 +1088,6 @@ button:disabled {
   cursor: default;
 }
 
-.ai-candidate-cell.is-actionable {
-  cursor: pointer;
-}
-
-.ai-candidate-cell.is-actionable:focus {
-  border-color: #76b7ff;
-}
-
 .ai-candidate-cell.is-accepted {
   border-color: #4dcc91;
   box-shadow: inset 0 0 0 1px #4dcc91;
@@ -1115,6 +1108,27 @@ button:disabled {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.ai-candidate-select-surface {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+
+.ai-candidate-select-surface:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .ai-no-reference {
