@@ -16,6 +16,12 @@ interface RecoveryEntry {
   prompt?: unknown;
 }
 
+interface RecoveryBatch {
+  images: AiGeneratedImage[];
+  promptText?: string;
+  newestSequence: number;
+}
+
 export function collectRecentHolopixImages(
   history: Record<string, RecoveryEntry>,
   assetCodes: string[],
@@ -23,10 +29,11 @@ export function collectRecentHolopixImages(
 ): Record<string, AiGeneratedImage[]> {
   const codeBySafeName = new Map(assetCodes.map((assetCode) => [safePathSegment(assetCode), assetCode]));
   const recovered: Record<string, AiGeneratedImage[]> = {};
-  const seen = new Set<string>();
+  const batchesByAssetCode = new Map<string, RecoveryBatch[]>();
 
   for (const entry of Object.values(history)) {
     const promptText = extractRecoveredPromptText(entry);
+    const imagesByAssetCode = new Map<string, AiGeneratedImage[]>();
     for (const output of Object.values(entry.outputs ?? {})) {
       for (const image of output.images ?? []) {
         if (!image.filename || (image.type ?? "output") !== "output") continue;
@@ -35,15 +42,39 @@ export function collectRecentHolopixImages(
         const assetCode = codeBySafeName.get(safeName);
         if (!assetCode) continue;
         const generated = toGeneratedImage(image, baseUrl, promptText);
-        if (seen.has(generated.url)) continue;
-        seen.add(generated.url);
-        (recovered[assetCode] ??= []).push(generated);
+        const images = imagesByAssetCode.get(assetCode) ?? [];
+        images.push(generated);
+        imagesByAssetCode.set(assetCode, images);
       }
+    }
+    for (const [assetCode, images] of imagesByAssetCode) {
+      if (!images.length) continue;
+      const newestSequence = Math.max(...images.map((image) => imageSequence(image.filename)));
+      const batch: RecoveryBatch = { images, newestSequence };
+      if (promptText) batch.promptText = promptText;
+      const batches = batchesByAssetCode.get(assetCode) ?? [];
+      batches.push(batch);
+      batchesByAssetCode.set(assetCode, batches);
     }
   }
 
-  for (const images of Object.values(recovered)) {
-    images.sort((left, right) => imageSequence(right.filename) - imageSequence(left.filename));
+  for (const assetCode of assetCodes) {
+    const batches = batchesByAssetCode.get(assetCode);
+    if (!batches?.length) continue;
+    batches.sort((left, right) => right.newestSequence - left.newestSequence);
+    const latest = batches[0]!;
+    const compatibleBatches = latest.promptText
+      ? batches.filter((batch) => batch.promptText === latest.promptText)
+      : [latest];
+    const seen = new Set<string>();
+    recovered[assetCode] = compatibleBatches
+      .flatMap((batch) => batch.images)
+      .sort((left, right) => imageSequence(right.filename) - imageSequence(left.filename))
+      .filter((image) => {
+        if (seen.has(image.url)) return false;
+        seen.add(image.url);
+        return true;
+      });
   }
   return recovered;
 }

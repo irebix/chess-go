@@ -97,6 +97,7 @@ export async function generateHolopixImages(
   options.onStage?.("Excel 参考图已上传；仅用于 Holopix 图生文节点。");
   const batches = splitHolopixBatches(options.candidateCount);
   const results: AiGeneratedImage[] = [];
+  let sharedPromptText: string | undefined;
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     throwIfAborted(options.signal);
@@ -107,7 +108,8 @@ export async function generateHolopixImages(
       batchSize,
       requestNonce: makeRequestNonce(batchIndex),
       confirmCost: true,
-      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`
+      filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`,
+      ...(sharedPromptText ? { promptText: sharedPromptText } : {})
     });
     const promptId = await queuePrompt(prepared.workflow, options.signal);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已提交。`);
@@ -122,11 +124,20 @@ export async function generateHolopixImages(
     if (images.length < batchSize) {
       throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
     }
+    if (sharedPromptText && generated.promptText !== sharedPromptText) {
+      throw new Error("Holopix 后续批次没有沿用首批图生文提示词。");
+    }
+    const batchPromptText = sharedPromptText ?? generated.promptText;
     const selectedImages = images.slice(0, batchSize).map((image) => ({
       ...image,
-      promptText: generated.promptText
+      promptText: batchPromptText
     }));
-    options.onStage?.(`Holopix 图生文实际提示词：${summarizePrompt(generated.promptText)}`);
+    if (!sharedPromptText) {
+      sharedPromptText = batchPromptText;
+      options.onStage?.(`Holopix 图生文实际提示词：${summarizePrompt(sharedPromptText)}`);
+    } else {
+      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 复用同一提示词：${summarizePrompt(sharedPromptText)}`);
+    }
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
     results.push(...await loadSafePreviews(selectedImages, options.signal, options.onStage));
   }

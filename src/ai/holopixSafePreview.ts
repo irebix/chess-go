@@ -4,7 +4,7 @@ import type { ComfyWorkflow } from "./holopixWorkflow";
 
 export const HOLOPIX_SAFE_PREVIEW_SIZE = 96;
 export const HOLOPIX_SAFE_PREVIEW_MAX_BYTES = 128 * 1024;
-export const HOLOPIX_CANVAS_PREVIEW_SIZE = 48;
+export const HOLOPIX_CANVAS_PREVIEW_SIZE = 64;
 
 export interface HolopixCanvasRun {
   x: number;

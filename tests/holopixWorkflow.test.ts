@@ -83,6 +83,21 @@ describe("Holopix workflow adapter", () => {
     });
   });
 
+  it("reuses an already captured prompt for a later split batch", () => {
+    const prepared = prepareHolopixWorkflow(workflow, {
+      imageName: "uploaded/reference.png",
+      batchSize: 1,
+      requestNonce: 124,
+      confirmCost: true,
+      filenamePrefix: "Holopix/ChessGo/103001",
+      promptText: "same captured cleaning cloth prompt"
+    });
+
+    expect(prepared.workflow["7"]!.inputs.prompt).toBe("same captured cleaning cloth prompt");
+    expect(prepared.workflow["10"]!.inputs.anything).toBe("same captured cleaning cloth prompt");
+    expect(prepared.workflow["7"]!.inputs).not.toHaveProperty("reference");
+  });
+
   it("splits unsupported three-image requests into valid Holopix batches", () => {
     expect(splitHolopixBatches(1)).toEqual([1]);
     expect(splitHolopixBatches(2)).toEqual([2]);

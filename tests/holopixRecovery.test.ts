@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { collectRecentHolopixImages } from "../src/ai/holopixRecovery";
 
 describe("Holopix candidate recovery", () => {
-  it("recovers only ChessGo output images and sorts newest first", () => {
+  it("does not mix a newer prompted batch with an older unrelated batch", () => {
     const recovered = collectRecentHolopixImages({
       older: { outputs: { "9": { images: [
         { filename: "c_cleaning1_00003_.png", subfolder: "Holopix\\ChessGo", type: "output" },
@@ -18,13 +18,42 @@ describe("Holopix candidate recovery", () => {
       } }
     }, ["c_cleaning1"], "http://127.0.0.1:8188");
 
-    expect(recovered.c_cleaning1?.map((image) => image.filename)).toEqual([
-      "c_cleaning1_00005_.png",
-      "c_cleaning1_00003_.png"
-    ]);
+    expect(recovered.c_cleaning1?.map((image) => image.filename)).toEqual(["c_cleaning1_00005_.png"]);
     expect(recovered.c_cleaning1?.[0]?.url).toContain("/view?");
     expect(recovered.c_cleaning1?.[0]?.promptText).toBe("cleaning cloth, game icon");
-    expect(recovered.c_cleaning1?.[1]?.promptText).toBeUndefined();
+  });
+
+  it("merges adjacent generation batches only when their captured prompts match", () => {
+    const recovered = collectRecentHolopixImages({
+      oldestDifferentPrompt: { outputs: {
+        "9": { images: [
+          { filename: "c_cleaning1_00002_.png", subfolder: "Holopix/ChessGo", type: "output" }
+        ] },
+        "10": { text: ["an unrelated old prompt"] }
+      } },
+      firstMatchingBatch: { outputs: {
+        "9": { images: [
+          { filename: "c_cleaning1_00003_.png", subfolder: "Holopix/ChessGo", type: "output" },
+          { filename: "c_cleaning1_00004_.png", subfolder: "Holopix/ChessGo", type: "output" }
+        ] },
+        "10": { text: ["same cleaning cloth prompt"] }
+      } },
+      secondMatchingBatch: { outputs: {
+        "9": { images: [
+          { filename: "c_cleaning1_00005_.png", subfolder: "Holopix/ChessGo", type: "output" }
+        ] },
+        "10": { text: ["same cleaning cloth prompt"] }
+      } }
+    }, ["c_cleaning1"], "http://127.0.0.1:8188");
+
+    expect(recovered.c_cleaning1?.map((image) => image.filename)).toEqual([
+      "c_cleaning1_00005_.png",
+      "c_cleaning1_00004_.png",
+      "c_cleaning1_00003_.png"
+    ]);
+    expect(new Set(recovered.c_cleaning1?.map((image) => image.promptText))).toEqual(
+      new Set(["same cleaning cloth prompt"])
+    );
   });
 
   it("recovers a literal generation prompt from older prompt-only history", () => {

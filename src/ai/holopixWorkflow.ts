@@ -20,6 +20,7 @@ export interface HolopixWorkflowOverrides {
   requestNonce: number;
   confirmCost: boolean;
   filenamePrefix: string;
+  promptText?: string;
 }
 
 export interface HolopixPromptSource {
@@ -44,7 +45,8 @@ export function prepareHolopixWorkflow(
   loadImage.node.inputs.image = options.imageName;
   uploadReference.node.inputs.image = [loadImage.id, 0];
   imageToPrompt.node.inputs.reference = [uploadReference.id, 0];
-  generate.node.inputs.prompt = [imageToPrompt.id, 0];
+  const promptText = options.promptText?.trim();
+  generate.node.inputs.prompt = promptText || [imageToPrompt.id, 0];
   generate.node.inputs.aspect_ratio = "1:1";
   generate.node.inputs.batch_size = String(options.batchSize);
   generate.node.inputs.request_nonce = options.requestNonce;
@@ -56,7 +58,7 @@ export function prepareHolopixWorkflow(
   square.node.inputs.crop = "center";
   save.node.inputs.filename_prefix = options.filenamePrefix;
   save.node.inputs.images = [square.id, 0];
-  promptCapture.node.inputs.anything = [imageToPrompt.id, 0];
+  promptCapture.node.inputs.anything = promptText || [imageToPrompt.id, 0];
 
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)

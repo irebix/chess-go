@@ -593,9 +593,17 @@ function CandidateCell({
 }): React.ReactElement {
   const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
   const preview = candidate.image?.preview;
+  const actionable = !disabled && (
+    candidate.status === "ready" || candidate.status === "idle" || candidate.status === "failed"
+  );
+  const activate = (): void => {
+    if (!actionable) return;
+    if (candidate.status === "ready") onAccept();
+    else onRegenerate();
+  };
   return (
     <div
-      className={`ai-candidate-cell is-${candidate.status}`}
+      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""}`}
       title={candidate.error || candidate.image?.previewError || (
         candidate.status === "accepted"
           ? "已选中并回填 Photoshop"
@@ -603,6 +611,7 @@ function CandidateCell({
             ? "点击图片选中并回填 Photoshop"
             : "点击生成或重试"
       )}
+      onClick={activate}
     >
       {interactive ? (
         <>
@@ -615,7 +624,7 @@ function CandidateCell({
             aria-label={candidate.status === "accepted" ? "已选中候选" : "选择并回填候选"}
             onClick={(event) => {
               event.stopPropagation();
-              onAccept();
+              activate();
             }}
           />
         </>
@@ -625,7 +634,7 @@ function CandidateCell({
           disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
           onClick={(event) => {
             event.stopPropagation();
-            onRegenerate();
+            activate();
           }}
         >{candidateStatusLabel(candidate)}</button>
       )}

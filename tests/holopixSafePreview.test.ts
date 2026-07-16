@@ -4,6 +4,7 @@ import {
   buildHolopixCanvasRuns,
   buildHolopixSafeJpegUrl,
   decodeHolopixSafeJpeg,
+  HOLOPIX_CANVAS_PREVIEW_SIZE,
   HOLOPIX_SAFE_PREVIEW_MAX_BYTES,
   HOLOPIX_SAFE_PREVIEW_SIZE,
   prepareHolopixSafePreviewWorkflow
@@ -76,6 +77,7 @@ describe("Holopix safe preview", () => {
   });
 
   it("converts RGBA pixels into basic Canvas fill rectangles", () => {
+    expect(HOLOPIX_CANVAS_PREVIEW_SIZE).toBe(64);
     const pixels = new Uint8ClampedArray(4 * 2 * 4);
     for (let index = 0; index < pixels.length; index += 4) {
       const leftHalf = (index / 4) % 4 < 2;
