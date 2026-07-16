@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
-更新时间：2026-07-15  
-当前发布版本：`0.3.7`
+更新时间：2026-07-16
+当前发布版本：`0.3.8`
 
 ## 一句话摘要
 
@@ -11,8 +11,8 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.3.7`（以 `git log -1` 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.3.7`（以 `git log -1` 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.3.8`（以 `git log -1` 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.3.8`（以 `git log -1` 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
@@ -37,7 +37,8 @@
 - 工作流用 `easy showAnything` 记录 `HolopixImageToPrompt` 的运行时文字输出；新生成和新历史候选会携带真实提示词，面板顶部按候选批次显示，不由插件自动编写。
 - 生成节点强制 `aspect_ratio: 1:1`，本地 `ImageScale` 再把保存结果规范化为精确的 `1024×1024` 方图。
 - Photoshop 25.4 不能稳定使用 UXP `<img>` 解码动态 Holopix 图片；候选预览改用零计费的 ComfyUI 本地工作流规范化为 `96×96` RGB JPEG，再由纯 JavaScript 解码为 RGBA 像素，并转成 UXP 支持的 Canvas 基础 `fillRect` 色块绘制，绕过宿主图片解码器和不受支持的 ImageData API。
-- 候选方格保持 `1:1` 并直接显示安全缩略图；候选角标、A/B 标记和“选用”按钮均已移除，直接点击图片即可选中并回填。只有已选项显示绿框，未选项保持普通灰框。
+- Excel 参考图使用 `object-fit: contain` 放入 `1:1` 方格：长边贴住方格边缘，短边留白，始终完整显示而不裁切。
+- 候选方格保持 `1:1` 并直接显示安全缩略图；候选角标、A/B 标记和可见“选用”按钮均已移除，直接点击图片即可选中并回填。为兼容 Photoshop 25.4 的 UXP Canvas 合成缺陷，Canvas 上保留完全透明的原生交互层；只有已选项显示绿框，未选项保持普通灰框。
 - “恢复已有候选（不生成）”从 ComfyUI 最近历史找回当前棋子链的 `Holopix/ChessGo` 输出，不提交 Holopix 生成工作流，供闪退后复用已付费生成的结果；可同时恢复工作流已记录的实际图生文提示词。
 - 模型、强度、超时等参数直接读取 `Holopix.json`；插件只注入参考图路径、候选数量、请求 nonce、保存前缀和固定方图约束。
 - 点击生成后直接提交 Holopix 工作流，不显示二次确认弹窗；自动化验证不提交真实生成任务。
@@ -75,26 +76,27 @@
 - `0.3.5`：新增零计费安全预览工作流，把既有输出经 ComfyUI `LoadImage → ImageScale → PreviewImage` 规范化为 `96×96` RGB JPEG；插件使用 `jpeg-js` 纯 JavaScript 解码，再量化为 `48×48` Canvas 基础色块绘制，不再调用 UXP `<img>` 解码器。候选矩阵和已选链均恢复面板内预览，失败时继续保留外看/选用。
 - `0.3.6`：Holopix 改为真正的提示词-only 工作流，不再上传 Excel 参考图；提示词支持节点占位符并在面板顶部显示解析后的实际文本。生成强制 `1:1` 并规范化为 `1024×1024`；候选卡移除全部角标和选用按钮，点击图片选择，只有已选项显示绿框；回填后按原画板框重新 contain 和居中。
 - `0.3.7`：纠正 `0.3.6` 对“不图生图”的误解，恢复 Excel 参考图上传和 Holopix 图生文，但彻底断开生成节点的 `reference`，形成图生文再文生图；记录并显示图生文节点真实输出。候选缩略图外层从 UXP 原生按钮恢复为已验证的普通容器，保留整图点击和仅已选绿框，修复 Photoshop 25.4 中按钮内 Canvas 不显示。
+- `0.3.8`：修复 `0.3.7` 扁平化候选 DOM 后多 Canvas 只显示少量缩略图的回归；恢复 v0.3.5 已验证的 `Canvas + 原生交互层` 合成结构，但交互层完全透明，因此界面仍无角标和选用按钮。Excel 参考图改为长边贴边的 `contain` 显示，不再按短边铺满裁切。
 
 ## 验证状态
 
 - 最近一次 `pnpm verify`：通过。
 - TypeScript strict：通过。
 - Vitest：`28` 个测试文件、`103/103` 测试通过。
-- Webpack production build：通过；仅有 `main.js` 体积建议警告（约 425 KiB），不是构建失败。
+- Webpack production build：通过；仅有 `main.js` 体积建议警告（约 426 KiB），不是构建失败。
 - `dist` 与发布仓库运行文件哈希一致。
 - Photoshop 2024 实机已重启并加载 `0.3.4`：导入 1.2 MB 带图 Excel、选择 9 个参考图后，用“恢复已有候选（不生成）”找回 5 张历史候选；候选仅显示“查看 / 选用”，持续观察 30 秒 Photoshop 未闪退，且没有新增应用崩溃事件。
 - Photoshop 2024 实机已通过 UXP Developer Tools 热重载 `0.3.5`：导入同一带图 Excel、选择清洁工具链后，从 ComfyUI 历史恢复并直接绘制 `18/18` 张候选；持续观察 30 秒面板保持可用、Photoshop 正常响应，新增应用崩溃事件为 `0`，日志确认未提交新生成任务。
 - Photoshop 2024 已热重载 `0.3.6`：面板顶部正确显示“清洁布”的解析后实际提示词，并明确提示“不读取或上传参考图”；本机 `object_info` 确认 `HolopixGenerate.reference` 为 optional、`ImageScale` 支持当前方图参数。UI 自动化定位浮动 UXP 面板时两次误点生成按钮，共提交了 2 个“清洁布”单图任务；历史记录确认两次请求均为纯文本、`aspect_ratio=1:1`、不含 `reference`，输出 `c_cleaning1_00008_.png`、`c_cleaning1_00009_.png` 均为实际 `1024×1024`，检查结束时 ComfyUI running/pending 队列均为 `0`。未继续点击候选回填，以免改动用户当前未保存 PSD。
 - `0.3.7` 已通过本机 ComfyUI 零付费节点实测：从既有输入图仅运行 `LoadImage → HolopixUploadReference → HolopixImageToPrompt → easy showAnything`，约 3 秒后历史输出真实中文提示词；该验证没有包含或执行 `HolopixGenerate`。`object_info` 同时确认 `HolopixGenerate.reference` 为 optional，发布工作流中该输入不存在。
-- `0.3.7` 的 Photoshop UI 热重载验收尚未执行：验证时 Windows 已锁屏，按自动化安全规则停止界面输入；用户当前未保存 PSD 保持打开，未触发回填或新 Holopix 图片生成。
+- Photoshop 2024 已热重载 `0.3.8`：重新打开当前 PSD 与最近 Excel，选择清洁工具链后用“恢复已有候选（不生成）”恢复 `18/18` 张历史候选；上下滚动逐行确认 9 个节点、18 张 Canvas 缩略图全部可见。纵向和横向 Excel 参考图均按长边贴边完整显示，无裁切；面板状态和日志确认未提交新生成任务，也未点击候选回填。检查结束时 ComfyUI running/pending 均为 `0`，Photoshop 继续响应，最近 30 分钟新增 Photoshop 崩溃事件为 `0`。
 
 ## 仍需人工验证
 
 - 启动本机 `127.0.0.1:8188` 的 ComfyUI，并确认 `LoadImage`、`HolopixUploadReference`、`HolopixImageToPrompt`、`HolopixGenerate`、`ImageScale`、`SaveImage` 和 `easy showAnything` 节点可用。
 - 导入含内嵌图片的 Excel、选择棋子链；确认参考图进入图生文节点，顶部在生成/恢复后显示 Holopix 返回的真实提示词，同时确认 `HolopixGenerate` 不含 `reference` 输入。
-- 点击真实生成时确认不再出现二次弹窗；候选应在 `1:1` 方格内直接显示安全缩略图，整张图可点击选中并替换对应 assetCode 画板的空白智能对象。
-- 点击一个已有候选，确认不再出现 A/B、外看或选用角标，只有当前选中候选显示绿框；确认回填后的智能对象完整位于原画板框内且没有溢出。
+- 点击真实生成时确认不再出现二次弹窗；整张候选图可点击选中并替换对应 assetCode 画板的空白智能对象。
+- 点击一个已有候选，确认只有当前选中候选显示绿框；确认回填后的智能对象完整位于原画板框内且没有溢出。
 - 修改发布目录的 `Holopix.json` 模型、强度或超时后重载插件，确认图生文和文生图共同使用节点参数；生成比例仍固定为 `1:1`。
 - 在 Photoshop 中确认仍显示 `智能对象边长 1024`、`画板间距 50`。
 - 修改两个值、关闭并重新打开插件或重启 Photoshop，确认恢复上次合法输入。

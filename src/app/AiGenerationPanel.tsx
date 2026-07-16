@@ -593,21 +593,9 @@ function CandidateCell({
 }): React.ReactElement {
   const interactive = Boolean(candidate.image) && (candidate.status === "ready" || candidate.status === "accepted");
   const preview = candidate.image?.preview;
-  const actionable = !disabled && (
-    candidate.status === "ready" || candidate.status === "idle" || candidate.status === "failed"
-  );
-  const activate = (): void => {
-    if (!actionable) return;
-    if (candidate.status === "ready") onAccept();
-    else onRegenerate();
-  };
   return (
     <div
-      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""}`}
-      role="button"
-      tabIndex={actionable ? 0 : -1}
-      aria-pressed={candidate.status === "accepted"}
-      aria-disabled={!actionable}
+      className={`ai-candidate-cell is-${candidate.status}`}
       title={candidate.error || candidate.image?.previewError || (
         candidate.status === "accepted"
           ? "已选中并回填 Photoshop"
@@ -615,20 +603,31 @@ function CandidateCell({
             ? "点击图片选中并回填 Photoshop"
             : "点击生成或重试"
       )}
-      onClick={activate}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          activate();
-        }
-      }}
     >
       {interactive ? (
-        preview
-          ? <SafeCandidateCanvas preview={preview} />
-          : <small className="ai-candidate-preview-fallback">预览失败</small>
+        <>
+          {preview
+            ? <SafeCandidateCanvas preview={preview} />
+            : <small className="ai-candidate-preview-fallback">预览失败</small>}
+          <button
+            className="ai-candidate-select-surface"
+            disabled={disabled || candidate.status === "accepted"}
+            aria-label={candidate.status === "accepted" ? "已选中候选" : "选择并回填候选"}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAccept();
+            }}
+          />
+        </>
       ) : (
-        <span className="ai-candidate-generate">{candidateStatusLabel(candidate)}</span>
+        <button
+          className="ai-candidate-generate"
+          disabled={disabled || candidate.status === "queued" || candidate.status === "generating"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRegenerate();
+          }}
+        >{candidateStatusLabel(candidate)}</button>
       )}
     </div>
   );
@@ -641,6 +640,7 @@ function SafeCandidateCanvas({
 }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
+  const runs = useMemo(() => buildHolopixCanvasRuns(preview), [preview]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -649,7 +649,7 @@ function SafeCandidateCanvas({
       const context = canvas.getContext("2d");
       if (!context) throw new Error("当前 UXP 不支持 Canvas 2D 上下文。");
       context.clearRect(0, 0, HOLOPIX_CANVAS_PREVIEW_SIZE, HOLOPIX_CANVAS_PREVIEW_SIZE);
-      for (const run of buildHolopixCanvasRuns(preview)) {
+      for (const run of runs) {
         context.fillStyle = run.color;
         context.fillRect(run.x, run.y, run.width, 1);
       }
@@ -658,7 +658,7 @@ function SafeCandidateCanvas({
       console.error("Holopix Canvas 安全预览绘制失败", error);
       setRenderFailed(true);
     }
-  }, [preview]);
+  }, [runs]);
 
   if (renderFailed) return <small className="ai-candidate-preview-fallback">预览失败</small>;
 
