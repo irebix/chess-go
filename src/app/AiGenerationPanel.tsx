@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssetCandidate, SheetGroup } from "../domain/models";
 import {
   acceptAiCandidate,
@@ -44,6 +44,7 @@ interface AiGenerationPanelProps {
 
 type MatrixTab = "matrix" | "accepted";
 const AI_GENERATION_CONCURRENCY = 1;
+const mountedCanvasRedraws = new Set<() => void>();
 
 export function AiGenerationPanel({
   workbook,
@@ -69,7 +70,7 @@ export function AiGenerationPanel({
   const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
   const [panelMessage, setPanelMessage] = useState("Excel 参考图只用于 Holopix 图生文，生成节点仅接收返回的文字提示词。");
   const abortRef = useRef<AbortController | null>(null);
-  const canvasRedrawEpoch = useCanvasRedrawEpoch(open);
+  useCanvasRedrawScheduler(open);
 
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
   const groupItems = useMemo(
@@ -522,7 +523,6 @@ export function AiGenerationPanel({
                       <CandidateStrip
                         candidates={state?.candidates}
                         disabled={disabled}
-                        redrawEpoch={canvasRedrawEpoch}
                         onAccept={(candidate) => void handleAccept(item, candidate)}
                         onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
                       />
@@ -546,7 +546,7 @@ export function AiGenerationPanel({
                           onClick={() => void handleView(item, accepted)}
                         >
                           {accepted.image.preview
-                            ? <SafeCandidateCanvas preview={accepted.image.preview} redrawEpoch={canvasRedrawEpoch} />
+                            ? <SafeCandidateCanvas preview={accepted.image.preview} />
                             : <span>{openingCandidateId === accepted.id ? "打开中" : "系统查看"}</span>}
                         </button>
                       : <span>未选择</span>}
@@ -586,13 +586,11 @@ function ReferencePreview({
 function CandidateStrip({
   candidates,
   disabled,
-  redrawEpoch,
   onAccept,
   onRegenerate
 }: {
   candidates?: AiCandidateSlot[];
   disabled: boolean;
-  redrawEpoch: number;
   onAccept: (candidate: AiCandidateSlot) => void;
   onRegenerate: (slotIndex: number) => void;
 }): React.ReactElement {
@@ -605,7 +603,7 @@ function CandidateStrip({
   return (
     <div className="ai-candidate-strip" ref={rootRef}>
       {visible && previews.some(Boolean)
-        ? <CandidateCanvasSurface previews={previews} redrawEpoch={redrawEpoch} className="ai-candidate-strip-canvas" />
+        ? <CandidateCanvasSurface previews={previews} className="ai-candidate-strip-canvas" />
         : null}
       {candidates?.map((candidate, slotIndex) => (
         <CandidateCell
@@ -667,17 +665,15 @@ function CandidateCell({
 }
 
 function SafeCandidateCanvas({
-  preview,
-  redrawEpoch
+  preview
 }: {
   preview: AiCandidatePreview;
-  redrawEpoch: number;
 }): React.ReactElement {
   const [rootRef, visible] = useNearViewport<HTMLSpanElement>();
   return (
     <span className="ai-candidate-canvas-host" ref={rootRef}>
       {visible
-        ? <CandidateCanvasSurface previews={[preview]} redrawEpoch={redrawEpoch} className="ai-candidate-preview-canvas" />
+        ? <CandidateCanvasSurface previews={[preview]} className="ai-candidate-preview-canvas" />
         : null}
     </span>
   );
@@ -685,11 +681,9 @@ function SafeCandidateCanvas({
 
 function CandidateCanvasSurface({
   previews,
-  redrawEpoch,
   className
 }: {
   previews: Array<AiCandidatePreview | undefined>;
-  redrawEpoch: number;
   className: string;
 }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -697,15 +691,19 @@ function CandidateCanvasSurface({
   const runs = useMemo(() => buildHolopixCanvasStripRuns(previews), [previews]);
   const canvasWidth = holopixCanvasStripWidth(previews.length);
 
-  useEffect(() => {
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     try {
       const context = canvas.getContext("2d");
       if (!context) throw new Error("当前 UXP 不支持 Canvas 2D 上下文。");
       context.clearRect(0, 0, canvasWidth, HOLOPIX_CANVAS_PREVIEW_SIZE);
+      let fillColor = "";
       for (const run of runs) {
-        context.fillStyle = run.color;
+        if (run.color !== fillColor) {
+          context.fillStyle = run.color;
+          fillColor = run.color;
+        }
         context.fillRect(run.x, run.y, run.width, run.height);
       }
       setRenderFailed(false);
@@ -713,7 +711,15 @@ function CandidateCanvasSurface({
       console.error("Holopix Canvas 安全预览绘制失败", error);
       setRenderFailed(true);
     }
-  }, [canvasWidth, redrawEpoch, runs]);
+  }, [canvasWidth, runs]);
+
+  useEffect(() => {
+    draw();
+    mountedCanvasRedraws.add(draw);
+    return () => {
+      mountedCanvasRedraws.delete(draw);
+    };
+  }, [draw]);
 
   if (renderFailed) return <small className="ai-candidate-preview-fallback">预览失败</small>;
 
@@ -749,15 +755,16 @@ function useNearViewport<T extends Element>(): [React.MutableRefObject<T | null>
   return [rootRef, visible];
 }
 
-function useCanvasRedrawEpoch(enabled: boolean): number {
-  const [epoch, setEpoch] = useState(0);
-
+function useCanvasRedrawScheduler(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return;
     let timer: number | undefined;
     const scheduleRedraw = (): void => {
       if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => setEpoch((current) => current + 1), 120);
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        for (const redraw of Array.from(mountedCanvasRedraws)) redraw();
+      }, 180);
     };
     document.addEventListener("scroll", scheduleRedraw, true);
     window.addEventListener("resize", scheduleRedraw);
@@ -769,8 +776,6 @@ function useCanvasRedrawEpoch(enabled: boolean): number {
       document.removeEventListener("visibilitychange", scheduleRedraw);
     };
   }, [enabled]);
-
-  return epoch;
 }
 
 async function runItemGeneration(

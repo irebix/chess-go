@@ -67,6 +67,24 @@ export function findEditableCanvasTargets(
   );
 }
 
+export function findEditableCanvasTargetByIds(
+  document: CandidateTargetDocument,
+  artboardId: number,
+  layerId: number
+): EditableCanvasTarget | undefined {
+  const topLayers = collectionValues(document.artboards ?? document.layers);
+  const artboard = topLayers.find((layer) => layer.id === artboardId)
+    ?? collectionValues(document.layers).find((layer) => layer.id === artboardId);
+  if (!artboard) return undefined;
+
+  const nested = allLayerPaths(artboard.layers).find(({ layer }) => layer.id === layerId);
+  if (nested) return { artboard, layer: nested.layer, path: nested.path };
+
+  const documentMatch = allLayerPaths(document.layers).find(({ layer }) => layer.id === layerId);
+  if (!documentMatch) return undefined;
+  return { artboard, layer: documentMatch.layer, path: documentMatch.path };
+}
+
 function allLayerPaths(
   collection: CandidateTargetLayerCollection | undefined,
   ancestors: CandidateTargetLayer[] = []

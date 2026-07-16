@@ -5,7 +5,7 @@ import type { ComfyWorkflow } from "./holopixWorkflow";
 export const HOLOPIX_SAFE_PREVIEW_SIZE = 96;
 export const HOLOPIX_SAFE_PREVIEW_MAX_BYTES = 128 * 1024;
 export const HOLOPIX_CANVAS_PREVIEW_SIZE = 64;
-export const HOLOPIX_CANVAS_SAMPLE_SIZE = 32;
+export const HOLOPIX_CANVAS_SAMPLE_SIZE = 16;
 export const HOLOPIX_CANVAS_CELL_GAP = 7;
 
 export interface HolopixCanvasRun {
@@ -157,17 +157,23 @@ export function buildHolopixCanvasStripRuns(
   holopixCanvasStripWidth(previews.length);
   const scale = HOLOPIX_CANVAS_PREVIEW_SIZE / HOLOPIX_CANVAS_SAMPLE_SIZE;
   const runs: HolopixCanvasStripRun[] = [];
+  const lastRunBySignature = new Map<string, HolopixCanvasStripRun>();
   previews.forEach((preview, index) => {
     if (!preview) return;
     const offsetX = index * (HOLOPIX_CANVAS_PREVIEW_SIZE + HOLOPIX_CANVAS_CELL_GAP);
     for (const run of buildHolopixCanvasRuns(preview, HOLOPIX_CANVAS_SAMPLE_SIZE)) {
-      runs.push({
-        x: offsetX + run.x * scale,
-        y: run.y * scale,
-        width: run.width * scale,
-        height: scale,
-        color: run.color
-      });
+      const x = offsetX + run.x * scale;
+      const y = run.y * scale;
+      const width = run.width * scale;
+      const signature = `${x}:${width}:${run.color}`;
+      const previous = lastRunBySignature.get(signature);
+      if (previous && previous.y + previous.height === y) {
+        previous.height += scale;
+        continue;
+      }
+      const next = { x, y, width, height: scale, color: run.color };
+      runs.push(next);
+      lastRunBySignature.set(signature, next);
     }
   });
   return runs;

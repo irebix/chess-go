@@ -81,7 +81,7 @@ describe("Holopix safe preview", () => {
 
   it("converts RGBA pixels into basic Canvas fill rectangles", () => {
     expect(HOLOPIX_CANVAS_PREVIEW_SIZE).toBe(64);
-    expect(HOLOPIX_CANVAS_SAMPLE_SIZE).toBe(32);
+    expect(HOLOPIX_CANVAS_SAMPLE_SIZE).toBe(16);
     const pixels = new Uint8ClampedArray(4 * 2 * 4);
     for (let index = 0; index < pixels.length; index += 4) {
       const leftHalf = (index / 4) % 4 < 2;
@@ -100,7 +100,7 @@ describe("Holopix safe preview", () => {
     ]);
   });
 
-  it("packs multiple previews into one row Canvas with quarter-size draw pressure", () => {
+  it("packs multiple previews into one row Canvas and merges vertical runs", () => {
     const pixels = new Uint8ClampedArray(96 * 96 * 4);
     for (let index = 0; index < pixels.length; index += 4) {
       pixels[index] = 64;
@@ -112,9 +112,10 @@ describe("Holopix safe preview", () => {
     const runs = buildHolopixCanvasStripRuns([preview, preview]);
 
     expect(holopixCanvasStripWidth(2)).toBe(135);
-    expect(runs).toHaveLength(64);
-    expect(runs[0]).toEqual({ x: 0, y: 0, width: 64, height: 2, color: "rgb(64,128,192)" });
-    expect(runs[32]).toEqual({ x: 71, y: 0, width: 64, height: 2, color: "rgb(64,128,192)" });
+    expect(runs).toEqual([
+      { x: 0, y: 0, width: 64, height: 64, color: "rgb(64,128,192)" },
+      { x: 71, y: 0, width: 64, height: 64, color: "rgb(64,128,192)" }
+    ]);
   });
 
   it("rejects unsafe paths and malformed preview responses", () => {

@@ -2,7 +2,8 @@ import { action, app, constants, core } from "photoshop";
 import { storage } from "uxp";
 import {
   artboardBoundsFromDescriptor,
-  calculateAiCandidatePlacement
+  calculateAiCandidatePlacement,
+  rebaseTargetBoundsAfterArtboardShift
 } from "../domain/aiCandidatePlacement";
 import { deleteTemporaryFile } from "../infrastructure/filesystem/uxpFiles";
 import {
@@ -11,6 +12,7 @@ import {
   selectLayerDescriptor
 } from "./actionDescriptors";
 import {
+  findEditableCanvasTargetByIds,
   findEditableCanvasTargets,
   type CandidateTargetLayer,
   type CandidateTargetDocument,
@@ -65,6 +67,10 @@ export async function backfillAiCandidate(
         const currentDocument = activeDocument();
         if (!currentDocument) throw new Error("回填过程中当前 PSD 已关闭。");
         const currentTarget = uniqueTarget(currentDocument, assetCode);
+        const targetIds = {
+          artboardId: currentTarget.artboard.id,
+          layerId: currentTarget.layer.id
+        };
         const before = await captureGeometry(currentDocument, currentTarget, "before-replace");
         onAudit?.(formatGeometryAudit(before));
         const targetMeasurement = chooseTargetMeasurement(before);
@@ -78,17 +84,22 @@ export async function backfillAiCandidate(
           selectLayerDescriptor(currentTarget.layer.id),
           replacePlacedLayerContentsDescriptor(token)
         ], {});
-        const replacedTarget = uniqueTarget(currentDocument, assetCode);
+        const replacedTarget = targetByIds(currentDocument, targetIds);
         const afterReplace = await captureGeometry(currentDocument, replacedTarget, "after-replace");
         onAudit?.(formatGeometryAudit(afterReplace));
-        await fitReplacementInsideTarget(
-          currentDocument,
-          assetCode,
+        const rebasedTargetMeasurement = rebaseTargetMeasurement(
           targetMeasurement,
-          currentTarget.artboard.id,
+          before,
+          afterReplace,
           onAudit
         );
-        const finalTarget = uniqueTarget(currentDocument, assetCode, currentTarget.artboard.id);
+        await fitReplacementInsideTarget(
+          currentDocument,
+          targetIds,
+          rebasedTargetMeasurement,
+          onAudit
+        );
+        const finalTarget = targetByIds(currentDocument, targetIds);
         onAudit?.(formatGeometryAudit(await captureGeometry(currentDocument, finalTarget, "after-placement")));
       },
       { commandName: `回填 Holopix 候选：${assetCode}` }
@@ -111,6 +122,12 @@ interface TargetMeasurement {
   source: GeometrySource;
   basis: "artboard-dom" | "layer-dom" | "layer-transform";
   bounds: SmartObjectTransformBounds;
+  artboardOffset?: { x: number; y: number };
+}
+
+interface TargetIds {
+  artboardId: number;
+  layerId: number;
 }
 
 interface GeometrySnapshot {
@@ -130,12 +147,11 @@ interface GeometrySnapshot {
 
 async function fitReplacementInsideTarget(
   document: CandidateTargetDocument,
-  assetCode: string,
+  targetIds: TargetIds,
   target: TargetMeasurement,
-  expectedArtboardId: number,
   onAudit?: (message: string) => void
 ): Promise<void> {
-  let currentTarget = uniqueTarget(document, assetCode, expectedArtboardId);
+  let currentTarget = targetByIds(document, targetIds);
   let layer = currentTarget.layer;
   if (!layer.scale || !layer.translate) throw new Error("当前 Photoshop 图层不支持回填后的缩放定位。");
   const sourceBounds = await readMeasuredBounds(layer, target.source, onAudit, "source");
@@ -147,7 +163,10 @@ async function fitReplacementInsideTarget(
     sourceBounds: compactRect(sourceBounds),
     targetBounds: compactRect(target.bounds),
     scale: rounded(placement.scale),
-    targetCenter: [rounded(placement.targetCenterX), rounded(placement.targetCenterY)]
+    targetCenter: [rounded(placement.targetCenterX), rounded(placement.targetCenterY)],
+    artboardOffset: target.artboardOffset
+      ? [rounded(target.artboardOffset.x), rounded(target.artboardOffset.y)]
+      : [0, 0]
   }));
   if (Math.abs(placement.scale - 1) > 0.0001) {
     await layer.scale(
@@ -156,7 +175,7 @@ async function fitReplacementInsideTarget(
       constants.AnchorPosition.MIDDLECENTER
     );
   }
-  currentTarget = uniqueTarget(document, assetCode, expectedArtboardId);
+  currentTarget = targetByIds(document, targetIds);
   layer = currentTarget.layer;
   if (!layer.translate) throw new Error("当前 Photoshop 图层不支持回填后的定位。");
   const fitted = await readMeasuredBounds(layer, target.source, onAudit, "after-scale");
@@ -168,7 +187,7 @@ async function fitReplacementInsideTarget(
     await layer.translate(translateX, translateY);
   }
 
-  currentTarget = uniqueTarget(document, assetCode, expectedArtboardId);
+  currentTarget = targetByIds(document, targetIds);
   layer = currentTarget.layer;
   let finalBounds = await readMeasuredBounds(layer, target.source, onAudit, "after-translate");
   let errorX = placement.targetCenterX - (finalBounds.left + finalBounds.right) / 2;
@@ -176,7 +195,7 @@ async function fitReplacementInsideTarget(
   if ((Math.abs(errorX) > 0.5 || Math.abs(errorY) > 0.5) && layer.translate) {
     onAudit?.(JSON.stringify({ stage: "placement.corrective-translate", dx: rounded(errorX), dy: rounded(errorY) }));
     await layer.translate(errorX, errorY);
-    currentTarget = uniqueTarget(document, assetCode, expectedArtboardId);
+    currentTarget = targetByIds(document, targetIds);
     finalBounds = await readMeasuredBounds(currentTarget.layer, target.source, onAudit, "after-correction");
     errorX = placement.targetCenterX - (finalBounds.left + finalBounds.right) / 2;
     errorY = placement.targetCenterY - (finalBounds.top + finalBounds.bottom) / 2;
@@ -253,6 +272,29 @@ function chooseTargetMeasurement(snapshot: GeometrySnapshot): TargetMeasurement 
   throw new Error("Photoshop 没有返回原空白智能对象的 DOM 或 transform 边界。");
 }
 
+function rebaseTargetMeasurement(
+  target: TargetMeasurement,
+  before: GeometrySnapshot,
+  after: GeometrySnapshot,
+  onAudit?: (message: string) => void
+): TargetMeasurement {
+  const x = after.artboardDescriptorBounds.left - before.artboardDescriptorBounds.left;
+  const y = after.artboardDescriptorBounds.top - before.artboardDescriptorBounds.top;
+  const bounds = rebaseTargetBoundsAfterArtboardShift(
+    target.bounds,
+    before.artboardDescriptorBounds,
+    after.artboardDescriptorBounds
+  );
+  onAudit?.(JSON.stringify({
+    stage: "target.rebased",
+    artboardBefore: compactRect(before.artboardDescriptorBounds),
+    artboardAfter: compactRect(after.artboardDescriptorBounds),
+    offset: [rounded(x), rounded(y)],
+    bounds: compactRect(bounds)
+  }));
+  return { ...target, bounds, artboardOffset: { x, y } };
+}
+
 async function readMeasuredBounds(
   layer: CandidateTargetLayer,
   preferred: GeometrySource,
@@ -295,15 +337,21 @@ function readDomBounds(layer: CandidateTargetLayer): SmartObjectTransformBounds 
 
 function uniqueTarget(
   document: CandidateTargetDocument,
-  assetCode: string,
-  expectedArtboardId?: number
+  assetCode: string
 ): EditableCanvasTarget {
   const matches = findEditableCanvasTargets(document, assetCode);
   if (!matches.length) throw new Error(`回填过程中未找到画板 ${assetCode} 的空白智能对象。`);
   if (matches.length > 1) throw new Error(`回填过程中找到 ${matches.length} 个 ${assetCode} 空白智能对象，已停止以避免写错画板。`);
-  const target = matches[0]!;
-  if (expectedArtboardId !== undefined && target.artboard.id !== expectedArtboardId) {
-    throw new Error(`回填过程中 ${assetCode} 的目标画板发生变化，已停止定位。`);
+  return matches[0]!;
+}
+
+function targetByIds(
+  document: CandidateTargetDocument,
+  ids: TargetIds
+): EditableCanvasTarget {
+  const target = findEditableCanvasTargetByIds(document, ids.artboardId, ids.layerId);
+  if (!target) {
+    throw new Error(`回填过程中未找到目标画板 ${ids.artboardId} 的智能对象图层 ${ids.layerId}。`);
   }
   return target;
 }

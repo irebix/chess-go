@@ -48,6 +48,21 @@ export function calculateAiCandidatePlacement(
   };
 }
 
+export function rebaseTargetBoundsAfterArtboardShift(
+  target: Rect,
+  artboardBefore: Rect,
+  artboardAfter: Rect
+): Rect {
+  const offsetX = artboardAfter.left - artboardBefore.left;
+  const offsetY = artboardAfter.top - artboardBefore.top;
+  return {
+    left: target.left + offsetX,
+    top: target.top + offsetY,
+    right: target.right + offsetX,
+    bottom: target.bottom + offsetY
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }

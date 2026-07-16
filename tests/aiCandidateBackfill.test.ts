@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findEditableCanvasLayer,
   findEditableCanvasTarget,
+  findEditableCanvasTargetByIds,
   findEditableCanvasTargets,
   isEditableCanvasLayerName
 } from "../src/photoshop/aiCandidateTarget";
@@ -40,5 +41,24 @@ describe("AI candidate PSD target lookup", () => {
     };
 
     expect(findEditableCanvasTargets(document, "103001").map((target) => target.layer.id)).toEqual([8, 9]);
+  });
+
+  it("reacquires the same layer by stable IDs even when it is temporarily outside the artboard collection", () => {
+    const target = { id: 8, name: "148x148_空白智能对象" };
+    const artboard = { id: 1, name: "103001", layers: { length: 0 } };
+    const document = {
+      artboards: { 0: artboard, length: 1 },
+      layers: {
+        0: artboard,
+        1: { id: 7, name: "临时容器", layers: { 0: target, length: 1 } },
+        length: 2
+      }
+    };
+
+    expect(findEditableCanvasTargetByIds(document, 1, 8)).toEqual({
+      artboard,
+      layer: target,
+      path: [document.layers[1], target]
+    });
   });
 });
