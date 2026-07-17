@@ -838,6 +838,7 @@ button:disabled {
 .ai-progress-card > div,
 .ai-prompt-heading,
 .ai-prompt-actions,
+.ai-workflow-select,
 .ai-group-select {
   display: flex;
   align-items: center;
@@ -933,11 +934,13 @@ button:disabled {
   background: rgba(75, 161, 255, 0.12);
 }
 
+.ai-workflow-select,
 .ai-group-select {
   min-height: 34px;
   gap: 8px;
 }
 
+.ai-workflow-select select,
 .ai-group-select select {
   min-width: 0;
   flex: 1 1 auto;
