@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aiCandidateMatrixWidth,
+  clampAiMatrixScrollLeft,
   shouldForwardMatrixWheel
 } from "../src/domain/aiMatrixLayout";
 
@@ -17,5 +18,13 @@ describe("AI candidate matrix layout", () => {
     expect(shouldForwardMatrixWheel(0, 120, false)).toBe(true);
     expect(shouldForwardMatrixWheel(120, 20, false)).toBe(false);
     expect(shouldForwardMatrixWheel(0, 120, true)).toBe(false);
+  });
+
+  it("clamps the real viewport scroll offset to the visible matrix range", () => {
+    expect(clampAiMatrixScrollLeft(180, 609, 350)).toBe(180);
+    expect(clampAiMatrixScrollLeft(500, 609, 350)).toBe(259);
+    expect(clampAiMatrixScrollLeft(80, 350, 350)).toBe(0);
+    expect(clampAiMatrixScrollLeft(-20, 609, 350)).toBe(0);
+    expect(clampAiMatrixScrollLeft(Number.NaN, 609, 350)).toBe(0);
   });
 });

@@ -16,3 +16,17 @@ export function shouldForwardMatrixWheel(
 ): boolean {
   return !shiftKey && deltaY !== 0 && Math.abs(deltaY) > Math.abs(deltaX);
 }
+
+export function clampAiMatrixScrollLeft(
+  scrollLeft: number,
+  contentWidth: number,
+  viewportWidth: number
+): number {
+  const normalizedScrollLeft = Number.isFinite(scrollLeft) ? Math.max(0, scrollLeft) : 0;
+  const normalizedContentWidth = Number.isFinite(contentWidth) ? Math.max(0, contentWidth) : 0;
+  const normalizedViewportWidth = Number.isFinite(viewportWidth) ? Math.max(0, viewportWidth) : 0;
+  return Math.min(
+    normalizedScrollLeft,
+    Math.max(0, normalizedContentWidth - normalizedViewportWidth)
+  );
+}

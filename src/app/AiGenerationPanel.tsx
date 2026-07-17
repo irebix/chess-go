@@ -22,6 +22,7 @@ import {
 } from "../domain/aiCandidates";
 import {
   aiCandidateMatrixWidth,
+  clampAiMatrixScrollLeft,
   shouldForwardMatrixWheel
 } from "../domain/aiMatrixLayout";
 import { filterItemsByGroups } from "../domain/sheetGroups";
@@ -142,6 +143,7 @@ export function AiGenerationPanel({
   const psdThumbnailResourcesRef = useRef(new Map<string, HolopixImageBlobResource>());
   const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const promptResizeCleanupRef = useRef<(() => void) | null>(null);
+  const matrixViewportRef = useRef<HTMLDivElement | null>(null);
   const matrixContentRef = useRef<HTMLDivElement | null>(null);
   const matrixScrollbarRef = useRef<HTMLDivElement | null>(null);
   const previewModeReportedRef = useRef({ imageblob: false, canvas: false });
@@ -276,11 +278,19 @@ export function AiGenerationPanel({
 
   useEffect(() => {
     if (!open) return;
+    const matrixViewport = matrixViewportRef.current;
     const matrixContent = matrixContentRef.current;
     const matrixScrollbar = matrixScrollbarRef.current;
-    if (!matrixContent || !matrixScrollbar) return;
+    if (!matrixViewport || !matrixContent || !matrixScrollbar) return;
+    matrixContent.style.transform = "";
+    matrixViewport.scrollLeft = 0;
     const syncHorizontalPosition = (): void => {
-      matrixContent.style.transform = `translateX(${-matrixScrollbar.scrollLeft}px)`;
+      const offset = clampAiMatrixScrollLeft(
+        matrixScrollbar.scrollLeft,
+        matrixWidth,
+        matrixViewport.clientWidth
+      );
+      matrixContent.style.marginLeft = offset ? `-${offset}px` : "0px";
     };
     const handleWheel = (event: WheelEvent): void => {
       if (!shouldForwardMatrixWheel(event.deltaX, event.deltaY, event.shiftKey)) return;
@@ -295,8 +305,11 @@ export function AiGenerationPanel({
       event.preventDefault();
       event.stopPropagation();
     };
-    const maximumScrollLeft = Math.max(0, matrixWidth - matrixScrollbar.clientWidth);
-    matrixScrollbar.scrollLeft = Math.min(matrixScrollbar.scrollLeft, maximumScrollLeft);
+    matrixScrollbar.scrollLeft = clampAiMatrixScrollLeft(
+      matrixScrollbar.scrollLeft,
+      matrixWidth,
+      matrixViewport.clientWidth
+    );
     syncHorizontalPosition();
     matrixScrollbar.addEventListener("scroll", syncHorizontalPosition);
     matrixScrollbar.addEventListener("wheel", handleWheel, true);
@@ -914,7 +927,7 @@ export function AiGenerationPanel({
           ) : null}
 
           <div className="ai-matrix-shell">
-            <div className="ai-matrix-viewport">
+            <div className="ai-matrix-viewport" ref={matrixViewportRef}>
               <div
                 className="ai-matrix-content"
                 ref={matrixContentRef}
