@@ -17,6 +17,8 @@ import {
   scopePsdAiTargetNodes,
   type PsdAiScopedNode
 } from "./aiCandidateTarget";
+import { accumulatePsdAiWatcherRefreshForce } from "../domain/psdAiScopeStability";
+import { psdDocumentIdentity } from "./psdDocumentIdentity";
 
 export const REFERENCE_LAYER_NAME = "参考图";
 const EDITABLE_CANVAS_LAYER_NAME_PATTERN = /^\d+x\d+_空白智能对象$/;
@@ -29,7 +31,7 @@ const REFERENCE_COMP_NAME = "棋子归档｜仅参考图";
 const RESTORE_COMP_NAME = "棋子归档｜恢复点";
 const REFERENCE_COMMENT_PREFIX = "psd-archive-reference:v1";
 const RESTORE_COMMENT = "psd-archive-reference-restore:v1";
-const DOCUMENT_EVENTS = ["open", "close", "select", "show", "hide"];
+const DOCUMENT_EVENTS = ["open", "close", "select", "show", "hide", "make", "delete", "move", "set", "save"];
 
 function runOptionalPromise(operation: () => void | Promise<void>): Promise<void> {
   try {
@@ -78,6 +80,8 @@ interface LayerCompCollectionLike {
 interface DocumentLike {
   id: number;
   name: string;
+  path?: string;
+  cloudDocument?: boolean;
   layers: LayerCollectionLike;
   artboards?: LayerCollectionLike;
   layerComps?: LayerCompCollectionLike;
@@ -98,6 +102,7 @@ interface ReferenceComment {
 export interface ReferenceDocumentState {
   documentId: number;
   documentName: string;
+  documentIdentity: string;
   artboardCount: number;
   referenceCount: number;
   referenceVisible: boolean;
@@ -228,20 +233,40 @@ export function watchActiveReferenceDocument(
   let disposed = false;
   let timer: number | undefined;
   let lastDocumentId: number | null | undefined;
+  let pendingForce = false;
+  let consecutiveFailures = 0;
 
   const refresh = async (force: boolean): Promise<void> => {
     if (disposed) return;
     const document = activeDocument();
     const documentId = document?.id ?? null;
     if (!force && documentId === lastDocumentId) return;
+    let state: ReferenceDocumentState | null;
+    try {
+      state = document ? inspectDocument(document) : null;
+    } catch (error) {
+      lastDocumentId = undefined;
+      throw error;
+    }
     lastDocumentId = documentId;
-    const state = document ? inspectDocument(document) : null;
     if (!disposed) onChange(state);
   };
 
   const schedule = (force: boolean): void => {
+    pendingForce = accumulatePsdAiWatcherRefreshForce(pendingForce, force);
     if (timer !== undefined) window.clearTimeout(timer);
-    timer = window.setTimeout(() => void refresh(force), 80);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      const refreshForce = pendingForce;
+      pendingForce = false;
+      void refresh(refreshForce).then(
+        () => { consecutiveFailures = 0; },
+        () => {
+          consecutiveFailures += 1;
+          if (!disposed && consecutiveFailures <= 2) schedule(true);
+        }
+      );
+    }, 80);
   };
 
   const listener = (eventName: string): void => {
@@ -252,7 +277,7 @@ export function watchActiveReferenceDocument(
     () => action.addNotificationListener(DOCUMENT_EVENTS, listener) as unknown as void | Promise<void>
   );
   window.addEventListener("focus", focusListener);
-  void refresh(true);
+  void refresh(true).catch(() => schedule(true));
 
   return () => {
     disposed = true;
@@ -291,6 +316,7 @@ function inspectDocument(document: DocumentLike): ReferenceDocumentState | null 
   return {
     documentId: document.id,
     documentName: document.name,
+    documentIdentity: psdDocumentIdentity(document),
     artboardCount: Math.max(scan.artboards.length, artboardBackgrounds.count),
     referenceCount: scan.referenceLayers.length,
     referenceVisible: scan.referenceLayers.some((layer) => layer.visible),

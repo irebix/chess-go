@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { collectRecentHolopixImages } from "../src/ai/holopixRecovery";
+import {
+  collectHolopixImagesForPromptId,
+  collectRecentHolopixImages
+} from "../src/ai/holopixRecovery";
 
 describe("Holopix candidate recovery", () => {
   it("does not mix a newer prompted batch with an older unrelated batch", () => {
@@ -84,5 +87,29 @@ describe("Holopix candidate recovery", () => {
     }, ["c_cleaning3"], "http://127.0.0.1:8188");
 
     expect(recovered.c_cleaning3?.[0]?.promptText).toBe("一把绿色手柄的清洁刷，白色刷毛，等距视角。");
+  });
+
+  it("recovers an unknown paid result only from its exact prompt id", () => {
+    const history = {
+      oldPrompt: { outputs: { "9": { images: [
+        { filename: "c_cleaning1_00008_.png", subfolder: "Holopix/ChessGo", type: "output" }
+      ] } } },
+      expectedPrompt: { outputs: { "9": { images: [
+        { filename: "c_cleaning1_00009_.png", subfolder: "Holopix/ChessGo", type: "output" }
+      ] } } }
+    };
+
+    expect(collectHolopixImagesForPromptId(
+      history,
+      "expectedPrompt",
+      "c_cleaning1",
+      "http://127.0.0.1:8188"
+    ).map((image) => image.filename)).toEqual(["c_cleaning1_00009_.png"]);
+    expect(collectHolopixImagesForPromptId(
+      history,
+      "missingPrompt",
+      "c_cleaning1",
+      "http://127.0.0.1:8188"
+    )).toEqual([]);
   });
 });

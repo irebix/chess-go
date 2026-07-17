@@ -1,15 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssetCandidate, SheetGroup } from "../domain/models";
 import {
+  abandonAiCandidateUnknowns,
   acceptAiCandidate,
   aiCandidateAction,
+  applyAiGeneratedCandidateBatch,
   appendAiCandidateSlots,
+  buildAiCandidateGenerationBatches,
+  failAiCandidateGenerationRemainder,
   isAiCandidateActionDisabled,
+  markAiCandidateGenerationUnknown,
+  mergeRecoveredAiCandidateImages,
   reconcileAiItemStates,
+  restoreAiPendingSubmission,
   selectedAiReferenceImage,
   summarizeAiCandidates,
   type AiCandidatePreview,
   type AiCandidateSlot,
+  type AiGeneratedImage,
   type AiItemState
 } from "../domain/aiCandidates";
 import {
@@ -21,8 +29,11 @@ import type { ImportedWorkbook } from "../services/WorkbookService";
 import {
   generateHolopixImages,
   loadHolopixPromptSource,
-  recoverRecentHolopixImages
+  recoverRecentHolopixImages,
+  type HolopixCompletedBatchSubmission,
+  type HolopixSubmissionLifecycleEvent
 } from "../ai/holopixClient";
+import { HolopixGenerationOutcomeUnknownError } from "../ai/holopixErrors";
 import {
   createHolopixImageBlobResource,
   type HolopixImageBlobResource
@@ -34,12 +45,23 @@ import {
 } from "../ai/holopixSafePreview";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
+import { inspectActiveReferenceDocument } from "../photoshop/referenceViewController";
 import {
   readPsdAiReferencePreview,
   readPsdAiReferenceJpeg,
   type PsdAiReference
 } from "../photoshop/psdAiReference";
+import { isStablePsdDocumentIdentity } from "../photoshop/psdDocumentIdentity";
 import { toErrorMessage } from "../utils/errors";
+import {
+  holopixPendingSubmissionMatchesScope,
+  loadHolopixPendingSubmissions,
+  persistableHolopixImages,
+  promoteHolopixPendingSubmissionToOutput,
+  removeHolopixPendingSubmissions,
+  saveHolopixPendingSubmission,
+  type HolopixPendingSubmissionRecord
+} from "../services/HolopixPendingSubmissionService";
 
 interface ThumbnailRecord {
   state: "loading" | "ready" | "error";
@@ -57,6 +79,8 @@ interface AiGenerationPanelProps {
   onThumbnailError: (entry: string) => void;
   onStatus: (message: string, level?: "info" | "warn" | "error") => void;
   onBusyChange: (busy: boolean) => void;
+  onPsdBackfillStart: (documentId: number) => void;
+  onPsdBackfillSettled: (replacementMayHaveMutated: boolean) => Promise<void>;
 }
 
 type CandidatePreviewMode = "imageblob" | "canvas";
@@ -66,12 +90,21 @@ interface QueuedGenerationJob {
   workbook: ImportedWorkbook | null;
   item: AssetCandidate;
   slotIndexes: number[];
-  psdReference?: PsdAiReference;
+  psdReference?: GeneratablePsdReference;
   promptText?: string;
   successMessage?: string;
   failurePrefix: string;
-  onSettled?: (success: boolean) => void;
+  onSettled?: (result: {
+    completedCandidates: number;
+    totalCandidates: number;
+    unknownCandidates: number;
+  }) => void;
 }
+
+type GeneratablePsdReference = PsdAiReference & (
+  | { targetLayerId: number; targetIssue?: undefined }
+  | { targetLayerId?: undefined; targetIssue: "missing" }
+);
 
 export function AiGenerationPanel({
   workbook,
@@ -83,7 +116,9 @@ export function AiGenerationPanel({
   requestThumbnail,
   onThumbnailError,
   onStatus,
-  onBusyChange
+  onBusyChange,
+  onPsdBackfillStart,
+  onPsdBackfillSettled
 }: AiGenerationPanelProps): React.ReactElement {
   const [open, setOpen] = useState(true);
   const [candidateCount, setCandidateCount] = useState(2);
@@ -101,6 +136,7 @@ export function AiGenerationPanel({
   const statesRef = useRef<Record<string, AiItemState>>({});
   const generationQueueRef = useRef<QueuedGenerationJob[]>([]);
   const queueProcessingRef = useRef(false);
+  const currentPsdScopeKeysRef = useRef(new Set<string>());
   const psdThumbnailRequestsRef = useRef(new Set<string>());
   const psdThumbnailQueueRef = useRef(Promise.resolve());
   const psdThumbnailResourcesRef = useRef(new Map<string, HolopixImageBlobResource>());
@@ -118,6 +154,9 @@ export function AiGenerationPanel({
     }
     onStatus(`Holopix 候选预览：ImageBlob 不可用，已回退 Canvas${detail ? `：${detail}` : "。"}`, "warn");
   }, [onStatus]);
+  currentPsdScopeKeysRef.current = new Set(
+    psdReferences.filter(isGeneratableReference).map(psdGenerationScopeKey)
+  );
   const startPromptResize = useCallback((event: React.MouseEvent<HTMLSpanElement>): void => {
     const textarea = promptTextareaRef.current;
     if (!textarea) return;
@@ -157,11 +196,17 @@ export function AiGenerationPanel({
     () => new Map(psdReferences.map((reference) => [reference.assetCode, reference])),
     [psdReferences]
   );
+  const generatablePsdReferencesByAssetCode = useMemo(
+    () => new Map(
+      psdReferences
+        .filter(isGeneratableReference)
+        .map((reference) => [reference.assetCode, reference])
+    ),
+    [psdReferences]
+  );
   const generationItems = useMemo(
-    () => groupItems.filter((item) => (
-      psdReferencesByAssetCode.has(item.assetCode) || Boolean(selectedAiReferenceImage(item))
-    )),
-    [groupItems, psdReferencesByAssetCode]
+    () => groupItems.filter((item) => generatablePsdReferencesByAssetCode.has(item.assetCode)),
+    [generatablePsdReferencesByAssetCode, groupItems]
   );
   const itemStates = groupItems.flatMap((item) => states[item.key] ? [states[item.key]!] : []);
   const stats = summarizeAiCandidates(itemStates);
@@ -202,8 +247,22 @@ export function AiGenerationPanel({
 
   useEffect(() => {
     if (running) return;
-    updateStates((current) => reconcileAiItemStates(current, generationItems, candidateCount));
-  }, [candidateCount, generationItems, running, updateStates]);
+    const pendingRecords = loadHolopixPendingSubmissions();
+    updateStates((current) => {
+      const next = reconcileAiItemStates(current, generationItems, candidateCount);
+      for (const item of generationItems) {
+        const reference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+        let state = next[item.key];
+        if (!reference || !state) continue;
+        for (const pending of pendingRecords) {
+          if (!pendingSubmissionMatchesReference(pending, reference)) continue;
+          state = restoreAiPendingSubmission(state, pending);
+        }
+        next[item.key] = state;
+      }
+      return next;
+    });
+  }, [candidateCount, generatablePsdReferencesByAssetCode, generationItems, running, updateStates]);
 
   useEffect(() => {
     if (!groupItems.some((item) => item.key === selectedItemKey)) {
@@ -325,48 +384,119 @@ export function AiGenerationPanel({
     if (!selectedGroup || controlsDisabled || !generationItems.length) return;
     setRecovering(true);
     try {
+      const persistedPending = loadHolopixPendingSubmissions();
+      const pendingSubmissions = generationItems.flatMap((item) => (
+        statesRef.current[item.key]?.candidates.flatMap((candidate) => (
+          candidate.status === "unknown" && candidate.submissionPromptId
+            ? [{ promptId: candidate.submissionPromptId, assetCode: item.assetCode }]
+            : []
+        )) ?? []
+      ));
       const recovered = await recoverRecentHolopixImages(
         generationItems.map((item) => item.assetCode),
         candidateCount,
         undefined,
-        (message) => onStatus(`Holopix 安全预览：${message}`)
+        (message) => onStatus(`Holopix 安全预览：${message}`),
+        pendingSubmissions
       );
-      const recoveredCount = generationItems.reduce(
-        (count, item) => count + Math.min(candidateCount, recovered[item.assetCode]?.length ?? 0),
-        0
-      );
+      let recoveredCount = 0;
+      const resolvedOutputRecords = new Map<string, HolopixPendingSubmissionRecord>();
       updateStates((current) => {
         const next = reconcileAiItemStates(current, generationItems, candidateCount);
         for (const item of generationItems) {
-          const images = recovered[item.assetCode] ?? [];
-          const state = next[item.key];
-          if (!state || !images.length) continue;
-          next[item.key] = {
-            ...state,
-            candidates: state.candidates.map((candidate, index) => {
-              const image = images[index];
-              if (!image) return candidate;
-              return {
-                ...candidate,
-                status: candidate.status === "accepted" ? "accepted" : "ready",
-                image,
-                error: undefined
-              };
-            })
-          };
+          let state = next[item.key];
+          if (!state) continue;
+          const promptIds = new Set(state.candidates.flatMap((candidate) => (
+            candidate.status === "unknown" && candidate.submissionPromptId
+              ? [candidate.submissionPromptId]
+              : []
+          )));
+          for (const promptId of promptIds) {
+            const exactImages = recovered.byPromptId[promptId] ?? [];
+            const merged = mergeRecoveredAiCandidateImages(
+              state,
+              exactImages,
+              { promptId }
+            );
+            state = merged.item;
+            recoveredCount += merged.recoveredCount;
+            if (!state.candidates.some((candidate) => (
+              candidate.status === "unknown" && candidate.submissionPromptId === promptId
+            ))) {
+              const reference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+              if (reference) {
+                for (const pending of persistedPending) {
+                  if (
+                    pending.promptId === promptId
+                    && pendingSubmissionMatchesReference(pending, reference)
+                  ) {
+                    resolvedOutputRecords.set(
+                      pending.submissionKey,
+                      promoteHolopixPendingSubmissionToOutput(pending, exactImages)
+                    );
+                  }
+                }
+              }
+            }
+          }
+          const mergedRecent = mergeRecoveredAiCandidateImages(
+            state,
+            recovered.recentByAssetCode[item.assetCode] ?? []
+          );
+          next[item.key] = mergedRecent.item;
+          recoveredCount += mergedRecent.recoveredCount;
         }
         return { ...next };
       });
+      let outputRecordFailures = 0;
+      for (const record of resolvedOutputRecords.values()) {
+        if (!saveHolopixPendingSubmission(record)) outputRecordFailures += 1;
+      }
       const detail = recoveredCount
         ? `已从 ComfyUI 历史恢复 ${recoveredCount} 张候选；未提交新生成任务。`
         : "ComfyUI 历史中没有找到当前棋子链的已有候选。";
       onStatus(detail, recoveredCount ? "info" : "warn");
+      if (outputRecordFailures) {
+        onStatus(
+          `已有候选已恢复，但 ${outputRecordFailures} 个本地付费输出记录更新失败；`
+            + "已保留待确认保护，请勿直接重复生成。",
+          "warn"
+        );
+      }
     } catch (error) {
       const detail = `恢复已有候选失败：${toErrorMessage(error)}`;
       onStatus(detail, "error");
     } finally {
       setRecovering(false);
     }
+  }
+
+  function handleAbandonUnknowns(): void {
+    if (!stats.unknown || controlsDisabled) return;
+    const confirmed = window.confirm(
+      "仅在你已经确认 ComfyUI 中没有仍在运行或尚未取回的对应任务时继续。\n\n"
+      + "放弃后，这些格子会变成可重试；再次生成可能产生新的付费任务。"
+    );
+    if (!confirmed) return;
+    const submissionKeys = new Set<string>();
+    let abandonedCount = 0;
+    updateStates((current) => {
+      const next = { ...current };
+      for (const item of generationItems) {
+        const state = next[item.key];
+        if (!state) continue;
+        const abandoned = abandonAiCandidateUnknowns(state);
+        next[item.key] = abandoned.item;
+        abandonedCount += abandoned.abandonedCount;
+        for (const key of abandoned.submissionKeys) submissionKeys.add(key);
+      }
+      return next;
+    });
+    removeHolopixPendingSubmissions(submissionKeys);
+    onStatus(
+      `已确认放弃 ${abandonedCount} 张待确认候选；请先检查“恢复已有候选（不生成）”，再决定是否重新生成。`,
+      "warn"
+    );
   }
 
   function enqueueGeneration(job: QueuedGenerationJob): void {
@@ -381,9 +511,38 @@ export function AiGenerationPanel({
     try {
       while (generationQueueRef.current.length) {
         const job = generationQueueRef.current.shift()!;
+        if (
+          job.psdReference
+          && !currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(job.psdReference))
+        ) {
+          const detail = "未提交生成：当前 PSD 或节点范围已经切换。";
+          updateStates((current) => {
+            const state = current[job.item.key];
+            return state ? {
+              ...current,
+              [job.item.key]: failAiCandidateGenerationRemainder(
+                state,
+                job.slotIndexes,
+                0,
+                detail,
+                job.promptText
+              )
+            } : current;
+          });
+          onStatus(`Holopix ${job.item.assetCode} ${detail}`, "warn");
+          job.onSettled?.({
+            completedCandidates: 0,
+            totalCandidates: job.slotIndexes.length,
+            unknownCandidates: 0
+          });
+          continue;
+        }
         const controller = new AbortController();
         abortRef.current = controller;
         let success = false;
+        let completedSlotCount = 0;
+        let unknownSlotCount = 0;
+        let resolvedPromptText = job.promptText?.trim() || undefined;
         onStatus(`Holopix ${job.item.assetCode} 开始生成 ${job.slotIndexes.length} 张候选。`);
         updateStates((current) => updateSlotIndexes(
           current,
@@ -399,7 +558,38 @@ export function AiGenerationPanel({
             controller.signal,
             (message) => onStatus(`Holopix ${job.item.assetCode}：${message}`),
             job.promptText,
-            job.psdReference
+            job.psdReference,
+            (batchImages, completedBeforeBatch, _totalCandidates, submission) => {
+              resolvedPromptText ??= batchImages[0]?.promptText?.trim() || undefined;
+              updateStates((current) => {
+                const state = current[job.item.key];
+                return state ? {
+                  ...current,
+                  [job.item.key]: applyAiGeneratedCandidateBatch(
+                    state,
+                    job.slotIndexes,
+                    completedBeforeBatch,
+                    batchImages,
+                    resolvedPromptText,
+                    submission
+                  )
+                } : current;
+              });
+              completedSlotCount = Math.max(
+                completedSlotCount,
+                completedBeforeBatch + batchImages.length
+              );
+            },
+            async () => {
+              if (
+                job.psdReference
+                && !currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(job.psdReference))
+              ) {
+                throw new Error("当前 PSD 或节点范围已经切换；后续 Holopix 批次未提交。");
+              }
+              if (job.psdReference) await assertActivePsdGenerationScope(job.psdReference);
+            },
+            (event) => recordSubmissionLifecycle(job, event)
           );
           updateStates((current) => updateSlotIndexes(
             current,
@@ -407,25 +597,75 @@ export function AiGenerationPanel({
             job.slotIndexes,
             (slot, offset) => ({
               ...slot,
-              status: "ready",
+              status: slot.status === "accepted" ? "accepted" : "ready",
               image: images[offset]!,
-              error: undefined
+              error: undefined,
+              retryPromptText: images[offset]?.promptText?.trim() || resolvedPromptText || slot.retryPromptText
             })
           ));
           success = true;
           if (job.successMessage) onStatus(job.successMessage);
         } catch (error) {
           const detail = toErrorMessage(error);
-          updateStates((current) => updateSlotIndexes(
-            current,
-            job.item.key,
-            job.slotIndexes,
-            (slot) => ({ ...slot, status: "failed", error: detail })
-          ));
-          onStatus(`${job.failurePrefix}：${detail}`, "error");
+          const failedSlotIndexes = job.slotIndexes.slice(completedSlotCount);
+          if (error instanceof HolopixGenerationOutcomeUnknownError) {
+            unknownSlotCount = failedSlotIndexes.length;
+            updateStates((current) => {
+              const state = current[job.item.key];
+              return state ? {
+                ...current,
+                [job.item.key]: markAiCandidateGenerationUnknown(
+                  state,
+                  job.slotIndexes,
+                  completedSlotCount,
+                  detail,
+                  { promptId: error.promptId, key: error.submissionKey },
+                  resolvedPromptText
+                )
+              } : current;
+            });
+            onStatus(
+              `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选（不生成）”核对结果。`,
+              "warn"
+            );
+          } else if (!failedSlotIndexes.length && completedSlotCount === job.slotIndexes.length) {
+            success = true;
+            onStatus(
+              `Holopix ${job.item.assetCode} 原图已全部保留；安全预览增强未完成：${detail}`,
+              "warn"
+            );
+          } else {
+            updateStates((current) => {
+              const state = current[job.item.key];
+              return state ? {
+                ...current,
+                [job.item.key]: failAiCandidateGenerationRemainder(
+                  state,
+                  job.slotIndexes,
+                  completedSlotCount,
+                  detail,
+                  resolvedPromptText
+                )
+              } : current;
+            });
+          }
+          if (completedSlotCount > 0 && failedSlotIndexes.length) {
+            onStatus(
+              `Holopix ${job.item.assetCode} 已保留前 ${completedSlotCount} 张成功候选；剩余 ${failedSlotIndexes.length} 张`
+                + `${error instanceof HolopixGenerationOutcomeUnknownError ? "结果待确认" : "标记为失败"}。`,
+              "warn"
+            );
+          }
+          if (!(error instanceof HolopixGenerationOutcomeUnknownError) && !success) {
+            onStatus(`${job.failurePrefix}：${detail}`, "error");
+          }
         } finally {
           if (abortRef.current === controller) abortRef.current = null;
-          job.onSettled?.(success);
+          job.onSettled?.({
+            completedCandidates: success ? job.slotIndexes.length : completedSlotCount,
+            totalCandidates: job.slotIndexes.length,
+            unknownCandidates: unknownSlotCount
+          });
         }
       }
     } finally {
@@ -440,10 +680,11 @@ export function AiGenerationPanel({
     const jobs = generationItems.flatMap((item) => {
       const state = snapshot[item.key];
       if (!state) return [];
-      const slotIndexes = state.candidates.flatMap((candidate, index) =>
-        candidate.status === "idle" || candidate.status === "failed" ? [index] : []
-      );
-      return chunkCandidateSlotIndexes(slotIndexes).map((chunk) => ({ item, slotIndexes: chunk }));
+      return buildAiCandidateGenerationBatches(state.candidates).map((batch) => ({
+        item,
+        slotIndexes: batch.slotIndexes,
+        promptText: batch.promptText
+      }));
     });
     const totalCandidates = jobs.reduce((count, job) => count + job.slotIndexes.length, 0);
     if (!totalCandidates) {
@@ -454,23 +695,33 @@ export function AiGenerationPanel({
     onStatus(`Holopix 批量生成开始：${jobs.length} 项，${totalCandidates} 张候选。`);
 
     let completedJobs = 0;
-    let failedJobs = 0;
+    let failedCandidates = 0;
+    let unknownCandidates = 0;
     for (const job of jobs) {
       enqueueGeneration({
         workbook,
         item: job.item,
         slotIndexes: job.slotIndexes,
-        psdReference: psdReferencesByAssetCode.get(job.item.assetCode),
+        promptText: job.promptText,
+        psdReference: generatablePsdReferencesByAssetCode.get(job.item.assetCode),
         failurePrefix: `Holopix ${job.item.assetCode} 生成失败`,
-        onSettled: (success) => {
-          if (!success) failedJobs += 1;
+        onSettled: (result) => {
+          unknownCandidates += result.unknownCandidates;
+          failedCandidates += result.totalCandidates
+            - result.completedCandidates
+            - result.unknownCandidates;
           completedJobs += 1;
-          onStatus(`Holopix 批次进度 ${completedJobs}/${jobs.length}${failedJobs ? `；失败 ${failedJobs}` : ""}。`);
+          onStatus(
+            `Holopix 批次进度 ${completedJobs}/${jobs.length}`
+            + `${failedCandidates ? `；待重试 ${failedCandidates} 张` : ""}`
+            + `${unknownCandidates ? `；结果待确认 ${unknownCandidates} 张` : ""}。`
+          );
           if (completedJobs === jobs.length) {
-            const detail = failedJobs
-              ? `Holopix 批量结束：${jobs.length - failedJobs} 项成功，${failedJobs} 项失败，可点击失败格重试。`
+            const detail = failedCandidates || unknownCandidates
+              ? `Holopix 批量结束：${totalCandidates - failedCandidates - unknownCandidates} 张成功，`
+                + `${failedCandidates} 张失败，${unknownCandidates} 张结果待确认。`
               : `Holopix 批量完成：${jobs.length} 项，共 ${totalCandidates} 张候选。`;
-            onStatus(detail, failedJobs ? "warn" : "info");
+            onStatus(detail, failedCandidates || unknownCandidates ? "warn" : "info");
           }
         }
       });
@@ -481,6 +732,7 @@ export function AiGenerationPanel({
     if (controlsDisabled) return;
     const state = statesRef.current[item.key];
     if (!state) return;
+    const retryPromptText = state.candidates[slotIndex]?.retryPromptText;
     setSelectedItemKey(item.key);
     updateStates((current) => updateSlotIndexes(current, item.key, [slotIndex], (slot) => ({
       ...slot,
@@ -491,7 +743,8 @@ export function AiGenerationPanel({
       workbook,
       item,
       slotIndexes: [slotIndex],
-      psdReference: psdReferencesByAssetCode.get(item.assetCode),
+      promptText: retryPromptText,
+      psdReference: generatablePsdReferencesByAssetCode.get(item.assetCode),
       successMessage: `Holopix 单格重生成完成：${item.assetCode}。`,
       failurePrefix: `Holopix ${item.assetCode} 单格生成失败`
     });
@@ -507,7 +760,7 @@ export function AiGenerationPanel({
     const snapshot = reconcileAiItemStates(statesRef.current, generationItems, candidateCount);
     const state = snapshot[item.key];
     if (!state) return;
-    const appendedState = appendAiCandidateSlots(state, candidateCount);
+    const appendedState = appendAiCandidateSlots(state, candidateCount, promptText);
     const slotIndexes = Array.from(
       { length: appendedState.candidates.length - state.candidates.length },
       (_, offset) => state.candidates.length + offset
@@ -519,7 +772,7 @@ export function AiGenerationPanel({
       item,
       slotIndexes,
       promptText,
-      psdReference: psdReferencesByAssetCode.get(item.assetCode),
+      psdReference: generatablePsdReferencesByAssetCode.get(item.assetCode),
       successMessage: `Holopix 已用修改后的提示词生成新增候选：${item.assetCode}。`,
       failurePrefix: `Holopix ${item.assetCode} 新增候选生成失败`
     });
@@ -527,19 +780,36 @@ export function AiGenerationPanel({
 
   async function handleAccept(item: AssetCandidate, candidate: AiCandidateSlot): Promise<void> {
     if (!candidate.image || backfillDisabled) return;
+    const psdReference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+    if (!psdReference) {
+      onStatus(`无法回填 ${item.assetCode}：当前 PSD 中没有可唯一定位的对应节点。`, "warn");
+      return;
+    }
     const geometryAudit: string[] = [];
     setSelectedItemKey(item.key);
+    onPsdBackfillStart(psdReference.documentId);
     setSyncingCandidateId(candidate.id);
+    let replacementMayHaveMutated = false;
     try {
       const result = await backfillAiCandidate(
         item.assetCode,
         candidate.image.url,
-        (message) => geometryAudit.push(message)
+        {
+          documentId: psdReference.documentId,
+          artboardId: psdReference.artboardId,
+          referenceLayerId: psdReference.referenceLayerId,
+          targetLayerId: psdReference.targetLayerId,
+          targetIssue: psdReference.targetIssue
+        },
+        (message) => geometryAudit.push(message),
+        () => { replacementMayHaveMutated = true; }
       );
-      updateStates((current) => {
-        const state = current[item.key];
-        return state ? { ...current, [item.key]: acceptAiCandidate(state, candidate.id) } : current;
-      });
+      if (result.applied) {
+        updateStates((current) => {
+          const state = current[item.key];
+          return state ? { ...current, [item.key]: acceptAiCandidate(state, candidate.id) } : current;
+        });
+      }
       const detail = result.applied
         ? `${result.detail} 可继续点击同一行的其他候选，在画板中直接对比。`
         : result.detail;
@@ -549,6 +819,11 @@ export function AiGenerationPanel({
       onStatus(detail, "error");
     } finally {
       for (const message of geometryAudit) onStatus(`回填几何 ${item.assetCode}：${message}`);
+      try {
+        await onPsdBackfillSettled(replacementMayHaveMutated);
+      } catch (error) {
+        onStatus(`回填结束后重新读取 PSD 节点失败：${toErrorMessage(error)}`, "warn");
+      }
       setSyncingCandidateId(null);
     }
   }
@@ -608,6 +883,13 @@ export function AiGenerationPanel({
               disabled={controlsDisabled || !generationItems.length}
               onClick={() => void handleRecoverExisting()}
             >{recovering ? "正在恢复……" : "恢复已有候选（不生成）"}</button>
+            {stats.unknown ? (
+              <button
+                className="ai-abandon-unknown"
+                disabled={controlsDisabled}
+                onClick={handleAbandonUnknowns}
+              >确认放弃 {stats.unknown} 张待确认结果</button>
+            ) : null}
           </div>
 
           <div className="ai-progress-card">
@@ -678,19 +960,23 @@ export function AiGenerationPanel({
                             if (excelReference) onThumbnailError(excelReference.anchor.archiveEntry);
                           }}
                         />
-                        <CandidateStrip
-                          candidates={state?.candidates}
-                          generationDisabled={controlsDisabled}
-                          backfillDisabled={backfillDisabled}
-                          onPreviewMode={reportPreviewMode}
-                          onAccept={(candidate) => void handleAccept(item, candidate)}
-                          onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
-                        />
+                        {psdReference?.targetIssue === "ambiguous" ? (
+                          <div className="ai-candidate-unavailable">空白智能对象不唯一</div>
+                        ) : (
+                          <CandidateStrip
+                            candidates={state?.candidates}
+                            generationDisabled={controlsDisabled}
+                            backfillDisabled={backfillDisabled}
+                            onPreviewMode={reportPreviewMode}
+                            onAccept={(candidate) => void handleAccept(item, candidate)}
+                            onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
+                          />
+                        )}
                       </div>
                     );
                   })}
                   {!groupItems.length ? (
-                    <div className="ai-empty">当前 PSD 未识别到同时包含参考图和唯一空白智能对象的画板。</div>
+                    <div className="ai-empty">当前 PSD 未识别到带参考图的物品画板。</div>
                   ) : null}
                 </div>
               </div>
@@ -1011,7 +1297,18 @@ async function runItemGeneration(
   signal: AbortSignal,
   onStage: (message: string) => void,
   promptText?: string,
-  psdReference?: PsdAiReference
+  psdReference?: PsdAiReference,
+  onBatchCompleted?: (
+    images: AiGeneratedImage[],
+    completedBeforeBatch: number,
+    totalCandidates: number,
+    submission: HolopixCompletedBatchSubmission
+  ) => void,
+  onBeforeBatchSubmit?: (
+    completedCandidates: number,
+    totalCandidates: number
+  ) => void | Promise<void>,
+  onSubmissionLifecycle?: (event: HolopixSubmissionLifecycleEvent) => void
 ) {
   const suppliedPromptText = promptText?.trim();
   if (suppliedPromptText) {
@@ -1020,7 +1317,10 @@ async function runItemGeneration(
       candidateCount,
       assetCode: item.assetCode,
       signal,
-      onStage
+      onStage,
+      onBatchCompleted,
+      onBeforeBatchSubmit,
+      onSubmissionLifecycle
     });
   }
   if (psdReference) {
@@ -1034,7 +1334,10 @@ async function runItemGeneration(
       candidateCount,
       assetCode: item.assetCode,
       signal,
-      onStage
+      onStage,
+      onBatchCompleted,
+      onBeforeBatchSubmit,
+      onSubmissionLifecycle
     });
   }
   if (!workbook) throw new Error("当前 PSD 没有可读取的参考图，且尚未重新打开 Excel。");
@@ -1059,12 +1362,98 @@ async function runItemGeneration(
     candidateCount,
     assetCode: item.assetCode,
     signal,
-    onStage
+    onStage,
+    onBatchCompleted,
+    onBeforeBatchSubmit,
+    onSubmissionLifecycle
   });
+}
+
+function recordSubmissionLifecycle(
+  job: QueuedGenerationJob,
+  event: HolopixSubmissionLifecycleEvent
+): void {
+  const reference = job.psdReference;
+  if (!reference) return;
+  if (event.state === "resolved" && event.outcome !== "output") {
+    if (!removeHolopixPendingSubmissions([event.submissionKey])) {
+      throw new Error("无法清除已结束的本地提交记录。");
+    }
+    return;
+  }
+  const saved = saveHolopixPendingSubmission({
+    version: 2,
+    documentId: reference.documentId,
+    documentName: reference.documentName,
+    documentIdentity: reference.documentIdentity,
+    assetCode: reference.assetCode,
+    artboardId: reference.artboardId,
+    referenceLayerId: reference.referenceLayerId,
+    ...(reference.targetLayerId === undefined ? {} : { targetLayerId: reference.targetLayerId }),
+    ...(reference.targetIssue ? { targetIssue: reference.targetIssue } : {}),
+    slotCount: event.batchSize,
+    submissionKey: event.submissionKey,
+    ...(event.promptId ? { promptId: event.promptId } : {}),
+    ...((event.promptText?.trim() || job.promptText?.trim())
+      ? { promptText: event.promptText?.trim() || job.promptText!.trim() }
+      : {}),
+    outcome: event.state === "resolved" && event.outcome === "output" ? "output" : "pending",
+    ...(event.images?.length ? { images: persistableHolopixImages(event.images) } : {}),
+    createdAt: event.createdAt
+  });
+  if (!saved) throw new Error("无法写入本地待确认提交记录。");
+}
+
+function pendingSubmissionMatchesReference(
+  pending: HolopixPendingSubmissionRecord,
+  reference: GeneratablePsdReference
+): boolean {
+  return holopixPendingSubmissionMatchesScope(pending, reference);
 }
 
 function psdReferenceKey(reference: PsdAiReference): string {
   return `${reference.documentId}:${reference.referenceLayerId}`;
+}
+
+function psdGenerationScopeKey(reference: Pick<
+  PsdAiReference,
+  "documentId" | "documentIdentity" | "assetCode" | "artboardId" | "referenceLayerId"
+>): string {
+  return [
+    reference.documentId,
+    reference.documentIdentity,
+    reference.assetCode,
+    reference.artboardId,
+    reference.referenceLayerId
+  ].join(":");
+}
+
+async function assertActivePsdGenerationScope(reference: GeneratablePsdReference): Promise<void> {
+  if (!isStablePsdDocumentIdentity(reference.documentIdentity)) {
+    throw new Error("当前 PSD 尚未保存或无法取得稳定文件路径；为避免重复付费，请先保存 PSD 再生成。");
+  }
+  const current = await inspectActiveReferenceDocument();
+  const expectedKey = psdGenerationScopeKey(reference);
+  if (
+    current?.documentId !== reference.documentId
+    || current.documentIdentity !== reference.documentIdentity
+    || !current.aiNodes.filter(isGeneratableReference).some((node) => psdGenerationScopeKey({
+        ...node,
+        documentId: current.documentId,
+        documentIdentity: current.documentIdentity
+      }) === expectedKey)
+  ) {
+    throw new Error("当前 PSD 或节点结构已经变化；Holopix 批次未提交。");
+  }
+}
+
+function isGeneratableReference<T extends { targetLayerId?: number; targetIssue?: "missing" | "ambiguous" }>(
+  reference: T
+): reference is T & (
+  | { targetLayerId: number; targetIssue?: undefined }
+  | { targetLayerId?: undefined; targetIssue: "missing" }
+) {
+  return Number.isInteger(reference.targetLayerId) || reference.targetIssue === "missing";
 }
 
 function safeFilePart(value: string): string {
@@ -1081,14 +1470,6 @@ function markSlots(
     next = updateSlotIndexes(next, job.item.key, job.slotIndexes, (slot) => ({ ...slot, status, error: undefined }));
   }
   return next;
-}
-
-function chunkCandidateSlotIndexes(slotIndexes: number[]): number[][] {
-  const chunks: number[][] = [];
-  for (let index = 0; index < slotIndexes.length; index += 4) {
-    chunks.push(slotIndexes.slice(index, index + 4));
-  }
-  return chunks;
 }
 
 function updateSlotIndexes(
@@ -1118,5 +1499,6 @@ function candidateStatusLabel(candidate: AiCandidateSlot): string {
   if (candidate.status === "generating") return "生成中";
   if (candidate.status === "ready") return "可选择";
   if (candidate.status === "accepted") return "已选";
+  if (candidate.status === "unknown") return "结果待确认";
   return "失败 · 重试";
 }

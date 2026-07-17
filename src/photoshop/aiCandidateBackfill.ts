@@ -5,19 +5,29 @@ import {
   calculateAiCandidatePlacement,
   rebaseTargetBoundsAfterArtboardShift
 } from "../domain/aiCandidatePlacement";
+import { DEFAULT_EDITABLE_CANVAS_SIZE } from "../domain/generationSettings";
 import { deleteTemporaryFile } from "../infrastructure/filesystem/uxpFiles";
 import {
   getArtboardDescriptor,
+  placeEmbeddedDescriptor,
   replacePlacedLayerContentsDescriptor,
   selectLayerDescriptor
 } from "./actionDescriptors";
 import {
   findEditableCanvasTargetByIds,
   findEditableCanvasTargets,
+  isEditableCanvasLayerName,
+  preferredEditableCanvasLayerName,
   type CandidateTargetLayer,
   type CandidateTargetDocument,
   type EditableCanvasTarget
 } from "./aiCandidateTarget";
+import {
+  assertExpectedDocumentId,
+  assertSingleBatchPlaySucceeded,
+  runWithRollbackHistory,
+  type HistorySuspensionHostControl
+} from "./aiCandidateBackfillSafety";
 import {
   smartObjectGeometryFromDescriptor,
   type SmartObjectTransformBounds,
@@ -29,24 +39,35 @@ export interface CandidateBackfillResult {
   detail: string;
 }
 
+export interface CandidateBackfillTarget {
+  documentId: number;
+  artboardId: number;
+  referenceLayerId: number;
+  targetLayerId?: number;
+  targetIssue?: "missing";
+}
+
 export async function backfillAiCandidate(
   assetCode: string,
   imageUrl: string,
-  onAudit?: (message: string) => void
+  expected: CandidateBackfillTarget,
+  onAudit?: (message: string) => void,
+  onReplacementMayHaveMutated?: () => void
 ): Promise<CandidateBackfillResult> {
   const document = activeDocument();
   if (!document) {
     return { applied: false, detail: "候选已选中；当前没有打开的棋子归档 PSD，未回填画板。" };
   }
-  const initialTargets = findEditableCanvasTargets(document, assetCode);
-  if (!initialTargets.length) {
-    return { applied: false, detail: `候选已选中；当前 PSD 中未找到画板 ${assetCode} 的空白智能对象。` };
+  assertExpectedDocumentId(expected.documentId, document.id, "下载候选图前，");
+  const initialScope = stableExpectedBackfillScope(document, assetCode, expected);
+  if (!initialScope) {
+    return { applied: false, detail: `候选已选中；画板 ${assetCode} 的参考图或空白智能对象状态已经变化。` };
   }
-  if (initialTargets.length > 1) {
-    throw new Error(`当前 PSD 中找到 ${initialTargets.length} 个 ${assetCode} 空白智能对象，已停止回填以避免写入错误画板。`);
+  if (initialScope.mode === "existing") {
+    onAudit?.(formatAudit("target.initial", document, initialScope.target));
+  } else {
+    onAudit?.(formatMissingTargetAudit("target.initial-missing", document, initialScope.artboard));
   }
-  onAudit?.(formatAudit("target.initial", document, initialTargets[0]!));
-
   const response = await fetch(imageUrl);
   if (!response.ok) throw new Error(`下载 Holopix 候选图失败：HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -62,53 +83,156 @@ export async function backfillAiCandidate(
 
   try {
     const token = storage.localFileSystem.createSessionToken(temporary);
+    let createdTarget = false;
     await core.executeAsModal(
-      async () => {
+      async (executionContext) => {
+        const context = executionContext as unknown as ModalExecutionContext;
         const currentDocument = activeDocument();
         if (!currentDocument) throw new Error("回填过程中当前 PSD 已关闭。");
-        const currentTarget = uniqueTarget(currentDocument, assetCode);
-        const targetIds = {
-          artboardId: currentTarget.artboard.id,
-          layerId: currentTarget.layer.id
-        };
-        const before = await captureGeometry(currentDocument, currentTarget, "before-replace");
-        onAudit?.(formatGeometryAudit(before));
-        const targetMeasurement = chooseTargetMeasurement(before);
-        onAudit?.(JSON.stringify({
-          stage: "target.measurement",
-          source: targetMeasurement.source,
-          basis: targetMeasurement.basis,
-          bounds: compactRect(targetMeasurement.bounds)
-        }));
-        await action.batchPlay([
-          selectLayerDescriptor(currentTarget.layer.id),
-          replacePlacedLayerContentsDescriptor(token)
-        ], {});
-        const replacedTarget = targetByIds(currentDocument, targetIds);
-        const afterReplace = await captureGeometry(currentDocument, replacedTarget, "after-replace");
-        onAudit?.(formatGeometryAudit(afterReplace));
-        const rebasedTargetMeasurement = rebaseTargetMeasurement(
-          targetMeasurement,
-          before,
-          afterReplace,
-          onAudit
+        assertExpectedDocumentId(expected.documentId, currentDocument.id, "进入 Photoshop 写入阶段时，");
+        const currentScope = stableExpectedBackfillScope(currentDocument, assetCode, expected);
+        if (!currentScope) {
+          throw new Error(`回填已停止：下载候选图期间画板 ${assetCode} 的参考图或目标智能对象发生了变化。`);
+        }
+        await runWithRollbackHistory(
+          context.hostControl,
+          {
+            documentID: expected.documentId,
+            name: `回填 Holopix 候选：${assetCode}`
+          },
+          async () => {
+            if (currentScope.mode === "existing") {
+              await replaceExistingTarget(
+                currentDocument,
+                currentScope.target,
+                token,
+                onAudit,
+                onReplacementMayHaveMutated
+              );
+            } else {
+              await createAndFillMissingTarget(
+                currentDocument,
+                currentScope.artboard,
+                token,
+                onAudit,
+                onReplacementMayHaveMutated
+              );
+              createdTarget = true;
+            }
+            assertExpectedDocumentId(
+              expected.documentId,
+              activeDocument()?.id,
+              "提交 Photoshop 历史状态前，"
+            );
+          }
         );
-        await fitReplacementInsideTarget(
-          currentDocument,
-          targetIds,
-          rebasedTargetMeasurement,
-          onAudit
-        );
-        const finalTarget = targetByIds(currentDocument, targetIds);
-        onAudit?.(formatGeometryAudit(await captureGeometry(currentDocument, finalTarget, "after-placement")));
       },
       { commandName: `回填 Holopix 候选：${assetCode}` }
     );
+    return {
+      applied: true,
+      detail: createdTarget
+        ? `已在画板 ${assetCode} 中创建智能对象并回填；图片已限制在画板范围内。`
+        : `已选中并回填画板 ${assetCode}；图片已限制在画板范围内。`
+    };
   } finally {
     await deleteTemporaryFile(temporary);
   }
+}
 
-  return { applied: true, detail: `已选中并回填画板 ${assetCode}；图片已限制在画板范围内。` };
+async function replaceExistingTarget(
+  document: CandidateTargetDocument,
+  currentTarget: EditableCanvasTarget,
+  token: string,
+  onAudit?: (message: string) => void,
+  onReplacementMayHaveMutated?: () => void
+): Promise<void> {
+  const targetIds = {
+    artboardId: currentTarget.artboard.id,
+    layerId: currentTarget.layer.id
+  };
+  const before = await captureGeometry(document, currentTarget, "before-replace");
+  onAudit?.(formatGeometryAudit(before));
+  const targetMeasurement = chooseTargetMeasurement(before);
+  auditTargetMeasurement(targetMeasurement, onAudit);
+  const selectResults = await action.batchPlay(
+    [selectLayerDescriptor(currentTarget.layer.id)],
+    {}
+  );
+  assertSingleBatchPlaySucceeded(selectResults, "选择回填智能对象");
+  const replaceResults = await action.batchPlay(
+    [replacePlacedLayerContentsDescriptor(token)],
+    {}
+  );
+  assertSingleBatchPlaySucceeded(replaceResults, "替换智能对象内容");
+  onReplacementMayHaveMutated?.();
+  const replacedTarget = targetByIds(document, targetIds);
+  const afterReplace = await captureGeometry(document, replacedTarget, "after-replace");
+  onAudit?.(formatGeometryAudit(afterReplace));
+  await fitReplacementInsideTarget(
+    document,
+    targetIds,
+    rebaseTargetMeasurement(
+      targetMeasurement,
+      before.artboardDescriptorBounds,
+      afterReplace.artboardDescriptorBounds,
+      onAudit
+    ),
+    onAudit
+  );
+  const finalTarget = targetByIds(document, targetIds);
+  onAudit?.(formatGeometryAudit(await captureGeometry(document, finalTarget, "after-placement")));
+}
+
+async function createAndFillMissingTarget(
+  document: CandidateTargetDocument,
+  artboard: CandidateTargetLayer,
+  token: string,
+  onAudit?: (message: string) => void,
+  onReplacementMayHaveMutated?: () => void
+): Promise<void> {
+  const artboardBoundsBefore = await readArtboardBounds(artboard.id);
+  const placeResults = await action.batchPlay([placeEmbeddedDescriptor(token)], {});
+  assertSingleBatchPlaySucceeded(placeResults, "创建回填智能对象");
+  onReplacementMayHaveMutated?.();
+  const placedLayer = document.activeLayers?.[0];
+  if (!placedLayer || !Number.isInteger(placedLayer.id) || !placedLayer.move) {
+    throw new Error("候选图已置入，但 Photoshop 没有返回可移动的智能对象图层。");
+  }
+  placedLayer.name = preferredEditableCanvasLayerName(document, DEFAULT_EDITABLE_CANVAS_SIZE);
+  await placedLayer.move(artboard, constants.ElementPlacement.PLACEINSIDE);
+  const targetIds = { artboardId: artboard.id, layerId: placedLayer.id };
+  const createdTarget = strictTargetByIds(document, targetIds);
+  const afterPlace = await captureGeometry(document, createdTarget, "after-create");
+  onAudit?.(formatGeometryAudit(afterPlace));
+  const targetMeasurement = chooseCreatedTargetMeasurement(afterPlace);
+  auditCreatedTargetCoordinateChange(
+    artboardBoundsBefore,
+    afterPlace.artboardDescriptorBounds,
+    targetMeasurement,
+    onAudit
+  );
+  auditTargetMeasurement(targetMeasurement, onAudit);
+  await fitReplacementInsideTarget(
+    document,
+    targetIds,
+    targetMeasurement,
+    onAudit
+  );
+  const finalTarget = strictTargetByIds(document, targetIds);
+  onAudit?.(formatGeometryAudit(await captureGeometry(document, finalTarget, "after-placement")));
+}
+
+function auditTargetMeasurement(
+  targetMeasurement: TargetMeasurement,
+  onAudit?: (message: string) => void
+): void {
+  onAudit?.(JSON.stringify({
+    stage: "target.measurement",
+    source: targetMeasurement.source,
+    basis: targetMeasurement.basis,
+    bounds: compactRect(targetMeasurement.bounds)
+  }));
 }
 
 async function readArtboardBounds(layerId: number): Promise<SmartObjectTransformBounds> {
@@ -120,7 +244,7 @@ type GeometrySource = "dom" | "transform";
 
 interface TargetMeasurement {
   source: GeometrySource;
-  basis: "artboard-dom" | "layer-dom" | "layer-transform";
+  basis: "artboard-dom" | "artboard-descriptor" | "layer-dom" | "layer-transform";
   bounds: SmartObjectTransformBounds;
   artboardOffset?: { x: number; y: number };
 }
@@ -128,6 +252,10 @@ interface TargetMeasurement {
 interface TargetIds {
   artboardId: number;
   layerId: number;
+}
+
+interface ModalExecutionContext {
+  hostControl: HistorySuspensionHostControl;
 }
 
 interface GeometrySnapshot {
@@ -272,23 +400,56 @@ function chooseTargetMeasurement(snapshot: GeometrySnapshot): TargetMeasurement 
   throw new Error("Photoshop 没有返回原空白智能对象的 DOM 或 transform 边界。");
 }
 
+function chooseCreatedTargetMeasurement(snapshot: GeometrySnapshot): TargetMeasurement {
+  if (snapshot.artboardDomBounds && snapshot.layerDomBounds) {
+    return { source: "dom", basis: "artboard-dom", bounds: snapshot.artboardDomBounds };
+  }
+  if (snapshot.smartObject) {
+    return {
+      source: "transform",
+      basis: "artboard-descriptor",
+      bounds: snapshot.artboardDescriptorBounds
+    };
+  }
+  throw new Error("Photoshop 没有返回可用于定位新建智能对象的同坐标系边界，已撤销本次回填。");
+}
+
+function auditCreatedTargetCoordinateChange(
+  beforeArtboardBounds: SmartObjectTransformBounds,
+  afterArtboardBounds: SmartObjectTransformBounds,
+  target: TargetMeasurement,
+  onAudit?: (message: string) => void
+): void {
+  onAudit?.(JSON.stringify({
+    stage: "target.rebased",
+    artboardBefore: compactRect(beforeArtboardBounds),
+    artboardAfter: compactRect(afterArtboardBounds),
+    offset: [
+      rounded(afterArtboardBounds.left - beforeArtboardBounds.left),
+      rounded(afterArtboardBounds.top - beforeArtboardBounds.top)
+    ],
+    bounds: compactRect(target.bounds),
+    basis: target.basis
+  }));
+}
+
 function rebaseTargetMeasurement(
   target: TargetMeasurement,
-  before: GeometrySnapshot,
-  after: GeometrySnapshot,
+  beforeArtboardBounds: SmartObjectTransformBounds,
+  afterArtboardBounds: SmartObjectTransformBounds,
   onAudit?: (message: string) => void
 ): TargetMeasurement {
-  const x = after.artboardDescriptorBounds.left - before.artboardDescriptorBounds.left;
-  const y = after.artboardDescriptorBounds.top - before.artboardDescriptorBounds.top;
+  const x = afterArtboardBounds.left - beforeArtboardBounds.left;
+  const y = afterArtboardBounds.top - beforeArtboardBounds.top;
   const bounds = rebaseTargetBoundsAfterArtboardShift(
     target.bounds,
-    before.artboardDescriptorBounds,
-    after.artboardDescriptorBounds
+    beforeArtboardBounds,
+    afterArtboardBounds
   );
   onAudit?.(JSON.stringify({
     stage: "target.rebased",
-    artboardBefore: compactRect(before.artboardDescriptorBounds),
-    artboardAfter: compactRect(after.artboardDescriptorBounds),
+    artboardBefore: compactRect(beforeArtboardBounds),
+    artboardAfter: compactRect(afterArtboardBounds),
     offset: [rounded(x), rounded(y)],
     bounds: compactRect(bounds)
   }));
@@ -335,16 +496,6 @@ function readDomBounds(layer: CandidateTargetLayer): SmartObjectTransformBounds 
   }
 }
 
-function uniqueTarget(
-  document: CandidateTargetDocument,
-  assetCode: string
-): EditableCanvasTarget {
-  const matches = findEditableCanvasTargets(document, assetCode);
-  if (!matches.length) throw new Error(`回填过程中未找到画板 ${assetCode} 的空白智能对象。`);
-  if (matches.length > 1) throw new Error(`回填过程中找到 ${matches.length} 个 ${assetCode} 空白智能对象，已停止以避免写错画板。`);
-  return matches[0]!;
-}
-
 function targetByIds(
   document: CandidateTargetDocument,
   ids: TargetIds
@@ -356,6 +507,87 @@ function targetByIds(
   return target;
 }
 
+function strictTargetByIds(
+  document: CandidateTargetDocument,
+  ids: TargetIds
+): EditableCanvasTarget {
+  const target = topLevelLayers(document).flatMap((artboard) => (
+    artboard.id === ids.artboardId
+      ? findEditableCanvasTargets(document, artboard.name).filter((candidate) => (
+          candidate.artboard.id === ids.artboardId && candidate.layer.id === ids.layerId
+        ))
+      : []
+  ))[0];
+  if (!target) {
+    throw new Error(`新建智能对象 ${ids.layerId} 未进入目标画板 ${ids.artboardId}，已撤销本次回填。`);
+  }
+  return target;
+}
+
+function stableExpectedTarget(
+  document: CandidateTargetDocument,
+  assetCode: string,
+  expected: CandidateBackfillTarget
+): EditableCanvasTarget | undefined {
+  const targets = findEditableCanvasTargets(document, assetCode);
+  if (targets.length !== 1) return undefined;
+  const target = targets[0]!;
+  if (
+    target.artboard.id !== expected.artboardId
+    || target.layer.id !== expected.targetLayerId
+    || !isEditableCanvasLayerName(target.layer.name)
+    || !hasDirectLayerId(target.artboard, expected.referenceLayerId)
+  ) return undefined;
+  return target;
+}
+
+type StableBackfillScope =
+  | { mode: "existing"; target: EditableCanvasTarget }
+  | { mode: "missing"; artboard: CandidateTargetLayer };
+
+function stableExpectedBackfillScope(
+  document: CandidateTargetDocument,
+  assetCode: string,
+  expected: CandidateBackfillTarget
+): StableBackfillScope | undefined {
+  if (Number.isInteger(expected.targetLayerId)) {
+    const target = stableExpectedTarget(document, assetCode, expected);
+    return target ? { mode: "existing", target } : undefined;
+  }
+  if (expected.targetIssue !== "missing") return undefined;
+  const matchingArtboards = topLevelLayers(document).filter((layer) => layer.name === assetCode);
+  if (matchingArtboards.length !== 1) return undefined;
+  const artboard = matchingArtboards[0]!;
+  if (
+    artboard.id !== expected.artboardId
+    || !hasDirectLayerId(artboard, expected.referenceLayerId)
+    || findEditableCanvasTargets(document, assetCode).length !== 0
+  ) return undefined;
+  return { mode: "missing", artboard };
+}
+
+function hasDirectLayerId(artboard: CandidateTargetLayer, layerId: number): boolean {
+  const layers = artboard.layers;
+  if (!layers) return false;
+  for (let index = 0; index < layers.length; index += 1) {
+    const layer = layers[index];
+    if (layer?.id === layerId && !isEditableCanvasLayerName(layer.name)) return true;
+  }
+  return false;
+}
+
+function topLevelLayers(document: CandidateTargetDocument): CandidateTargetLayer[] {
+  const layers = new Map<number, CandidateTargetLayer>();
+  for (const collection of [document.layers, document.artboards]) {
+    if (!collection) continue;
+    for (let index = 0; index < collection.length; index += 1) {
+      const layer = collection[index];
+      if (layer) layers.set(layer.id, layer);
+    }
+  }
+  return Array.from(layers.values());
+}
+
 function formatAudit(stage: string, document: CandidateTargetDocument, target: EditableCanvasTarget): string {
   return JSON.stringify({
     stage,
@@ -363,6 +595,19 @@ function formatAudit(stage: string, document: CandidateTargetDocument, target: E
     artboard: { id: target.artboard.id, name: target.artboard.name },
     layer: { id: target.layer.id, name: target.layer.name },
     layerPath: target.path.map((layer) => ({ id: layer.id, name: layer.name }))
+  });
+}
+
+function formatMissingTargetAudit(
+  stage: string,
+  document: CandidateTargetDocument,
+  artboard: CandidateTargetLayer
+): string {
+  return JSON.stringify({
+    stage,
+    documentId: document.id ?? null,
+    artboard: { id: artboard.id, name: artboard.name },
+    layer: null
   });
 }
 

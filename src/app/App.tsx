@@ -47,6 +47,14 @@ import {
 } from "../photoshop/referenceViewController";
 import { PLUGIN_VERSION } from "../pluginMetadata";
 import type { PsdAiReference } from "../photoshop/psdAiReference";
+import {
+  applyPsdAiScopeScan,
+  beginPsdAiScopeBackfill,
+  createPsdAiScopeGate,
+  finishPsdAiScopeBackfill,
+  psdAiScopeNodeKey,
+  shouldConfirmPsdAiScopeShrink
+} from "../domain/psdAiScopeStability";
 import { AiGenerationPanel } from "./AiGenerationPanel";
 
 type UiPhase =
@@ -143,6 +151,7 @@ export function App(): React.ReactElement {
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
   );
+  const referenceScopeGate = useRef(createPsdAiScopeGate<ReferenceDocumentState>(null));
   const initialPsdLayoutApplied = useRef(false);
   const thumbnailCache = useMemo(() => new ThumbnailCache(MAX_LIVE_THUMBNAILS), []);
   const thumbnailRequests = useRef(new Set<string>());
@@ -169,16 +178,23 @@ export function App(): React.ReactElement {
   const aiPsdReferences = useMemo<PsdAiReference[]>(
     () => referenceDocument?.aiNodes.map((node) => ({
       ...node,
-      documentId: referenceDocument.documentId
+      documentId: referenceDocument.documentId,
+      documentName: referenceDocument.documentName,
+      documentIdentity: referenceDocument.documentIdentity
     })) ?? [],
-    [referenceDocument?.aiNodes, referenceDocument?.documentId]
+    [
+      referenceDocument?.aiNodes,
+      referenceDocument?.documentId,
+      referenceDocument?.documentIdentity,
+      referenceDocument?.documentName
+    ]
   );
   const aiPsdItems = useMemo(() => aiPsdReferences.map((reference, index) => {
     const excelItem = items.find((item) => item.assetCode === reference.assetCode);
     return {
       ...(excelItem ?? psdOnlyAssetCandidate(reference.assetCode, index, reference.itemName)),
       name: excelItem?.name?.trim() || reference.itemName?.trim() || reference.assetCode,
-      key: `psd:${reference.documentId}:${reference.artboardId}`,
+      key: psdAiScopeNodeKey(reference.documentId, reference),
       sheetName: reference.groupLabel,
       codeCell: `PSD${index + 1}`,
       codeRow: index + 1,
@@ -227,7 +243,56 @@ export function App(): React.ReactElement {
   );
   const formattedLogs = useMemo(() => logs.map(formatLog).join("\n"), [logs]);
 
-  useEffect(() => watchActiveReferenceDocument(setReferenceDocument), []);
+  const commitReferenceDocument = useCallback((next: ReferenceDocumentState | null): void => {
+    referenceScopeGate.current = {
+      ...referenceScopeGate.current,
+      visible: next
+    };
+    setReferenceDocument(next);
+  }, []);
+
+  const handleReferenceDocumentScan = useCallback((next: ReferenceDocumentState | null): void => {
+    const previous = referenceScopeGate.current;
+    const updated = applyPsdAiScopeScan(previous, next);
+    referenceScopeGate.current = updated;
+    if (updated.visible !== previous.visible) setReferenceDocument(updated.visible);
+  }, []);
+
+  const handlePsdBackfillStart = useCallback((documentId: number): void => {
+    referenceScopeGate.current = beginPsdAiScopeBackfill(referenceScopeGate.current, documentId);
+  }, []);
+
+  const handlePsdBackfillSettled = useCallback(async (
+    replacementMayHaveMutated: boolean
+  ): Promise<void> => {
+    const locked = referenceScopeGate.current;
+    if (!locked.lock) return;
+    try {
+      const retryDelays = replacementMayHaveMutated
+        ? [0, 80, 120, 200, 400]
+        : [0, 80];
+      let inspected: ReferenceDocumentState | null = null;
+      for (const delay of retryDelays) {
+        if (delay) await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+        inspected = await inspectActiveReferenceDocument();
+        if (!shouldConfirmPsdAiScopeShrink(locked, inspected)) break;
+      }
+      const finished = finishPsdAiScopeBackfill(referenceScopeGate.current, inspected);
+      referenceScopeGate.current = finished;
+      setReferenceDocument(finished.visible);
+    } catch (error) {
+      referenceScopeGate.current = {
+        ...referenceScopeGate.current,
+        lock: null
+      };
+      throw error;
+    }
+  }, []);
+
+  useEffect(
+    () => watchActiveReferenceDocument(handleReferenceDocumentScan),
+    [handleReferenceDocumentScan]
+  );
 
   useEffect(() => {
     const editableCanvasSize = Number(editableCanvasSizeInput);
@@ -640,7 +705,7 @@ export function App(): React.ReactElement {
           setMessage(`${stage}（${completed}/${total}）`);
         }
       });
-      setReferenceDocument(await inspectActiveReferenceDocument());
+      commitReferenceDocument(await inspectActiveReferenceDocument());
       setPhase("done");
       setShowCurrentPsd(true);
       setShowGenerator(false);
@@ -657,7 +722,7 @@ export function App(): React.ReactElement {
     setReferenceBusy(true);
     try {
       const next = await toggleActiveReferenceView();
-      setReferenceDocument(next);
+      commitReferenceDocument(next);
       const detail = next?.referenceVisible
         ? "当前仅显示参考图。"
         : "已隐藏参考图，并保留其他图层的显示状态。";
@@ -680,7 +745,7 @@ export function App(): React.ReactElement {
     setGroupArtboardBusy(true);
     try {
       const next = await toggleActiveGroupArtboards();
-      setReferenceDocument(next);
+      commitReferenceDocument(next);
       const detail = next?.groupArtboardsVisible ? "已显示分组框。" : "已隐藏分组框。";
       setMessage(detail);
       appendLog(makeLog("info", "group-artboards.toggled", next?.groupArtboardsVisible ? "visible" : "hidden"));
@@ -701,7 +766,7 @@ export function App(): React.ReactElement {
     setArtboardBackgroundBusy("color");
     try {
       const result = await changeActiveArtboardBackgroundColor();
-      setReferenceDocument(result.state);
+      commitReferenceDocument(result.state);
       if (result.changed) {
         setMessage("已使用 Photoshop 拾色器中的颜色更新全部底板。");
         appendLog(makeLog("info", "artboard-background.color.changed", `${result.state.artboardBackgroundCount} layers`));
@@ -726,7 +791,7 @@ export function App(): React.ReactElement {
     setArtboardBackgroundBusy("visibility");
     try {
       const next = await toggleActiveArtboardBackgrounds();
-      setReferenceDocument(next);
+      commitReferenceDocument(next);
       const detail = next?.artboardBackgroundsVisible ? "已显示全部底板。" : "已隐藏全部底板。";
       setMessage(detail);
       appendLog(makeLog("info", "artboard-background.visibility.toggled", next?.artboardBackgroundsVisible ? "visible" : "hidden"));
@@ -836,7 +901,11 @@ export function App(): React.ReactElement {
         </section>
       ) : null}
 
-      {referenceDocument ? (
+      <div
+        className="ai-panel-host"
+        style={{ display: referenceDocument ? "block" : "none" }}
+        aria-hidden={!referenceDocument}
+      >
         <AiGenerationPanel
           workbook={workbook}
           activeGroups={aiPsdGroups}
@@ -851,8 +920,10 @@ export function App(): React.ReactElement {
             appendLog(makeLog(level, "holopix.ai", detail));
           }}
           onBusyChange={setAiBusy}
+          onPsdBackfillStart={handlePsdBackfillStart}
+          onPsdBackfillSettled={handlePsdBackfillSettled}
         />
-      ) : null}
+      </div>
 
       <section className={`panel-section generator-panel ${showGenerator ? "is-open" : ""}`}>
         <div

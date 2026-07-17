@@ -1,7 +1,21 @@
 import { storage } from "uxp";
 import type { AiGeneratedImage } from "../domain/aiCandidates";
 import { COMFY_BASE_URL } from "./holopixEndpoint";
-import { collectRecentHolopixImages } from "./holopixRecovery";
+import {
+  HolopixGenerationOutcomeUnknownError,
+  isAmbiguousSubmissionTransportError
+} from "./holopixErrors";
+import {
+  assessHolopixPaidBatch,
+  findHolopixExecutionError,
+  interpretHolopixHistoryEntry,
+  type HolopixHistoryEntry,
+  type HolopixHistoryImage
+} from "./holopixGenerationResult";
+import {
+  collectHolopixImagesForPromptId,
+  collectRecentHolopixImages
+} from "./holopixRecovery";
 import {
   buildHolopixSafeJpegUrl,
   decodeHolopixSafeJpeg,
@@ -16,6 +30,12 @@ import {
   type ComfyWorkflow,
   type HolopixPromptSource
 } from "./holopixWorkflow";
+import {
+  notifyHolopixSubmissionLifecycle,
+  type HolopixSubmissionLifecycleEvent
+} from "./holopixSubmissionLifecycle";
+
+export type { HolopixSubmissionLifecycleEvent } from "./holopixSubmissionLifecycle";
 
 let workflowPromise: Promise<ComfyWorkflow> | null = null;
 
@@ -31,35 +51,22 @@ interface QueueResponse {
   error?: string;
 }
 
-interface HistoryImage {
-  filename?: string;
-  subfolder?: string;
-  type?: string;
-}
-
-interface HistoryOutput {
-  images?: HistoryImage[];
-  text?: unknown;
-  string?: unknown;
-  value?: unknown;
-  result?: unknown;
-  output?: unknown;
-}
-
-interface HistoryEntry {
-  outputs?: Record<string, HistoryOutput>;
-  status?: {
-    completed?: boolean;
-    status_str?: string;
-    messages?: unknown[];
-  };
-}
-
 interface HolopixGenerationCommonOptions {
   candidateCount: number;
   assetCode: string;
   signal?: AbortSignal;
   onBatchStarted?: (completedCandidates: number, totalCandidates: number) => void;
+  onBatchCompleted?: (
+    images: AiGeneratedImage[],
+    completedBeforeBatch: number,
+    totalCandidates: number,
+    submission: HolopixCompletedBatchSubmission
+  ) => void;
+  onBeforeBatchSubmit?: (
+    completedCandidates: number,
+    totalCandidates: number
+  ) => void | Promise<void>;
+  onSubmissionLifecycle?: (event: HolopixSubmissionLifecycleEvent) => void;
   onStage?: (message: string) => void;
 }
 
@@ -72,6 +79,21 @@ interface HolopixReferenceGenerationOptions {
 
 interface HolopixPromptGenerationOptions {
   promptText: string;
+}
+
+export interface HolopixPendingSubmission {
+  promptId: string;
+  assetCode: string;
+}
+
+export interface HolopixRecoveryResult {
+  recentByAssetCode: Record<string, AiGeneratedImage[]>;
+  byPromptId: Record<string, AiGeneratedImage[]>;
+}
+
+export interface HolopixCompletedBatchSubmission {
+  key: string;
+  promptId: string;
 }
 
 export type HolopixGenerationOptions = HolopixGenerationCommonOptions & (
@@ -87,22 +109,62 @@ export async function recoverRecentHolopixImages(
   assetCodes: string[],
   maxCandidates: number,
   signal?: AbortSignal,
-  onStage?: (message: string) => void
-): Promise<Record<string, AiGeneratedImage[]>> {
-  const history = await fetchJson(
-    `${COMFY_BASE_URL}/history?max_items=100`,
-    { signal },
-    20_000
-  ) as Record<string, HistoryEntry>;
-  const recovered = collectRecentHolopixImages(history, assetCodes, COMFY_BASE_URL);
-  const results: Record<string, AiGeneratedImage[]> = {};
-  for (const assetCode of assetCodes) {
-    const images = (recovered[assetCode] ?? []).slice(0, maxCandidates);
-    results[assetCode] = await loadSafePreviews(images, signal, (message) => {
-      onStage?.(`${assetCode}：${message}`);
-    });
+  onStage?: (message: string) => void,
+  pendingSubmissions: HolopixPendingSubmission[] = []
+): Promise<HolopixRecoveryResult> {
+  const byPromptId: Record<string, AiGeneratedImage[]> = {};
+  const uniquePending = new Map(
+    pendingSubmissions.map((submission) => [submission.promptId, submission])
+  );
+  for (const submission of uniquePending.values()) {
+    try {
+      const promptHistory = await fetchJson(
+        `${COMFY_BASE_URL}/history/${encodeURIComponent(submission.promptId)}`,
+        { signal },
+        20_000
+      ) as Record<string, HolopixHistoryEntry>;
+      const images = collectHolopixImagesForPromptId(
+        promptHistory,
+        submission.promptId,
+        submission.assetCode,
+        COMFY_BASE_URL
+      );
+      byPromptId[submission.promptId] = await loadSafePreviews(images, signal, (message) => {
+        onStage?.(`${submission.assetCode}（提交 ${submission.promptId}）：${message}`);
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      byPromptId[submission.promptId] = [];
+      onStage?.(
+        `${submission.assetCode} 的待确认提交 ${submission.promptId} 暂时无法精确恢复：`
+        + `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
-  return results;
+  const recentByAssetCode = Object.fromEntries(
+    assetCodes.map((assetCode) => [assetCode, [] as AiGeneratedImage[]])
+  );
+  try {
+    const history = await fetchJson(
+      `${COMFY_BASE_URL}/history?max_items=1000`,
+      { signal },
+      20_000
+    ) as Record<string, HolopixHistoryEntry>;
+    const recovered = collectRecentHolopixImages(history, assetCodes, COMFY_BASE_URL);
+    for (const assetCode of assetCodes) {
+      const images = (recovered[assetCode] ?? []).slice(0, maxCandidates);
+      recentByAssetCode[assetCode] = await loadSafePreviews(images, signal, (message) => {
+        onStage?.(`${assetCode}：${message}`);
+      });
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    onStage?.(
+      `宽泛历史恢复暂时不可用；已保留按 prompt_id 精确恢复的结果：`
+      + `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { recentByAssetCode, byPromptId };
 }
 
 export async function generateHolopixImages(
@@ -130,47 +192,135 @@ export async function generateHolopixImages(
     throwIfAborted(options.signal);
     const batchSize = batches[batchIndex]!;
     options.onBatchStarted?.(results.length, options.candidateCount);
+    const requestNonce = makeRequestNonce(batchIndex);
+    const submissionKey = `${safePathSegment(options.assetCode)}:${requestNonce}:${batchIndex}`;
     const prepared = prepareHolopixWorkflow(baseWorkflow, {
       ...(imageName ? { imageName } : {}),
       ...(itemName ? { itemName } : {}),
       batchSize,
-      requestNonce: makeRequestNonce(batchIndex),
+      requestNonce,
       confirmCost: true,
       filenamePrefix: `Holopix/ChessGo/${safePathSegment(options.assetCode)}`,
       ...(sharedPromptText ? { promptText: sharedPromptText } : {})
     });
-    const promptId = await queuePrompt(prepared.workflow, options.signal);
+    await options.onBeforeBatchSubmit?.(results.length, options.candidateCount);
+    const submissionEvent = {
+      submissionKey,
+      completedBeforeBatch: results.length,
+      batchSize,
+      createdAt: Date.now(),
+      ...(sharedPromptText ? { promptText: sharedPromptText } : {})
+    };
+    notifySubmissionLifecycle(options, { state: "started", ...submissionEvent });
+    let promptId: string;
+    try {
+      promptId = await queuePrompt(prepared.workflow, options.signal);
+    } catch (error) {
+      if (!isAmbiguousSubmissionTransportError(error)) {
+        notifySubmissionLifecycle(options, {
+          state: "resolved",
+          ...submissionEvent,
+          outcome: "failed"
+        });
+        throw error;
+      }
+      throw new HolopixGenerationOutcomeUnknownError(
+        "Holopix 提交请求的响应未确认；任务可能已经进入 ComfyUI，已禁止直接重试。",
+        { submissionKey }
+      );
+    }
+    notifySubmissionLifecycle(options, {
+      state: "confirmed",
+      ...submissionEvent,
+      promptId
+    });
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已提交。`);
-    const generated = await waitForImages(
-      promptId,
-      prepared.saveNodeId,
-      prepared.promptCaptureNodeId,
-      prepared.timeoutSeconds + 45,
-      options.signal
-    );
+    let generated: Awaited<ReturnType<typeof waitForImages>>;
+    try {
+      generated = await waitForImages(
+        promptId,
+        prepared.saveNodeId,
+        prepared.promptCaptureNodeId,
+        batchSize,
+        prepared.timeoutSeconds + 45,
+        options.signal
+      );
+    } catch (error) {
+      if (error instanceof HolopixGenerationOutcomeUnknownError) {
+        throw new HolopixGenerationOutcomeUnknownError(error.message, {
+          promptId: error.promptId ?? promptId,
+          submissionKey: error.submissionKey ?? submissionKey
+        });
+      }
+      if (!isAbortError(error)) {
+        notifySubmissionLifecycle(options, {
+          state: "resolved",
+          ...submissionEvent,
+          promptId,
+          outcome: "failed"
+        });
+        throw error;
+      }
+      throw new HolopixGenerationOutcomeUnknownError(
+        "Holopix 已提交，但等待结果时被中止；任务可能仍在 ComfyUI 后台运行，已禁止直接重试。",
+        { promptId, submissionKey }
+      );
+    }
     const images = generated.images;
-    if (images.length < batchSize) {
-      throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张。`);
-    }
-    if (sharedPromptText && generated.promptText !== sharedPromptText) {
-      throw new Error("Holopix 后续批次没有沿用首批 QwenVL 提示词。");
-    }
     const hadSharedPrompt = Boolean(sharedPromptText);
-    const batchPromptText = sharedPromptText ?? generated.promptText;
-    const selectedImages = images.slice(0, batchSize).map((image) => ({
-      ...image,
-      promptText: batchPromptText
-    }));
-    if (!hadSharedPrompt) {
+    const assessment = assessHolopixPaidBatch(
+      images,
+      batchSize,
+      sharedPromptText,
+      generated.promptText
+    );
+    const batchPromptText = assessment.resolvedPromptText;
+    const selectedImages = assessment.imagesToPreserve;
+    if (!hadSharedPrompt && batchPromptText) {
       sharedPromptText = batchPromptText;
       options.onStage?.(`QwenVL 实际提示词：${summarizePrompt(sharedPromptText)}`);
     } else if (suppliedPromptText) {
-      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 直接使用用户提示词：${summarizePrompt(batchPromptText)}`);
+      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 直接使用用户提示词：${summarizePrompt(suppliedPromptText)}`);
     } else {
-      options.onStage?.(`Holopix 批次 ${batchIndex + 1} 复用同一提示词：${summarizePrompt(batchPromptText)}`);
+      options.onStage?.(
+        batchPromptText
+          ? `Holopix 批次 ${batchIndex + 1} 复用同一提示词：${summarizePrompt(batchPromptText)}`
+          : `Holopix 批次 ${batchIndex + 1} 未返回提示词记录；仍保留已付费原图。`
+      );
     }
+    if (generated.terminalError) options.onStage?.(`${generated.terminalError} 已保留当前批次已有原图。`);
     options.onStage?.(`Holopix 批次 ${batchIndex + 1}/${batches.length} 已返回 ${selectedImages.length} 张原图。`);
-    results.push(...await loadSafePreviews(selectedImages, options.signal, options.onStage));
+    const completedBeforeBatch = results.length;
+    const completedSubmission = { key: submissionKey, promptId };
+    options.onBatchCompleted?.(
+      selectedImages,
+      completedBeforeBatch,
+      options.candidateCount,
+      completedSubmission
+    );
+    notifySubmissionLifecycle(options, {
+      state: "resolved",
+      ...submissionEvent,
+      promptId,
+      ...(batchPromptText ? { promptText: batchPromptText } : {}),
+      outcome: "output",
+      images: selectedImages
+    });
+    const completedImages = await loadSafePreviews(selectedImages, options.signal, options.onStage);
+    results.push(...completedImages);
+    options.onBatchCompleted?.(
+      completedImages,
+      completedBeforeBatch,
+      options.candidateCount,
+      completedSubmission
+    );
+    if (images.length < batchSize) {
+      throw new Error(`Holopix 本批请求 ${batchSize} 张，但 ComfyUI 只返回 ${images.length} 张；已有结果已保留。`);
+    }
+    if (assessment.promptMismatchError) throw new Error(assessment.promptMismatchError);
+    if (batchIndex < batches.length - 1 && (!sharedPromptText || generated.terminalError)) {
+      throw new Error("Holopix 当前批次已保留，但无法安全复用提示词；后续批次未提交。");
+    }
   }
 
   return results;
@@ -280,19 +430,24 @@ async function waitForImages(
   promptId: string,
   saveNodeId: string,
   promptCaptureNodeId: string,
+  expectedImageCount: number,
   timeoutSeconds: number,
   signal?: AbortSignal
-): Promise<{ images: AiGeneratedImage[]; promptText: string }> {
+): Promise<{
+  images: AiGeneratedImage[];
+  promptText?: string;
+  terminalError?: string;
+}> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
-    let history: Record<string, HistoryEntry>;
+    let history: Record<string, HolopixHistoryEntry>;
     try {
       history = await fetchJson(
         `${COMFY_BASE_URL}/history/${encodeURIComponent(promptId)}`,
         { signal },
         12_000
-      ) as Record<string, HistoryEntry>;
+      ) as Record<string, HolopixHistoryEntry>;
     } catch (error) {
       if (isAbortError(error)) throw error;
       await delay(1200, signal);
@@ -300,39 +455,27 @@ async function waitForImages(
     }
     const entry = history[promptId];
     if (entry) {
-      const executionError = findExecutionError(entry.status?.messages);
-      if (executionError) throw new Error(executionError);
-      const images = entry.outputs?.[saveNodeId]?.images ?? [];
-      const promptText = extractCapturedPrompt(entry.outputs?.[promptCaptureNodeId]);
-      if (images.length && promptText) {
-        return { images: images.map(toGeneratedImage), promptText };
-      }
-      if (entry.status?.completed || entry.status?.status_str === "error") {
-        if (!images.length) throw new Error("Holopix 工作流已结束，但 SaveImage 节点没有输出图片。");
-        throw new Error("Holopix 工作流已生成图片，但“提示词结果”没有记录 QwenVL 的实际提示词。");
+      const decision = interpretHolopixHistoryEntry(
+        entry,
+        saveNodeId,
+        promptCaptureNodeId,
+        expectedImageCount
+      );
+      if (decision.kind === "failed") throw new Error(decision.error);
+      if (decision.kind === "complete") {
+        return {
+          images: decision.images.map(toGeneratedImage),
+          ...(decision.promptText ? { promptText: decision.promptText } : {}),
+          ...(decision.terminalError ? { terminalError: decision.terminalError } : {})
+        };
       }
     }
     await delay(1000, signal);
   }
-  throw new Error(`等待 Holopix 生成超时（${timeoutSeconds} 秒）。`);
-}
-
-function extractCapturedPrompt(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const text = extractCapturedPrompt(item);
-      if (text) return text;
-    }
-    return undefined;
-  }
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  for (const key of ["text", "string", "value", "result", "output"]) {
-    const text = extractCapturedPrompt(record[key]);
-    if (text) return text;
-  }
-  return undefined;
+  throw new HolopixGenerationOutcomeUnknownError(
+    `等待 Holopix 生成超时（${timeoutSeconds} 秒）；任务结果尚未确认，已禁止直接重试。`,
+    { promptId }
+  );
 }
 
 function summarizePrompt(promptText: string): string {
@@ -349,13 +492,13 @@ async function waitForPreviewImage(
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
-    let history: Record<string, HistoryEntry>;
+    let history: Record<string, HolopixHistoryEntry>;
     try {
       history = await fetchJson(
         `${COMFY_BASE_URL}/history/${encodeURIComponent(promptId)}`,
         { signal },
         12_000
-      ) as Record<string, HistoryEntry>;
+      ) as Record<string, HolopixHistoryEntry>;
     } catch (error) {
       if (isAbortError(error)) throw error;
       await delay(400, signal);
@@ -363,7 +506,7 @@ async function waitForPreviewImage(
     }
     const entry = history[promptId];
     if (entry) {
-      const executionError = findExecutionError(entry.status?.messages);
+      const executionError = findHolopixExecutionError(entry.status?.messages);
       if (executionError) throw new Error(executionError);
       const image = entry.outputs?.[previewNodeId]?.images?.[0];
       if (image) return toGeneratedImage(image);
@@ -376,7 +519,7 @@ async function waitForPreviewImage(
   throw new Error(`等待 ComfyUI 安全缩略图超时（${timeoutSeconds} 秒）。`);
 }
 
-function toGeneratedImage(image: HistoryImage): AiGeneratedImage {
+function toGeneratedImage(image: HolopixHistoryImage): AiGeneratedImage {
   if (!image.filename) throw new Error("ComfyUI 返回了缺少 filename 的图片记录。");
   const subfolder = image.subfolder ?? "";
   const type = image.type ?? "output";
@@ -391,6 +534,7 @@ function toGeneratedImage(image: HistoryImage): AiGeneratedImage {
 
 async function fetchJson(url: string, init?: RequestInit, timeoutMs = 15_000): Promise<unknown> {
   let response: Response;
+  let text: string;
   const controller = new AbortController();
   const externalSignal = init?.signal;
   const abortFromExternal = (): void => controller.abort();
@@ -398,6 +542,7 @@ async function fetchJson(url: string, init?: RequestInit, timeoutMs = 15_000): P
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     response = await fetch(url, { ...init, signal: controller.signal });
+    text = await response.text();
   } catch (error) {
     if (externalSignal?.aborted) throw abortError();
     if (controller.signal.aborted) throw new Error(`连接局域网 ComfyUI 超时（${Math.round(timeoutMs / 1000)} 秒）。`);
@@ -406,7 +551,6 @@ async function fetchJson(url: string, init?: RequestInit, timeoutMs = 15_000): P
     window.clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", abortFromExternal);
   }
-  const text = await response.text();
   let data: unknown = {};
   if (text) {
     try {
@@ -452,20 +596,6 @@ async function fetchBinary(
   }
 }
 
-function findExecutionError(messages: unknown[] | undefined): string | undefined {
-  if (!Array.isArray(messages)) return undefined;
-  for (const message of messages) {
-    if (!Array.isArray(message) || message[0] !== "execution_error") continue;
-    const detail = message[1];
-    if (detail && typeof detail === "object") {
-      const record = detail as Record<string, unknown>;
-      return `Holopix 节点执行失败：${String(record.exception_message ?? record.error ?? JSON.stringify(record))}`;
-    }
-    return `Holopix 节点执行失败：${String(detail)}`;
-  }
-  return undefined;
-}
-
 function makeRequestNonce(batchIndex: number): number {
   const base = Date.now() % 2_000_000_000;
   return base + batchIndex;
@@ -473,6 +603,13 @@ function makeRequestNonce(batchIndex: number): number {
 
 function safePathSegment(value: string): string {
   return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 80) || "unnamed";
+}
+
+function notifySubmissionLifecycle(
+  options: HolopixGenerationOptions,
+  event: HolopixSubmissionLifecycleEvent
+): void {
+  notifyHolopixSubmissionLifecycle(options.onSubmissionLifecycle, event, options.onStage);
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

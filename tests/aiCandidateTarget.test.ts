@@ -3,6 +3,7 @@ import {
   findEditableCanvasTargets,
   listPsdAiTargetNodes,
   listUniqueEditableCanvasAssetCodes,
+  preferredEditableCanvasLayerName,
   scopePsdAiTargetNodes,
   type CandidateTargetDocument,
   type CandidateTargetLayer
@@ -18,7 +19,7 @@ function layer(
 }
 
 describe("AI candidate target discovery", () => {
-  it("lists only PSD artboards with one unambiguous editable smart object", () => {
+  it("keeps reference artboards visible even when the editable smart object is missing", () => {
     const artboards = [
       layer(1, "c_cleaning1", [
         layer(11, "1024x1024_空白智能对象"),
@@ -31,11 +32,20 @@ describe("AI candidate target discovery", () => {
     const document: CandidateTargetDocument = { layers: artboards, artboards };
 
     expect(listUniqueEditableCanvasAssetCodes(document)).toEqual(["c_cleaning1"]);
-    expect(listPsdAiTargetNodes(document)).toEqual([{
-      assetCode: "c_cleaning1",
-      artboardId: 1,
-      referenceLayerId: 12
-    }]);
+    expect(listPsdAiTargetNodes(document)).toEqual([
+      {
+        assetCode: "c_cleaning1",
+        artboardId: 1,
+        referenceLayerId: 12,
+        targetLayerId: 11
+      },
+      {
+        assetCode: "c_cleaning2",
+        artboardId: 2,
+        referenceLayerId: 21,
+        targetIssue: "missing"
+      }
+    ]);
     expect(findEditableCanvasTargets(document, "c_duplicate")).toHaveLength(2);
   });
 
@@ -66,8 +76,95 @@ describe("AI candidate target discovery", () => {
     expect(listPsdAiTargetNodes(document, "参考图", [1])).toEqual([{
       assetCode: "c_cleaning1",
       artboardId: 1,
-      referenceLayerId: 12
+      referenceLayerId: 12,
+      targetLayerId: 11
     }]);
+  });
+
+  it("keeps the row without a target while Photoshop reports it outside the artboard collection", () => {
+    const reference = layer(12, "参考图");
+    const artboard = layer(1, "c_cleaning1", [reference]);
+    const target = layer(11, "1024x1024_空白智能对象");
+    const temporaryContainer = layer(90, "Photoshop temporary topology", [target]);
+    const document: CandidateTargetDocument = {
+      layers: [artboard, temporaryContainer],
+      artboards: [artboard]
+    };
+    expect(listPsdAiTargetNodes(document, "参考图", [1])).toEqual([{
+      assetCode: "c_cleaning1",
+      artboardId: 1,
+      referenceLayerId: 12,
+      targetIssue: "missing"
+    }]);
+  });
+
+  it("keeps the old row but does not associate a moved target id with it", () => {
+    const first = layer(1, "c_cleaning1", [layer(12, "参考图")]);
+    const movedTarget = layer(11, "1024x1024_空白智能对象");
+    const second = layer(2, "c_cleaning2", [layer(22, "参考图"), movedTarget]);
+    const document: CandidateTargetDocument = {
+      layers: [first, second],
+      artboards: [first, second]
+    };
+
+    expect(listPsdAiTargetNodes(document, "参考图", [1, 2])).toEqual([
+      {
+        assetCode: "c_cleaning1",
+        artboardId: 1,
+        referenceLayerId: 12,
+        targetIssue: "missing"
+      },
+      {
+        assetCode: "c_cleaning2",
+        artboardId: 2,
+        referenceLayerId: 22,
+        targetLayerId: 11
+      }
+    ]);
+  });
+
+  it("reports a replacement target as a different stable identity", () => {
+    const artboard = layer(1, "c_cleaning1", [
+      layer(99, "1024x1024_空白智能对象"),
+      layer(12, "参考图")
+    ]);
+    const document: CandidateTargetDocument = { layers: [artboard], artboards: [artboard] };
+
+    expect(listPsdAiTargetNodes(document, "参考图", [1])).toEqual([{
+      assetCode: "c_cleaning1",
+      artboardId: 1,
+      referenceLayerId: 12,
+      targetLayerId: 99
+    }]);
+  });
+
+  it("marks multiple editable smart objects as ambiguous without removing the row", () => {
+    const artboard = layer(1, "c_cleaning1", [
+      layer(11, "512x512_空白智能对象"),
+      layer(13, "512x512_空白智能对象"),
+      layer(12, "参考图")
+    ]);
+    const document: CandidateTargetDocument = { layers: [artboard], artboards: [artboard] };
+
+    expect(listPsdAiTargetNodes(document)).toEqual([{
+      assetCode: "c_cleaning1",
+      artboardId: 1,
+      referenceLayerId: 12,
+      targetIssue: "ambiguous"
+    }]);
+  });
+
+  it("uses the most common existing editable-canvas size for a repaired row", () => {
+    const document: CandidateTargetDocument = {
+      layers: [
+        layer(1, "a", [layer(11, "512x512_空白智能对象")]),
+        layer(2, "b", [layer(21, "512x512_空白智能对象")]),
+        layer(3, "c", [layer(31, "1024x1024_空白智能对象")])
+      ]
+    };
+
+    expect(preferredEditableCanvasLayerName(document, 1024)).toBe("512x512_空白智能对象");
+    expect(preferredEditableCanvasLayerName({ layers: [] }, 1024)).toBe("1024x1024_空白智能对象");
   });
 
   it("restores chain labels and layout order from generated PSD metadata", () => {
@@ -89,9 +186,9 @@ describe("AI candidate target discovery", () => {
       }
     ];
     const nodes = [
-      { assetCode: "cleaning_2", artboardId: 2, referenceLayerId: 22 },
-      { assetCode: "cleaning_1", artboardId: 1, referenceLayerId: 12 },
-      { assetCode: "kitchen_1", artboardId: 3, referenceLayerId: 32 }
+      { assetCode: "cleaning_2", artboardId: 2, referenceLayerId: 22, targetLayerId: 21 },
+      { assetCode: "cleaning_1", artboardId: 1, referenceLayerId: 12, targetLayerId: 11 },
+      { assetCode: "kitchen_1", artboardId: 3, referenceLayerId: 32, targetLayerId: 31 }
     ];
 
     expect(scopePsdAiTargetNodes(77, nodes, groups)).toEqual([

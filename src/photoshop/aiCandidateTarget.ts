@@ -9,6 +9,7 @@ export interface CandidateTargetLayer {
   boundsNoEffects?: CandidateLayerBounds;
   scale?: (horizontal: number, vertical: number, anchor: unknown) => Promise<void>;
   translate?: (horizontal: number, vertical: number) => Promise<void>;
+  move?: (relativeObject: unknown, insertionLocation: unknown) => Promise<void>;
 }
 
 export interface CandidateLayerBounds {
@@ -27,6 +28,7 @@ export interface CandidateTargetDocument {
   id?: number;
   layers: CandidateTargetLayerCollection;
   artboards?: CandidateTargetLayerCollection;
+  activeLayers?: CandidateTargetLayerCollection;
 }
 
 export interface EditableCanvasTarget {
@@ -39,6 +41,8 @@ export interface PsdAiTargetNode {
   assetCode: string;
   artboardId: number;
   referenceLayerId: number;
+  targetLayerId?: number;
+  targetIssue?: "missing" | "ambiguous";
 }
 
 export interface PsdAiScopedNode extends PsdAiTargetNode {
@@ -52,6 +56,24 @@ export interface PsdAiScopedNode extends PsdAiTargetNode {
 
 export function isEditableCanvasLayerName(name: string): boolean {
   return EDITABLE_CANVAS_LAYER_PATTERN.test(name);
+}
+
+export function preferredEditableCanvasLayerName(
+  document: CandidateTargetDocument,
+  fallbackSize: number
+): string {
+  const counts = new Map<number, number>();
+  for (const { layer } of allLayerPaths(document.layers)) {
+    const match = /^(\d+)x\1_空白智能对象$/.exec(layer.name);
+    if (!match) continue;
+    const size = Number(match[1]);
+    if (!Number.isInteger(size) || size < 1) continue;
+    counts.set(size, (counts.get(size) ?? 0) + 1);
+  }
+  const preferred = Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0]
+    ?? fallbackSize;
+  return `${preferred}x${preferred}_空白智能对象`;
 }
 
 export function findEditableCanvasLayer(
@@ -105,7 +127,6 @@ export function listPsdAiTargetNodes(
     const editableTargets = allLayerPaths(artboard.layers).filter(({ layer }) =>
       isEditableCanvasLayerName(layer.name)
     );
-    if (editableTargets.length !== 1) return [];
     const children = collectionValues(artboard.layers);
     const exactReferences = children.filter((layer) => layer.name === referenceLayerName);
     const editableLayers = children.filter((layer) => isEditableCanvasLayerName(layer.name));
@@ -118,7 +139,10 @@ export function listPsdAiTargetNodes(
     return reference ? [{
       assetCode: artboard.name.trim(),
       artboardId: artboard.id,
-      referenceLayerId: reference.id
+      referenceLayerId: reference.id,
+      ...(editableTargets.length === 1
+        ? { targetLayerId: editableTargets[0]!.layer.id }
+        : { targetIssue: editableTargets.length ? "ambiguous" as const : "missing" as const })
     }] : [];
   });
   const assetCodeCounts = new Map<string, number>();
@@ -183,6 +207,12 @@ export function findEditableCanvasTargetByIds(
 
   const documentMatch = allLayerPaths(document.layers).find(({ layer }) => layer.id === layerId);
   if (!documentMatch) return undefined;
+  const otherArtboardIds = new Set(
+    collectionValues(document.artboards)
+      .filter((candidate) => candidate.id !== artboardId)
+      .map((candidate) => candidate.id)
+  );
+  if (documentMatch.path.some((candidate) => otherArtboardIds.has(candidate.id))) return undefined;
   return { artboard, layer: documentMatch.layer, path: documentMatch.path };
 }
 

@@ -83,6 +83,21 @@ export function collectRecentHolopixImages(
   return recovered;
 }
 
+export function collectHolopixImagesForPromptId(
+  history: Record<string, RecoveryEntry>,
+  promptId: string,
+  assetCode: string,
+  baseUrl: string
+): AiGeneratedImage[] {
+  const entry = history[promptId];
+  if (!entry) return [];
+  return collectRecentHolopixImages(
+    { [promptId]: entry },
+    [assetCode],
+    baseUrl
+  )[assetCode] ?? [];
+}
+
 function extractRecoveredPromptText(entry: RecoveryEntry): string | undefined {
   for (const output of Object.values(entry.outputs ?? {})) {
     const text = normalizeOutputText(output);

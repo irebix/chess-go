@@ -4,6 +4,8 @@ import type { PsdAiNode } from "./referenceViewController";
 
 export interface PsdAiReference extends PsdAiNode {
   documentId: number;
+  documentName: string;
+  documentIdentity: string;
 }
 
 let referenceReadQueue: Promise<void> = Promise.resolve();
