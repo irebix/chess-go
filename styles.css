@@ -890,13 +890,19 @@ button:disabled {
   width: 100%;
 }
 
-.ai-recover-existing {
+.ai-recover-existing,
+.ai-abandon-unknown {
   width: 100%;
   min-height: 28px;
   border: 1px solid var(--uxp-host-border-color, #666);
   color: inherit;
   background: rgba(0, 0, 0, 0.16);
   font-size: 10px;
+}
+
+.ai-abandon-unknown {
+  border-color: #8a6b42;
+  background: rgba(132, 82, 28, 0.22);
 }
 
 .ai-progress-card progress {
@@ -1076,6 +1082,17 @@ button:disabled {
   gap: 7px;
   margin-left: 10px;
   padding-bottom: 1px;
+}
+
+.ai-candidate-unavailable {
+  display: flex;
+  min-width: 136px;
+  min-height: 64px;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: 10px;
+  color: var(--uxp-host-text-color-secondary, #aaa);
+  font-size: 11px;
 }
 
 .ai-candidate-slot {
