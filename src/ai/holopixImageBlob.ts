@@ -19,6 +19,15 @@ export interface HolopixImageBlobRuntime {
 
 export interface HolopixImageBlobResource {
   url: string;
+  /**
+   * Keep both the UXP ImageBlob wrapper and its byte storage alive for as long
+   * as the Object URL is mounted. Photoshop may otherwise release the native
+   * image backing while the URL string is still in use.
+   */
+  retainedSource?: {
+    imageBlob: unknown;
+    pixels: Uint8Array;
+  };
   revoke(): void;
 }
 
@@ -65,6 +74,7 @@ export function createUncompressedRgbaImageBlobResource(
   let active = true;
   return {
     url,
+    retainedSource: { imageBlob, pixels },
     revoke: () => {
       if (!active) return;
       active = false;

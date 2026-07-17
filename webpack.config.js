@@ -46,6 +46,7 @@ module.exports = (_env, argv) => ({
       patterns: [
         { from: "manifest.json", to: "manifest.json" },
         { from: "Holopix.json", to: "Holopix.json" },
+        { from: "GptImage2.json", to: "GptImage2.json" },
         { from: "src/index.html", to: "index.html" },
         { from: "src/styles.css", to: "styles.css" }
       ]

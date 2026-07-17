@@ -69,12 +69,12 @@ export async function backfillAiCandidate(
     onAudit?.(formatMissingTargetAudit("target.initial-missing", document, initialScope.artboard));
   }
   const response = await fetch(imageUrl);
-  if (!response.ok) throw new Error(`下载 Holopix 候选图失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`下载 AI 候选图失败：HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   const extension = extensionFromContentType(response.headers.get("content-type"));
   const folder = await storage.localFileSystem.getTemporaryFolder();
   const temporary = await folder.createFile(
-    `chess-go-holopix-${safeFileName(assetCode)}-${Date.now()}.${extension}`,
+    `chess-go-ai-${safeFileName(assetCode)}-${Date.now()}.${extension}`,
     { overwrite: true }
   );
   const copy = new Uint8Array(bytes.byteLength);
@@ -98,7 +98,7 @@ export async function backfillAiCandidate(
           context.hostControl,
           {
             documentID: expected.documentId,
-            name: `回填 Holopix 候选：${assetCode}`
+            name: `回填 AI 候选：${assetCode}`
           },
           async () => {
             if (currentScope.mode === "existing") {
@@ -127,7 +127,7 @@ export async function backfillAiCandidate(
           }
         );
       },
-      { commandName: `回填 Holopix 候选：${assetCode}` }
+      { commandName: `回填 AI 候选：${assetCode}` }
     );
     return {
       applied: true,

@@ -101,6 +101,27 @@ describe("Holopix pending submission persistence", () => {
     expect(holopixPendingSubmissionMatchesScope(record({ referenceLayerId: 13 }), scope)).toBe(false);
   });
 
+  it("keeps Flux and GPT Image 2 safety records isolated for the same PSD node", () => {
+    const scope = {
+      documentIdentity: "file:d:/work/cleaning.psd",
+      assetCode: "c_cleaning1",
+      artboardId: 1,
+      referenceLayerId: 12
+    };
+    expect(holopixPendingSubmissionMatchesScope(record(), {
+      ...scope,
+      workflowVersion: "flux"
+    })).toBe(true);
+    expect(holopixPendingSubmissionMatchesScope(record({ workflowVersion: "gpt-image-2" }), {
+      ...scope,
+      workflowVersion: "flux"
+    })).toBe(false);
+    expect(holopixPendingSubmissionMatchesScope(record({ workflowVersion: "gpt-image-2" }), {
+      ...scope,
+      workflowVersion: "gpt-image-2"
+    })).toBe(true);
+  });
+
   it("persists a submission made while the editable target is missing", () => {
     const store = new MemoryStorage();
     expect(saveHolopixPendingSubmission(record({

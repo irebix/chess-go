@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-17
-当前发布版本：`0.5.3`
+当前发布版本：`0.5.4`
 
 ## 一句话摘要
 
@@ -11,17 +11,28 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.3`（以当前分支 HEAD 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.3`（以当前分支 HEAD 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.4`（以当前分支 HEAD 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.4`（以当前分支 HEAD 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.5.3`。
-- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及六个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 保存已发布的 `0.5.3` 六个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
-- `0.5.3` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+- `manifest.json` 与 `package.json` 均为 `0.5.4`。
+- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及七个运行文件，不直接编辑构建产物。
+- `ChessGo-Release` 保存已发布的 `0.5.4` 七个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
+- `0.5.4` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+
+## `0.5.4` 发布内容
+
+- AI 面板顶部新增唯一的版本选择列表：`Flux` / `GPT Image 2`；其余候选矩阵、候选数、历史恢复、提示词编辑、点击回填和底部横向滚动布局保持不变。默认仍为 `Flux`，两种模式的候选状态和本地待确认记录相互隔离，切换回来不会混入另一种工作流的图片。
+- `Flux` 完整保留现有逐物品 `参考图 → QwenVL → HolopixGenerate` 流程。
+- `GPT Image 2` 使用插件根部的 `GptImage2.json`。该模板的 `LoadImage` 自带固定风格参考图 `鸡尾酒24_2_看图王.jpg`；插件不会读取或上传 Excel/PSD 参考图，也不会改写这个图片路径。运行时只注入本轮物品描述、稳定 `assetCode` 输出名、请求 nonce、付费确认、动态画布比例、裁切数量和独立输出目录。
+- GPT Image 2 的一次候选轮次会把本轮所有待生成物品组成一张整链物件表，运行 `HolopixGenerateV3 → AutoObjectSheetCrop → BiRefNetRMBG → JoinImageWithAlpha → SaveNamedImageBatch`，再把透明 PNG 按 `assetCode` 拆回各行同一候选列。`每个物品生成 N 张` 等价于整链运行 N 轮；GPT 单格生成入口禁用，“重新生成选中链”会保留底部选中物品描述的编辑语义，并为当前链所有物品追加候选后重新运行完整整链。
+- 节点定位不依赖 JSON 数字 ID，而使用 `GPT Image 2｜…` 语义标题并校验节点类型与关键连线。插件已经知道物品顺序和 `assetCode`，因此 GPT 模板不再运行 QwenVL OCR 标签；生成图也明确禁止文字，裁切节点直接接收插件注入的稳定名称数组，避免 OCR 错字导致候选回填到错误行。
+- GPT Image 2 每次付费整链提交仍先写本地待确认记录；同一 `prompt_id` 会为每个 PSD 节点保存独立映射。历史恢复可从共享整链任务中只取回对应 `assetCode` 的输出，局部拆分失败不会丢弃已经返回的其他物品。
+- 候选回填已改为供应方无关的“AI 候选”命名；Flux 与 GPT Image 2 都复用同一个稳定 PSD 身份校验、可回滚 Photoshop 历史和 contain/居中几何链。
+- 构建与发布清单新增第七个运行文件 `GptImage2.json`；`publish-release.ps1`、源码安装器、Webpack 复制规则和 `ChessGo-Release` 已同步。
 
 ## 当前可用功能
 
@@ -48,7 +59,7 @@
 - Excel 参考图使用 `object-fit: contain` 放入 `1:1` 方格：长边贴住方格边缘，短边留白，始终完整显示而不裁切。
 - 候选方格保持 `1:1`，优先显示 `96×96` 原始 RGBA ImageBlob 高清缩略图；ImageBlob 失败时才使用候选槽位内独立 Canvas 的 `16×16` 采样色块兜底。候选行使用 `IntersectionObserver` 按可视区挂载并释放离屏 Object URL。矩阵内容本体不使用原生滚动，底部独立横向滚动条以 `scrollLeft → translateX` 同步水平位置，避免横向滚动容器吞掉顶层纵向滚轮。候选角标和可见“选用”按钮均已移除，只有已选项显示绿框。
 - “恢复已有候选（不生成）”从 ComfyUI 最近最多 1000 条历史找回当前棋子链的 `Holopix/ChessGo` 输出，不提交 Holopix 生成工作流，供闪退后复用已付费生成的结果；恢复时以最新输出的真实提示词为批次边界，只合并提示词完全一致的候选，避免把旧任务图片混入当前候选排。每个付费 `/prompt` 在请求发出前即以本地持久记录为硬前置：记录失败时请求不会发送；拿到 `prompt_id` 后继续更新。记录按规范化完整 PSD 路径身份、assetCode、画板与参考层稳定 ID 精确匹配，同名 PSD 或复制模板不会误接管；目标智能对象 ID 只保留为诊断字段，不参与恢复匹配，因此缺失目标在回填时补建后不会丢失已付费记录。未保存或 Photoshop 无法提供稳定路径的 PSD 会先要求保存，不允许付费提交。确定拒绝时删除记录；已返回原图或按 `prompt_id` 精确恢复成功时改存为 `outcome=output` 原图元数据，插件重载后直接恢复为 ready 而不是 idle，防止再次付费；安全预览可由恢复操作按同图 key 就地增强，不覆盖原图或 submission 身份。切换/关闭 PSD、面板隐藏或插件重载后，未确认记录会恢复为“结果待确认”并禁止直接重试；已取得 `prompt_id` 的提交会优先按该 ID 单独读取历史，并且只填入同一 `prompt_id` 的待确认格。按 assetCode 查找的宽泛历史只补普通空格，不会再用旧图清除本次待确认状态。HTTP `408/5xx`、响应正文中断或缺少 `prompt_id` 都按可能已受理处理；无 ID 的记录必须由用户在检查 ComfyUI 后点击“确认放弃待确认结果”才能重新生成。
-- 运行时通过 UXP `getPluginFolder()` 读取当前实际加载插件目录根部的 `Holopix.json`：加载 `ChessGo-Release` 时即使用 `D:\Scripts\UXP\ChessGo-Release\Holopix.json`，加载 `dist` 时使用 `dist\Holopix.json`。首次读取后在当前插件会话内缓存，修改文件必须重载插件才生效。当前模板使用 QwenVL；插件运行时会注入或覆盖参考图路径、物品名称/用户提示词、候选数量、请求 nonce、付费确认、保存前缀、`1:1` 与 `1024×1024` 方图约束，并始终删除 `HolopixGenerate.reference`，因此不是原样提交整个 JSON。
+- 运行时通过 UXP `getPluginFolder()` 读取当前实际加载插件目录根部的 `Holopix.json` 与 `GptImage2.json`。两个模板均在首次读取后按当前插件会话缓存，修改文件必须重载插件才生效。Flux 模板使用 QwenVL，运行时会注入参考图路径、物品名称/用户提示词、候选数量、请求 nonce、付费确认、保存前缀、`1:1` 与 `1024×1024` 方图约束，并始终删除 `HolopixGenerate.reference`。GPT Image 2 模板保留 JSON 内置风格图，只注入整链物品描述和输出映射等运行参数。
 - ComfyUI API、历史、上传、候选图和安全预览统一使用局域网端点 `http://192.168.1.32:8188`，不再生成 `127.0.0.1` 地址；本机 Comfy Desktop 的该安装实例已配置追加 `--listen 0.0.0.0`，监听所有 IPv4 接口，插件和浏览器仍使用具体可访问地址而不把 `0.0.0.0` 当作客户端地址。配置需重启 ComfyUI 后生效；本机同时存在以太网和 Tailscale，Windows 防火墙应把 8188 端口限制在可信网络范围。
 - AI 面板只提交当前 PSD 范围内实际勾选、并且明确选择了 Excel 参考图的节点；不会因为选择了整条分组而把组内未勾选节点或默认第一张参考图一并提交。生成任务与每个付费批次提交前都会复核当前 document、稳定文件身份、artboard 与参考层；缺少目标不阻断生成，多个目标的歧义节点仍不提交。切换 PSD 或改变节点范围后，尚未提交的旧任务会停止，不继续为已离开范围的节点付费。点击生成后直接提交 Holopix 工作流，不显示二次确认弹窗；自动化验证不提交真实生成任务。
 - 候选生成或历史恢复后，直接点击候选即可立即替换对应画板的空白智能对象；同一行继续点击其他候选可在画板中换图对比。
@@ -60,6 +71,7 @@
 - 面板与交互：`src/app/App.tsx`
 - AI 候选矩阵：`src/app/AiGenerationPanel.tsx`
 - Holopix 工作流适配与 ComfyUI 客户端：`src/ai/holopixWorkflow.ts`、`src/ai/holopixClient.ts`
+- GPT Image 2 整链适配、客户端与恢复：`src/ai/gptImage2Workflow.ts`、`src/ai/gptImage2Client.ts`、`src/ai/gptImage2Recovery.ts`
 - 候选回填：`src/photoshop/aiCandidateBackfill.ts`
 - 样式：`src/styles.css`
 - 批量 PSD 生成：`src/photoshop/batchGenerator.ts`
@@ -94,14 +106,16 @@
 - `0.5.1`：修复 `0.5.0` 将 PSD 参考缩略图强制改成 uncompressed ImageBlob 后，在 Photoshop 25.4 当前 UXP 上下文未暴露 `ImageBlob` 时全部显示失败的回归。PSD 参考预览恢复为 Imaging API 在 modal scope 内直接编码的 JPEG data URL；动态 Holopix 候选仍保持 JS JPEG 解码为 RGBA 后优先使用 uncompressed ImageBlob、Canvas 兜底，不退回 UXP `<img>` 原生解码压缩候选图。
 - `0.5.2`：确认 `c_cleaning1` 整行消失的直接条件是对应成员画板没有唯一 `数字x数字_空白智能对象`；节点发现现改为以唯一参考图保留矩阵行。目标缺失不再影响生成，首次候选回填会在同一个可回滚 modal 历史事务中创建嵌入式智能对象、移入原画板并完成缩放居中；目标重复仍以“空白智能对象不唯一”阻断。另修复切文档/同名画板可能写错目标、`batchPlay` 假成功及几何失败后未回滚；保留自定义/首批 QwenVL 提示词用于重试，保留 `2+1` 与单批部分结果；原图先于安全预览落槽，即使提示词捕获节点缺失、捕获文本不一致或后续执行报错也不丢弃已付费输出；切换 PSD 后停止旧队列未提交批次；付费提交以前置持久化、稳定 PSD 文件身份和未保存文档阻断消除重复收费窗口，未知任务按 `prompt_id` 精确恢复，成功输出继续作为 durable output ledger 水合为 ready，不会在重载后退回 idle。
 - `0.5.3`：候选矩阵不再用 CSS `translateX` 移动画面。Photoshop UXP 实机证明 `overflow: hidden` 视口的 `scrollLeft` 不产生可见滚动，而让视口自身使用原生 `overflow-x: auto` 又会先吞掉候选区域的纵向滚轮；最终方案保留独立底部横向滚动条和非滚动视口，使用负 `margin-left` 进行真实布局位移，使视觉位置与按钮命中一起移动，同时让候选区域的纵向滚轮继续由最外层面板处理。水平偏移按内容与视口宽度夹紧，动态追加候选后不会停在无效区域。
+- `0.5.4`：AI 生成模块新增顶部 `Flux / GPT Image 2` 版本选择，Flux 保持原逐物品流程；GPT Image 2 使用 `GptImage2.json` 内置风格参考，一次生成完整物件链并按稳定 `assetCode` 裁切回填。节点按语义标题定位，候选状态与待确认记录按工作流隔离；GPT 单格生成入口禁用，“重新生成选中链”会为整链所有物品追加候选并重新运行完整链。候选回填命名同时改为供应方无关的“AI 候选”。
 
 ## 验证状态
 
 - 最近一次 `pnpm verify`：通过。
 - TypeScript strict：通过。
-- Vitest：`38` 个测试文件、`184/184` 测试通过。
-- Webpack production build：通过；仅有 `main.js` 体积建议警告（约 470 KiB），不是构建失败。
-- `dist` 与发布仓库均为正式 `0.5.3`，六个运行文件哈希一致并已推送。
+- Vitest：`41` 个测试文件、`194/194` 测试通过。
+- Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 492 KiB），不是构建失败。
+- `dist` 与 `ChessGo-Release/release` 均为正式 `0.5.4`，七个运行文件哈希一致并已推送。
+- 已通过局域网 ComfyUI `object_info` 只读核对 `LoadImage`、`PrimitiveStringMultiline`、`HolopixGenerateV3`、`AutoObjectSheetCrop`、`BiRefNetRMBG`、`InvertMask`、`JoinImageWithAlpha`、`SaveNamedImageBatch` 均存在且输入/输出类型匹配；没有提交 `/prompt` 或付费生成任务。
 - Photoshop 2024 实机已重启并加载 `0.3.4`：导入 1.2 MB 带图 Excel、选择 9 个参考图后，用“恢复已有候选（不生成）”找回 5 张历史候选；候选仅显示“查看 / 选用”，持续观察 30 秒 Photoshop 未闪退，且没有新增应用崩溃事件。
 - Photoshop 2024 实机已通过 UXP Developer Tools 热重载 `0.3.5`：导入同一带图 Excel、选择清洁工具链后，从 ComfyUI 历史恢复并直接绘制 `18/18` 张候选；持续观察 30 秒面板保持可用、Photoshop 正常响应，新增应用崩溃事件为 `0`，日志确认未提交新生成任务。
 - Photoshop 2024 已热重载 `0.3.6`：面板顶部正确显示“清洁布”的解析后实际提示词，并明确提示“不读取或上传参考图”；本机 `object_info` 确认 `HolopixGenerate.reference` 为 optional、`ImageScale` 支持当前方图参数。UI 自动化定位浮动 UXP 面板时两次误点生成按钮，共提交了 2 个“清洁布”单图任务；历史记录确认两次请求均为纯文本、`aspect_ratio=1:1`、不含 `reference`，输出 `c_cleaning1_00008_.png`、`c_cleaning1_00009_.png` 均为实际 `1024×1024`，检查结束时 ComfyUI running/pending 队列均为 `0`。未继续点击候选回填，以免改动用户当前未保存 PSD。
@@ -110,6 +124,13 @@
 - Photoshop 25.4 已热重载当前测试包：用户确认 ImageBlob 候选可正常加载且无闪退；清洁工具链取消勾选 `c_cleaning8`、`c_cleaning9` 后，AI 面板范围从 9 条准确变为 7 条，历史恢复也只恢复这 7 条且未提交新生成任务。点击 `c_cleaning1` 候选后已实际回填当前 PSD，最终图层边界为 `[1732,148,1880,296]`，中心误差 `[0,0]`、四边溢出均为 `0`。
 
 ## 仍需人工验证
+
+- 在 Photoshop 中加载当前 `dist`，确认 AI 面板最上方只有一个 `Flux / GPT Image 2` 版本列表；切换版本时矩阵布局不变，Flux 已有候选仍保留，切回 Flux 后不会显示 GPT Image 2 候选。
+- 选择 GPT Image 2 后以同一链运行 1 张候选，确认日志明确显示使用 `GptImage2.json` 内置风格参考，没有读取 PSD 参考图、没有调用 ComfyUI `/upload/image`；整链只提交 1 个 `HolopixGenerateV3` 任务，输出按阅读顺序和 `assetCode` 正确拆回每一行。
+- 以 `每个物品生成 2 张` 再运行一次，确认实际是整链两轮，每行得到两张独立候选；任一透明 PNG 仍可直接点击并通过既有回填链插入对应画板。
+- 在 GPT Image 2 模式单击待生成或失败格，确认单格生成入口不可用；修改底部当前物品描述并点击“重新生成选中链”，确认旧候选保留，当前链每一行都在右侧追加新候选，并按完整整链重新生成。
+- 制造整链只裁出部分物品，确认已经拆出的行保持可点击，缺失行单独失败可重试；重载插件后使用“恢复已有候选（不生成）”，确认共享 `prompt_id` 的输出仍按 `assetCode` 回到正确行，不与 Flux 历史混合。
+- 修改 `GptImage2.json` 内置 `LoadImage` 风格图或整链节点参数后重载插件，确认新模板生效；若同事机器使用不同 ComfyUI 输入目录，须确保模板中同名风格图已经存在。
 
 - 当前最高优先级：删除 `c_cleaning1` 画板中的空白智能对象，确认矩阵仍保留 `c_cleaning1` 行且可正常生成/恢复候选；第一次点击候选后应自动出现一个命名为 `数字x数字_空白智能对象` 的嵌入式智能对象，并严格位于原画板内。继续点击同一行其他 ImageBlob 候选，确认沿用新目标替换，不重复新建，且每次都不漂移、不溢出、只回填一次。另在同画板放入两个合法命名目标，确认显示“空白智能对象不唯一”且不会生成或回填。制造创建、移动或定位失败时，确认 Photoshop 历史恢复到点击前状态，没有遗留半成品图层。
 - 在旧 PSD 候选仍生成时切换到另一份可识别 PSD，确认已经提交的当前批次可在历史恢复，旧 PSD 尚未提交的节点/后续批次不再提交；切回旧 PSD 后可安全继续失败格。

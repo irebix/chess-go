@@ -26,6 +26,7 @@ import {
   shouldForwardMatrixWheel
 } from "../domain/aiMatrixLayout";
 import { filterItemsByGroups } from "../domain/sheetGroups";
+import { buildGptImage2GenerationRounds } from "../domain/gptImage2Generation";
 import type { ImportedWorkbook } from "../services/WorkbookService";
 import {
   generateHolopixImages,
@@ -34,6 +35,15 @@ import {
   type HolopixCompletedBatchSubmission,
   type HolopixSubmissionLifecycleEvent
 } from "../ai/holopixClient";
+import {
+  generateGptImage2Chain,
+  recoverRecentGptImage2Images
+} from "../ai/gptImage2Client";
+import {
+  aiWorkflowVersionLabel,
+  type AiWorkflowVersion
+} from "../ai/aiWorkflowVersion";
+import { safeGptImage2OutputName } from "../ai/gptImage2Workflow";
 import { HolopixGenerationOutcomeUnknownError } from "../ai/holopixErrors";
 import {
   createHolopixImageBlobResource,
@@ -56,6 +66,7 @@ import { isStablePsdDocumentIdentity } from "../photoshop/psdDocumentIdentity";
 import { toErrorMessage } from "../utils/errors";
 import {
   holopixPendingSubmissionMatchesScope,
+  effectivePendingWorkflowVersion,
   loadHolopixPendingSubmissions,
   persistableHolopixImages,
   promoteHolopixPendingSubmissionToOutput,
@@ -87,7 +98,8 @@ interface AiGenerationPanelProps {
 type CandidatePreviewMode = "imageblob" | "canvas";
 const mountedCanvasRedraws = new Set<() => void>();
 
-interface QueuedGenerationJob {
+interface QueuedFluxGenerationJob {
+  workflowVersion: "flux";
   workbook: ImportedWorkbook | null;
   item: AssetCandidate;
   slotIndexes: number[];
@@ -101,6 +113,27 @@ interface QueuedGenerationJob {
     unknownCandidates: number;
   }) => void;
 }
+
+interface QueuedGptImage2Entry {
+  item: AssetCandidate;
+  slotIndex: number;
+  promptText?: string;
+  psdReference: GeneratablePsdReference;
+}
+
+interface QueuedGptImage2GenerationJob {
+  workflowVersion: "gpt-image-2";
+  entries: QueuedGptImage2Entry[];
+  successMessage?: string;
+  failurePrefix: string;
+  onSettled?: (result: {
+    completedCandidates: number;
+    totalCandidates: number;
+    unknownCandidates: number;
+  }) => void;
+}
+
+type QueuedGenerationJob = QueuedFluxGenerationJob | QueuedGptImage2GenerationJob;
 
 type GeneratablePsdReference = PsdAiReference & (
   | { targetLayerId: number; targetIssue?: undefined }
@@ -122,6 +155,7 @@ export function AiGenerationPanel({
   onPsdBackfillSettled
 }: AiGenerationPanelProps): React.ReactElement {
   const [open, setOpen] = useState(true);
+  const [workflowVersion, setWorkflowVersion] = useState<AiWorkflowVersion>("flux");
   const [candidateCount, setCandidateCount] = useState(2);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [states, setStates] = useState<Record<string, AiItemState>>({});
@@ -135,6 +169,9 @@ export function AiGenerationPanel({
   const [psdThumbnails, setPsdThumbnails] = useState<Record<string, ThumbnailRecord>>({});
   const abortRef = useRef<AbortController | null>(null);
   const statesRef = useRef<Record<string, AiItemState>>({});
+  const workflowStatesRef = useRef<Record<AiWorkflowVersion, Record<string, AiItemState>>>(
+    { flux: {}, "gpt-image-2": {} }
+  );
   const generationQueueRef = useRef<QueuedGenerationJob[]>([]);
   const queueProcessingRef = useRef(false);
   const currentPsdScopeKeysRef = useRef(new Set<string>());
@@ -146,16 +183,21 @@ export function AiGenerationPanel({
   const matrixViewportRef = useRef<HTMLDivElement | null>(null);
   const matrixContentRef = useRef<HTMLDivElement | null>(null);
   const matrixScrollbarRef = useRef<HTMLDivElement | null>(null);
+  const onStatusRef = useRef(onStatus);
   const previewModeReportedRef = useRef({ imageblob: false, canvas: false });
+  onStatusRef.current = onStatus;
   const reportPreviewMode = useCallback((mode: CandidatePreviewMode, detail?: string): void => {
     if (previewModeReportedRef.current[mode]) return;
     previewModeReportedRef.current[mode] = true;
     if (mode === "imageblob") {
-      onStatus("Holopix 候选预览：ImageBlob 原始 RGBA 高清模式已加载。");
+      onStatusRef.current("AI 候选预览：ImageBlob 原始 RGBA 高清模式已加载。");
       return;
     }
-    onStatus(`Holopix 候选预览：ImageBlob 不可用，已回退 Canvas${detail ? `：${detail}` : "。"}`, "warn");
-  }, [onStatus]);
+    onStatusRef.current(
+      `AI 候选预览：ImageBlob 不可用，已回退 Canvas${detail ? `：${detail}` : "。"}`,
+      "warn"
+    );
+  }, []);
   currentPsdScopeKeysRef.current = new Set(
     psdReferences.filter(isGeneratableReference).map(psdGenerationScopeKey)
   );
@@ -185,8 +227,18 @@ export function AiGenerationPanel({
   ): void => {
     const next = update(statesRef.current);
     statesRef.current = next;
+    workflowStatesRef.current[workflowVersion] = next;
     setStates(next);
-  }, []);
+  }, [workflowVersion]);
+
+  const switchWorkflowVersion = useCallback((nextVersion: AiWorkflowVersion): void => {
+    if (nextVersion === workflowVersion) return;
+    workflowStatesRef.current[workflowVersion] = statesRef.current;
+    const nextStates = workflowStatesRef.current[nextVersion];
+    statesRef.current = nextStates;
+    setStates(nextStates);
+    setWorkflowVersion(nextVersion);
+  }, [workflowVersion]);
   useCanvasRedrawScheduler(open);
 
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
@@ -219,8 +271,9 @@ export function AiGenerationPanel({
     const acceptedPrompt = candidates.find((candidate) => candidate.status === "accepted")
       ?.image?.promptText?.trim();
     return acceptedPrompt ?? candidates.find((candidate) => candidate.image?.promptText?.trim())
-      ?.image?.promptText?.trim() ?? "";
-  }, [selectedItem, states]);
+      ?.image?.promptText?.trim()
+      ?? (workflowVersion === "gpt-image-2" ? selectedItem.name?.trim() || selectedItem.assetCode : "");
+  }, [selectedItem, states, workflowVersion]);
   const controlsDisabled = externalBusy || running || recovering || Boolean(syncingCandidateId);
   const countControlsDisabled = externalBusy || recovering || Boolean(syncingCandidateId);
   const backfillDisabled = externalBusy || recovering || Boolean(syncingCandidateId);
@@ -249,7 +302,9 @@ export function AiGenerationPanel({
 
   useEffect(() => {
     if (running) return;
-    const pendingRecords = loadHolopixPendingSubmissions();
+    const pendingRecords = loadHolopixPendingSubmissions().filter(
+      (record) => effectivePendingWorkflowVersion(record) === workflowVersion
+    );
     updateStates((current) => {
       const next = reconcileAiItemStates(current, generationItems, candidateCount);
       for (const item of generationItems) {
@@ -257,14 +312,14 @@ export function AiGenerationPanel({
         let state = next[item.key];
         if (!reference || !state) continue;
         for (const pending of pendingRecords) {
-          if (!pendingSubmissionMatchesReference(pending, reference)) continue;
+          if (!pendingSubmissionMatchesReference(pending, reference, workflowVersion)) continue;
           state = restoreAiPendingSubmission(state, pending);
         }
         next[item.key] = state;
       }
       return next;
     });
-  }, [candidateCount, generatablePsdReferencesByAssetCode, generationItems, running, updateStates]);
+  }, [candidateCount, generatablePsdReferencesByAssetCode, generationItems, running, updateStates, workflowVersion]);
 
   useEffect(() => {
     if (!groupItems.some((item) => item.key === selectedItemKey)) {
@@ -369,6 +424,16 @@ export function AiGenerationPanel({
         active = false;
       };
     }
+    if (workflowVersion === "gpt-image-2") {
+      setPromptSource({
+        kind: "unknown",
+        label: "GptImage2.json",
+        detail: "GPT Image 2 使用工作流内置风格参考；这里编辑当前物品描述。"
+      });
+      return () => {
+        active = false;
+      };
+    }
     void loadHolopixPromptSource().then(
       (source) => {
         if (active) setPromptSource(source);
@@ -386,7 +451,7 @@ export function AiGenerationPanel({
     return () => {
       active = false;
     };
-  }, [selectedItem?.assetCode, selectedItem?.name]);
+  }, [selectedItem?.assetCode, selectedItem?.name, workflowVersion]);
 
   useEffect(() => {
     onBusyChange(running || recovering || Boolean(syncingCandidateId));
@@ -397,6 +462,10 @@ export function AiGenerationPanel({
     if (!selectedGroup || controlsDisabled || !generationItems.length) return;
     setRecovering(true);
     try {
+      if (workflowVersion === "gpt-image-2") {
+        await recoverGptImage2Candidates();
+        return;
+      }
       const persistedPending = loadHolopixPendingSubmissions();
       const pendingSubmissions = generationItems.flatMap((item) => (
         statesRef.current[item.key]?.candidates.flatMap((candidate) => (
@@ -484,6 +553,90 @@ export function AiGenerationPanel({
     }
   }
 
+  async function recoverGptImage2Candidates(): Promise<void> {
+    const persistedPending = loadHolopixPendingSubmissions().filter(
+      (record) => effectivePendingWorkflowVersion(record) === "gpt-image-2"
+    );
+    const pendingSubmissions = generationItems.flatMap((item) => (
+      statesRef.current[item.key]?.candidates.flatMap((candidate) => (
+        candidate.status === "unknown" && candidate.submissionPromptId
+          ? [{ promptId: candidate.submissionPromptId, assetCode: item.assetCode }]
+          : []
+      )) ?? []
+    ));
+    const recovered = await recoverRecentGptImage2Images(
+      generationItems.map((item) => ({
+        assetCode: item.assetCode,
+        itemName: item.name?.trim() || item.assetCode
+      })),
+      candidateCount,
+      undefined,
+      (message) => onStatus(`GPT Image 2 安全预览：${message}`),
+      pendingSubmissions
+    );
+    let recoveredCount = 0;
+    const resolvedOutputRecords = new Map<string, HolopixPendingSubmissionRecord>();
+    updateStates((current) => {
+      const next = reconcileAiItemStates(current, generationItems, candidateCount);
+      for (const item of generationItems) {
+        let state = next[item.key];
+        if (!state) continue;
+        const promptIds = new Set(state.candidates.flatMap((candidate) => (
+          candidate.status === "unknown" && candidate.submissionPromptId
+            ? [candidate.submissionPromptId]
+            : []
+        )));
+        for (const promptId of promptIds) {
+          const exactImages = recovered.byPromptId[promptId]?.[item.assetCode] ?? [];
+          const merged = mergeRecoveredAiCandidateImages(state, exactImages, { promptId });
+          state = merged.item;
+          recoveredCount += merged.recoveredCount;
+          if (!state.candidates.some((candidate) => (
+            candidate.status === "unknown" && candidate.submissionPromptId === promptId
+          ))) {
+            const reference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+            if (reference) {
+              for (const pending of persistedPending) {
+                if (
+                  pending.promptId === promptId
+                  && pendingSubmissionMatchesReference(pending, reference, "gpt-image-2")
+                ) {
+                  resolvedOutputRecords.set(
+                    pending.submissionKey,
+                    promoteHolopixPendingSubmissionToOutput(pending, exactImages)
+                  );
+                }
+              }
+            }
+          }
+        }
+        const mergedRecent = mergeRecoveredAiCandidateImages(
+          state,
+          recovered.recentByAssetCode[item.assetCode] ?? []
+        );
+        next[item.key] = mergedRecent.item;
+        recoveredCount += mergedRecent.recoveredCount;
+      }
+      return { ...next };
+    });
+    let outputRecordFailures = 0;
+    for (const record of resolvedOutputRecords.values()) {
+      if (!saveHolopixPendingSubmission(record)) outputRecordFailures += 1;
+    }
+    onStatus(
+      recoveredCount
+        ? `已从 ComfyUI 历史恢复 ${recoveredCount} 张 GPT Image 2 候选；未提交新生成任务。`
+        : "ComfyUI 历史中没有找到当前棋子链的 GPT Image 2 候选。",
+      recoveredCount ? "info" : "warn"
+    );
+    if (outputRecordFailures) {
+      onStatus(
+        `GPT Image 2 候选已恢复，但 ${outputRecordFailures} 个本地输出记录更新失败；已保留待确认保护。`,
+        "warn"
+      );
+    }
+  }
+
   function handleAbandonUnknowns(): void {
     if (!stats.unknown || controlsDisabled) return;
     const confirmed = window.confirm(
@@ -524,6 +677,10 @@ export function AiGenerationPanel({
     try {
       while (generationQueueRef.current.length) {
         const job = generationQueueRef.current.shift()!;
+        if (job.workflowVersion === "gpt-image-2") {
+          await processGptImage2GenerationJob(job);
+          continue;
+        }
         if (
           job.psdReference
           && !currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(job.psdReference))
@@ -687,8 +844,129 @@ export function AiGenerationPanel({
     }
   }
 
+  async function processGptImage2GenerationJob(
+    job: QueuedGptImage2GenerationJob
+  ): Promise<void> {
+    const totalCandidates = job.entries.length;
+    if (!totalCandidates) return;
+    const inactive = job.entries.some((entry) => (
+      !currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(entry.psdReference))
+    ));
+    if (inactive) {
+      const detail = "未提交整链：当前 PSD 或节点范围已经切换。";
+      updateStates((current) => failGptImage2Entries(current, job.entries, detail));
+      onStatus(`GPT Image 2 ${detail}`, "warn");
+      job.onSettled?.({ completedCandidates: 0, totalCandidates, unknownCandidates: 0 });
+      return;
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const completedAssetCodes = new Set<string>();
+    let unknownCandidates = 0;
+    let success = false;
+    updateStates((current) => updateGptImage2Entries(current, job.entries, (slot) => ({
+      ...slot,
+      status: "generating",
+      error: undefined
+    })));
+    onStatus(`GPT Image 2 开始整链生成：本轮 ${totalCandidates} 个物品。`);
+    try {
+      await generateGptImage2Chain({
+        items: job.entries.map((entry) => ({
+          assetCode: entry.item.assetCode,
+          itemName: entry.item.name?.trim() || entry.item.assetCode,
+          ...(entry.promptText?.trim() ? { promptText: entry.promptText.trim() } : {})
+        })),
+        signal: controller.signal,
+        onStage: (message) => onStatus(`GPT Image 2：${message}`),
+        onBeforeSubmit: async () => {
+          for (const entry of job.entries) {
+            if (!currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(entry.psdReference))) {
+              throw new Error("当前 PSD 或节点范围已经切换；GPT Image 2 整链未提交。");
+            }
+            await assertActivePsdGenerationScope(entry.psdReference);
+          }
+        },
+        onSubmissionLifecycle: (event) => recordGptImage2SubmissionLifecycle(job, event),
+        onImagesReady: (imagesByAssetCode, submission) => {
+          updateStates((current) => {
+            let next = current;
+            for (const entry of job.entries) {
+              const image = imagesByAssetCode[entry.item.assetCode];
+              if (!image) continue;
+              completedAssetCodes.add(entry.item.assetCode);
+              const state = next[entry.item.key];
+              if (!state) continue;
+              next = {
+                ...next,
+                [entry.item.key]: applyAiGeneratedCandidateBatch(
+                  state,
+                  [entry.slotIndex],
+                  0,
+                  [image],
+                  image.promptText,
+                  {
+                    promptId: submission.promptId,
+                    key: gptImage2ItemSubmissionKey(submission.key, entry.item.assetCode)
+                  }
+                )
+              };
+            }
+            return next;
+          });
+        }
+      });
+      success = true;
+      onStatus(job.successMessage ?? `GPT Image 2 整链完成：${totalCandidates} 个物品。`);
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      const remaining = job.entries.filter(
+        (entry) => !completedAssetCodes.has(entry.item.assetCode)
+      );
+      if (error instanceof HolopixGenerationOutcomeUnknownError) {
+        unknownCandidates = remaining.length;
+        updateStates((current) => markGptImage2EntriesUnknown(
+          current,
+          remaining,
+          detail,
+          error.promptId,
+          error.submissionKey
+        ));
+        onStatus(
+          `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选（不生成）”核对结果。`,
+          "warn"
+        );
+      } else if (remaining.length) {
+        updateStates((current) => failGptImage2Entries(current, remaining, detail));
+        onStatus(`${job.failurePrefix}：${detail}`, "error");
+      } else {
+        success = true;
+        onStatus(`GPT Image 2 已保留本轮全部拆分结果；后处理提示：${detail}`, "warn");
+      }
+      if (completedAssetCodes.size && remaining.length) {
+        onStatus(
+          `GPT Image 2 已保留 ${completedAssetCodes.size} 个成功物品；其余 ${remaining.length} 个`
+          + `${error instanceof HolopixGenerationOutcomeUnknownError ? "结果待确认" : "标记为失败"}。`,
+          "warn"
+        );
+      }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+      job.onSettled?.({
+        completedCandidates: success ? totalCandidates : completedAssetCodes.size,
+        totalCandidates,
+        unknownCandidates
+      });
+    }
+  }
+
   async function handleBulkGenerate(): Promise<void> {
     if (!selectedGroup || running) return;
+    if (workflowVersion === "gpt-image-2") {
+      handleGptImage2BulkGenerate();
+      return;
+    }
     const snapshot = reconcileAiItemStates(statesRef.current, generationItems, candidateCount);
     const jobs = generationItems.flatMap((item) => {
       const state = snapshot[item.key];
@@ -712,6 +990,7 @@ export function AiGenerationPanel({
     let unknownCandidates = 0;
     for (const job of jobs) {
       enqueueGeneration({
+        workflowVersion: "flux",
         workbook,
         item: job.item,
         slotIndexes: job.slotIndexes,
@@ -741,8 +1020,77 @@ export function AiGenerationPanel({
     }
   }
 
+  function handleGptImage2BulkGenerate(): void {
+    const snapshot = reconcileAiItemStates(statesRef.current, generationItems, candidateCount);
+    const rounds = buildGptImage2GenerationRounds(generationItems, snapshot);
+    const jobs = rounds.flatMap((round) => {
+      const entries = round.entries.flatMap((entry) => {
+        const psdReference = generatablePsdReferencesByAssetCode.get(entry.item.assetCode);
+        return psdReference ? [{
+          item: entry.item,
+          slotIndex: round.slotIndex,
+          ...(entry.promptText ? { promptText: entry.promptText } : {}),
+          psdReference
+        }] : [];
+      });
+      return entries.length ? [{ entries }] : [];
+    });
+    const totalCandidates = jobs.reduce((count, job) => count + job.entries.length, 0);
+    if (!totalCandidates) {
+      onStatus("当前棋子链没有待生成或失败的 GPT Image 2 候选。", "warn");
+      return;
+    }
+    updateStates(() => markSlots(
+      snapshot,
+      jobs.flatMap((job) => job.entries.map((entry) => ({
+        item: entry.item,
+        slotIndexes: [entry.slotIndex]
+      }))),
+      "queued"
+    ));
+    onStatus(
+      `GPT Image 2 批量开始：整链运行 ${jobs.length} 轮，共回填 ${totalCandidates} 个候选格。`
+    );
+
+    let completedJobs = 0;
+    let failedCandidates = 0;
+    let unknownCandidates = 0;
+    for (const job of jobs) {
+      enqueueGeneration({
+        workflowVersion: "gpt-image-2",
+        entries: job.entries,
+        failurePrefix: "GPT Image 2 整链生成失败",
+        onSettled: (result) => {
+          unknownCandidates += result.unknownCandidates;
+          failedCandidates += result.totalCandidates
+            - result.completedCandidates
+            - result.unknownCandidates;
+          completedJobs += 1;
+          onStatus(
+            `GPT Image 2 整链进度 ${completedJobs}/${jobs.length}`
+            + `${failedCandidates ? `；待重试 ${failedCandidates} 张` : ""}`
+            + `${unknownCandidates ? `；结果待确认 ${unknownCandidates} 张` : ""}。`
+          );
+          if (completedJobs === jobs.length) {
+            onStatus(
+              failedCandidates || unknownCandidates
+                ? `GPT Image 2 批量结束：${totalCandidates - failedCandidates - unknownCandidates} 张成功，`
+                  + `${failedCandidates} 张失败，${unknownCandidates} 张结果待确认。`
+                : `GPT Image 2 批量完成：整链 ${jobs.length} 轮，共 ${totalCandidates} 张候选。`,
+              failedCandidates || unknownCandidates ? "warn" : "info"
+            );
+          }
+        }
+      });
+    }
+  }
+
   async function handleRegenerate(item: AssetCandidate, slotIndex: number): Promise<void> {
     if (controlsDisabled) return;
+    if (workflowVersion === "gpt-image-2") {
+      setSelectedItemKey(item.key);
+      return;
+    }
     const state = statesRef.current[item.key];
     if (!state) return;
     const retryPromptText = state.candidates[slotIndex]?.retryPromptText;
@@ -752,12 +1100,14 @@ export function AiGenerationPanel({
       status: "queued",
       error: undefined
     })));
+    const psdReference = generatablePsdReferencesByAssetCode.get(item.assetCode);
     enqueueGeneration({
+      workflowVersion: "flux",
       workbook,
       item,
       slotIndexes: [slotIndex],
       promptText: retryPromptText,
-      psdReference: generatablePsdReferencesByAssetCode.get(item.assetCode),
+      psdReference,
       successMessage: `Holopix 单格重生成完成：${item.assetCode}。`,
       failurePrefix: `Holopix ${item.assetCode} 单格生成失败`
     });
@@ -771,6 +1121,43 @@ export function AiGenerationPanel({
       !promptText || promptRegenerationDisabled
     ) return;
     const snapshot = reconcileAiItemStates(statesRef.current, generationItems, candidateCount);
+    if (workflowVersion === "gpt-image-2") {
+      const rounds: QueuedGptImage2Entry[][] = [];
+      let next = { ...snapshot };
+      for (const chainItem of generationItems) {
+        const state = next[chainItem.key];
+        const psdReference = generatablePsdReferencesByAssetCode.get(chainItem.assetCode);
+        if (!state || !psdReference) continue;
+        const itemPromptText = chainItem.key === item.key ? promptText : undefined;
+        const appendedState = appendAiCandidateSlots(state, candidateCount, itemPromptText);
+        const appendedCount = appendedState.candidates.length - state.candidates.length;
+        next = { ...next, [chainItem.key]: appendedState };
+        for (let offset = 0; offset < appendedCount; offset += 1) {
+          const entries = rounds[offset] ?? [];
+          entries.push({
+            item: chainItem,
+            slotIndex: state.candidates.length + offset,
+            ...(itemPromptText ? { promptText: itemPromptText } : {}),
+            psdReference
+          });
+          rounds[offset] = entries;
+        }
+      }
+      updateStates(() => next);
+      onStatus(
+        `GPT Image 2 已为当前选中链的 ${generationItems.length} 个物品各追加 ${rounds.length} 张候选；`
+        + `整链将排队运行 ${rounds.length} 轮。`
+      );
+      for (const entries of rounds) {
+        enqueueGeneration({
+          workflowVersion: "gpt-image-2",
+          entries,
+          successMessage: `GPT Image 2 已用修改后的物品描述重新生成当前选中链。`,
+          failurePrefix: "GPT Image 2 选中链重新生成失败"
+        });
+      }
+      return;
+    }
     const state = snapshot[item.key];
     if (!state) return;
     const appendedState = appendAiCandidateSlots(state, candidateCount, promptText);
@@ -779,13 +1166,15 @@ export function AiGenerationPanel({
       (_, offset) => state.candidates.length + offset
     );
     updateStates(() => ({ ...snapshot, [item.key]: appendedState }));
+    const psdReference = generatablePsdReferencesByAssetCode.get(item.assetCode);
     onStatus(`Holopix ${item.assetCode} 已追加 ${slotIndexes.length} 张候选，正在安全单队列中等待生成。`);
     enqueueGeneration({
+      workflowVersion: "flux",
       workbook,
       item,
       slotIndexes,
       promptText,
-      psdReference: generatablePsdReferencesByAssetCode.get(item.assetCode),
+      psdReference,
       successMessage: `Holopix 已用修改后的提示词生成新增候选：${item.assetCode}。`,
       failurePrefix: `Holopix ${item.assetCode} 新增候选生成失败`
     });
@@ -863,6 +1252,18 @@ export function AiGenerationPanel({
       </div>
       {open ? (
         <div className="panel-section-content ai-panel-content">
+          <div className="ai-workflow-select">
+            <select
+              id="ai-workflow-version"
+              aria-label="AI 生成版本"
+              value={workflowVersion}
+              disabled={controlsDisabled}
+              onChange={(event) => switchWorkflowVersion(event.currentTarget.value as AiWorkflowVersion)}
+            >
+              <option value="flux">Flux</option>
+              <option value="gpt-image-2">GPT Image 2</option>
+            </select>
+          </div>
           <div className="ai-generation-card">
             <div className="ai-generation-summary">
               <span>每个物品生成</span>
@@ -886,7 +1287,7 @@ export function AiGenerationPanel({
               onClick={() => void handleBulkGenerate()}
             >
               {running
-                ? `生成中 ${stats.completed}/${stats.total}`
+                ? `${aiWorkflowVersionLabel(workflowVersion)} 生成中 ${stats.completed}/${stats.total}`
                 : stats.completed
                   ? `继续生成未完成的 ${remainingCount} 张`
                   : `生成 ${generationItems.length * candidateCount} 张候选`}
@@ -978,8 +1379,14 @@ export function AiGenerationPanel({
                         ) : (
                           <CandidateStrip
                             candidates={state?.candidates}
+                            individualGenerationEnabled={workflowVersion === "flux"}
                             generationDisabled={controlsDisabled}
                             backfillDisabled={backfillDisabled}
+                            noReferenceLabel={
+                              workflowVersion === "flux"
+                                ? "无参考图，无法运行 QwenVL"
+                                : "当前 PSD 无对应节点"
+                            }
                             onPreviewMode={reportPreviewMode}
                             onAccept={(candidate) => void handleAccept(item, candidate)}
                             onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
@@ -1006,8 +1413,8 @@ export function AiGenerationPanel({
                   ref={promptTextareaRef}
                   value={promptDraft}
                   style={{ height: `${promptEditorHeight}px` }}
-                  placeholder={promptSource?.detail ?? "生成或恢复候选后，可在这里修改 Holopix 实际提示词。"}
-                  aria-label={`${selectedItem.name || selectedItem.assetCode} 的可编辑 Holopix 提示词`}
+                  placeholder={promptSource?.detail ?? "生成或恢复候选后，可在这里修改当前物品描述。"}
+                  aria-label={`${selectedItem.name || selectedItem.assetCode} 的可编辑 AI 生成描述`}
                   onChange={(event) => setPromptDraft(event.currentTarget.value)}
                 />
                 <span
@@ -1025,7 +1432,7 @@ export function AiGenerationPanel({
                   !generationItems.some((item) => item.key === selectedItem.key) || !promptDraft.trim()
                 }
                 onClick={() => void handleRegenerateSelected()}
-              >重新生成选中物品</button>
+              >{workflowVersion === "gpt-image-2" ? "重新生成选中链" : "重新生成选中物品"}</button>
             </div>
           ) : null}
         </div>
@@ -1056,15 +1463,19 @@ function ReferencePreview({
 
 function CandidateStrip({
   candidates,
+  individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
+  noReferenceLabel,
   onPreviewMode,
   onAccept,
   onRegenerate
 }: {
   candidates?: AiCandidateSlot[];
+  individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
+  noReferenceLabel: string;
   onPreviewMode: (mode: CandidatePreviewMode, detail?: string) => void;
   onAccept: (candidate: AiCandidateSlot) => void;
   onRegenerate: (slotIndex: number) => void;
@@ -1084,6 +1495,7 @@ function CandidateStrip({
             : null}
           <CandidateCell
             candidate={candidate}
+            individualGenerationEnabled={individualGenerationEnabled}
             generationDisabled={generationDisabled}
             backfillDisabled={backfillDisabled}
             onAccept={() => onAccept(candidate)}
@@ -1091,19 +1503,21 @@ function CandidateStrip({
           />
         </span>
       ))}
-      {!candidates ? <small className="ai-no-reference">无参考图，无法运行 QwenVL</small> : null}
+      {!candidates ? <small className="ai-no-reference">{noReferenceLabel}</small> : null}
     </div>
   );
 }
 
 function CandidateCell({
   candidate,
+  individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
   onAccept,
   onRegenerate
 }: {
   candidate: AiCandidateSlot;
+  individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
   onAccept: () => void;
@@ -1112,11 +1526,9 @@ function CandidateCell({
   const action = aiCandidateAction(candidate);
   const interactive = action === "backfill";
   const preview = candidate.image?.preview;
-  const actionDisabled = isAiCandidateActionDisabled(
-    candidate,
-    generationDisabled,
-    backfillDisabled
-  );
+  const actionDisabled = action === "generate" && !individualGenerationEnabled
+    ? true
+    : isAiCandidateActionDisabled(candidate, generationDisabled, backfillDisabled);
   const actionable = !actionDisabled;
   const activate = (): void => {
     if (!actionable) return;
@@ -1133,7 +1545,9 @@ function CandidateCell({
           ? "当前画板预览；点击可重新插入"
           : interactive
             ? "点击图片插入对应 Photoshop 画板预览"
-            : "点击生成或重试"
+            : individualGenerationEnabled
+              ? "点击生成或重试"
+              : "GPT Image 2 需要使用“重新生成选中链”生成整条链"
       )}
       onClick={(event) => {
         event.stopPropagation();
@@ -1383,7 +1797,7 @@ async function runItemGeneration(
 }
 
 function recordSubmissionLifecycle(
-  job: QueuedGenerationJob,
+  job: QueuedFluxGenerationJob,
   event: HolopixSubmissionLifecycleEvent
 ): void {
   const reference = job.psdReference;
@@ -1404,6 +1818,7 @@ function recordSubmissionLifecycle(
     referenceLayerId: reference.referenceLayerId,
     ...(reference.targetLayerId === undefined ? {} : { targetLayerId: reference.targetLayerId }),
     ...(reference.targetIssue ? { targetIssue: reference.targetIssue } : {}),
+    workflowVersion: "flux",
     slotCount: event.batchSize,
     submissionKey: event.submissionKey,
     ...(event.promptId ? { promptId: event.promptId } : {}),
@@ -1417,11 +1832,79 @@ function recordSubmissionLifecycle(
   if (!saved) throw new Error("无法写入本地待确认提交记录。");
 }
 
+function recordGptImage2SubmissionLifecycle(
+  job: QueuedGptImage2GenerationJob,
+  event: HolopixSubmissionLifecycleEvent
+): void {
+  const records = job.entries.map((entry) => {
+    const reference = entry.psdReference;
+    const submissionKey = gptImage2ItemSubmissionKey(event.submissionKey, entry.item.assetCode);
+    const images = event.images?.filter((image) => gptImage2ImageMatchesAssetCode(
+      image.filename,
+      entry.item.assetCode
+    ));
+    const promptText = entry.promptText?.trim()
+      || entry.item.name?.trim()
+      || entry.item.assetCode;
+    return {
+      version: 2 as const,
+      documentId: reference.documentId,
+      documentName: reference.documentName,
+      documentIdentity: reference.documentIdentity,
+      assetCode: reference.assetCode,
+      artboardId: reference.artboardId,
+      referenceLayerId: reference.referenceLayerId,
+      ...(reference.targetLayerId === undefined ? {} : { targetLayerId: reference.targetLayerId }),
+      ...(reference.targetIssue ? { targetIssue: reference.targetIssue } : {}),
+      workflowVersion: "gpt-image-2" as const,
+      slotCount: 1,
+      submissionKey,
+      ...(event.promptId ? { promptId: event.promptId } : {}),
+      ...(promptText ? { promptText } : {}),
+      outcome: event.state === "resolved" && event.outcome === "output" ? "output" as const : "pending" as const,
+      ...(images?.length ? { images: persistableHolopixImages(images) } : {}),
+      createdAt: event.createdAt
+    };
+  });
+  const keys = records.map((record) => record.submissionKey);
+  if (event.state === "resolved" && event.outcome !== "output") {
+    if (!removeHolopixPendingSubmissions(keys)) {
+      throw new Error("无法清除已结束的 GPT Image 2 本地提交记录。");
+    }
+    return;
+  }
+  const recordsToSave = event.state === "resolved" && event.outcome === "output"
+    ? records.filter((record) => "images" in record && Boolean(record.images?.length))
+    : records;
+  if (recordsToSave.length !== records.length) {
+    const missingKeys = records
+      .filter((record) => !("images" in record) || !record.images?.length)
+      .map((record) => record.submissionKey);
+    if (!removeHolopixPendingSubmissions(missingKeys)) {
+      throw new Error("无法清除未返回图片的 GPT Image 2 本地提交记录。");
+    }
+  }
+  const savedKeys: string[] = [];
+  for (const record of recordsToSave) {
+    if (saveHolopixPendingSubmission(record)) {
+      savedKeys.push(record.submissionKey);
+      continue;
+    }
+    removeHolopixPendingSubmissions(savedKeys);
+    throw new Error(
+      event.state === "started"
+        ? "无法写入 GPT Image 2 本地待确认提交记录；整链请求未发送。"
+        : "无法更新 GPT Image 2 本地提交记录。"
+    );
+  }
+}
+
 function pendingSubmissionMatchesReference(
   pending: HolopixPendingSubmissionRecord,
-  reference: GeneratablePsdReference
+  reference: GeneratablePsdReference,
+  workflowVersion: AiWorkflowVersion = "flux"
 ): boolean {
-  return holopixPendingSubmissionMatchesScope(pending, reference);
+  return holopixPendingSubmissionMatchesScope(pending, { ...reference, workflowVersion });
 }
 
 function psdReferenceKey(reference: PsdAiReference): string {
@@ -1483,6 +1966,59 @@ function markSlots(
     next = updateSlotIndexes(next, job.item.key, job.slotIndexes, (slot) => ({ ...slot, status, error: undefined }));
   }
   return next;
+}
+
+function updateGptImage2Entries(
+  current: Record<string, AiItemState>,
+  entries: QueuedGptImage2Entry[],
+  update: (slot: AiCandidateSlot, entry: QueuedGptImage2Entry) => AiCandidateSlot
+): Record<string, AiItemState> {
+  let next = current;
+  for (const entry of entries) {
+    next = updateSlotIndexes(next, entry.item.key, [entry.slotIndex], (slot) => update(slot, entry));
+  }
+  return next;
+}
+
+function failGptImage2Entries(
+  current: Record<string, AiItemState>,
+  entries: QueuedGptImage2Entry[],
+  error: string
+): Record<string, AiItemState> {
+  return updateGptImage2Entries(current, entries, (slot, entry) => ({
+    ...slot,
+    status: "failed",
+    error,
+    retryPromptText: entry.promptText?.trim() || slot.retryPromptText
+  }));
+}
+
+function markGptImage2EntriesUnknown(
+  current: Record<string, AiItemState>,
+  entries: QueuedGptImage2Entry[],
+  error: string,
+  promptId?: string,
+  sharedSubmissionKey?: string
+): Record<string, AiItemState> {
+  return updateGptImage2Entries(current, entries, (slot, entry) => ({
+    ...slot,
+    status: "unknown",
+    error,
+    retryPromptText: entry.promptText?.trim() || slot.retryPromptText,
+    ...(promptId ? { submissionPromptId: promptId } : {}),
+    ...(sharedSubmissionKey ? {
+      submissionKey: gptImage2ItemSubmissionKey(sharedSubmissionKey, entry.item.assetCode)
+    } : {})
+  }));
+}
+
+function gptImage2ItemSubmissionKey(sharedKey: string, assetCode: string): string {
+  return `${sharedKey}:${safeGptImage2OutputName(assetCode)}`;
+}
+
+function gptImage2ImageMatchesAssetCode(filename: string, assetCode: string): boolean {
+  const safeName = safeGptImage2OutputName(assetCode).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${safeName}(?:__run\\d+)?\\.png$`, "i").test(filename);
 }
 
 function updateSlotIndexes(

@@ -7,13 +7,14 @@ import {
 
 describe("Holopix ImageBlob preview", () => {
   it("creates an uncompressed RGBA ImageBlob from an exact pixel buffer", () => {
-    const received: { bytes?: number[]; options?: HolopixImageBlobOptions } = {};
+    const received: { bytes?: number[]; options?: HolopixImageBlobOptions; imageBlob?: FakeImageBlob } = {};
     class FakeImageBlob {
       constructor(data: Uint8Array, options: HolopixImageBlobOptions) {
         expect(data).toBeInstanceOf(Uint8Array);
         expect(data).not.toBe(pixels);
         received.bytes = Array.from(data);
         received.options = options;
+        received.imageBlob = this;
       }
     }
     const revokeObjectURL = vi.fn();
@@ -39,6 +40,10 @@ describe("Holopix ImageBlob preview", () => {
       hasAlpha: true
     });
     expect(resource.url).toBe("blob:chess-go-preview");
+    expect(resource.retainedSource?.imageBlob).toBe(received.imageBlob);
+    expect(resource.retainedSource?.pixels).toBeInstanceOf(Uint8Array);
+    expect(resource.retainedSource?.pixels).not.toBe(pixels);
+    expect(Array.from(resource.retainedSource!.pixels)).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
 
     resource.revoke();
     resource.revoke();

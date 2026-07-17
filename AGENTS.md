@@ -60,7 +60,7 @@
 5. 功能发布时同时提升 `manifest.json` 与 `package.json` 版本。
 6. 同步发布文件：
    `pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '. "$env:USERPROFILE\.codex\pwsh-utf8.ps1"; & "D:\Scripts\UXP\PsdArchive\scripts\publish-release.ps1" -SkipBuild'`
-7. 校验 `dist` 与发布仓库的 `manifest.json`、`Holopix.json`、`index.html`、`main.js`、`main.js.LICENSE.txt`、`styles.css` 哈希一致，两个仓库均通过 `git diff --check`。
+7. 校验 `dist` 与发布仓库的 `manifest.json`、`Holopix.json`、`GptImage2.json`、`index.html`、`main.js`、`main.js.LICENSE.txt`、`styles.css` 哈希一致，两个仓库均通过 `git diff --check`。
 8. 分别提交并推送 `main` 与 `release`。GitHub Smart HTTP 偶尔会发生 443 超时；不要无限重试。API 通道正常时可作为发布回退，但完成后必须让本地 `release`、`origin/release` 与远端提交重新一致。
 9. 自动化验证由 Agent 完成；Photoshop 真机交互验收由用户执行，最终回复中明确区分两者。
 

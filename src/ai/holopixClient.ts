@@ -349,6 +349,14 @@ async function loadSafePreviews(
   return results;
 }
 
+export async function loadHolopixSafePreviewsForImages(
+  images: AiGeneratedImage[],
+  signal?: AbortSignal,
+  onStage?: (message: string) => void
+): Promise<AiGeneratedImage[]> {
+  return loadSafePreviews(images, signal, onStage);
+}
+
 async function createSafePreview(
   image: AiGeneratedImage,
   signal?: AbortSignal
@@ -424,6 +432,13 @@ async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promi
   }
   if (!response.prompt_id) throw new Error("ComfyUI 未返回 prompt_id。");
   return response.prompt_id;
+}
+
+export async function queueComfyWorkflow(
+  workflow: ComfyWorkflow,
+  signal?: AbortSignal
+): Promise<string> {
+  return queuePrompt(workflow, signal);
 }
 
 async function waitForImages(
@@ -568,6 +583,14 @@ async function fetchJson(url: string, init?: RequestInit, timeoutMs = 15_000): P
   return data;
 }
 
+export async function fetchComfyJson(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = 15_000
+): Promise<unknown> {
+  return fetchJson(url, init, timeoutMs);
+}
+
 async function fetchBinary(
   url: string,
   signal?: AbortSignal,
@@ -638,4 +661,8 @@ function abortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+export function isHolopixAbortError(error: unknown): boolean {
+  return isAbortError(error);
 }

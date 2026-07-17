@@ -2,6 +2,7 @@ import type {
   AiGeneratedImage,
   AiPendingSubmissionSnapshot
 } from "../domain/aiCandidates";
+import type { AiWorkflowVersion } from "../ai/aiWorkflowVersion";
 
 export const HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY = "chess-go:holopix-pending-submissions:v2";
 
@@ -15,6 +16,7 @@ export interface HolopixPendingSubmissionRecord extends AiPendingSubmissionSnaps
   referenceLayerId: number;
   targetLayerId?: number;
   targetIssue?: "missing" | "ambiguous";
+  workflowVersion?: AiWorkflowVersion;
   createdAt: number;
 }
 
@@ -28,6 +30,7 @@ export interface HolopixPendingSubmissionScope {
   assetCode: string;
   artboardId: number;
   referenceLayerId: number;
+  workflowVersion?: AiWorkflowVersion;
 }
 
 export function holopixPendingSubmissionMatchesScope(
@@ -37,7 +40,9 @@ export function holopixPendingSubmissionMatchesScope(
   return pending.documentIdentity === scope.documentIdentity
     && pending.assetCode === scope.assetCode
     && pending.artboardId === scope.artboardId
-    && pending.referenceLayerId === scope.referenceLayerId;
+    && pending.referenceLayerId === scope.referenceLayerId
+    && (scope.workflowVersion === undefined
+      || effectiveWorkflowVersion(pending) === scope.workflowVersion);
 }
 
 export function promoteHolopixPendingSubmissionToOutput(
@@ -131,6 +136,7 @@ function isPendingSubmissionRecord(value: unknown): value is HolopixPendingSubmi
     && isFiniteInteger(record.referenceLayerId)
     && (record.targetLayerId === undefined || isFiniteInteger(record.targetLayerId))
     && (record.targetIssue === undefined || record.targetIssue === "missing" || record.targetIssue === "ambiguous")
+    && (record.workflowVersion === undefined || record.workflowVersion === "flux" || record.workflowVersion === "gpt-image-2")
     && isFiniteInteger(record.slotCount)
     && record.slotCount! >= 1
     && record.slotCount! <= 4
@@ -163,4 +169,16 @@ function isPersistedGeneratedImage(value: unknown): boolean {
 
 function isFiniteInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && Number.isFinite(value);
+}
+
+export function effectivePendingWorkflowVersion(
+  record: Pick<HolopixPendingSubmissionRecord, "workflowVersion">
+): AiWorkflowVersion {
+  return effectiveWorkflowVersion(record);
+}
+
+function effectiveWorkflowVersion(
+  record: Pick<HolopixPendingSubmissionRecord, "workflowVersion">
+): AiWorkflowVersion {
+  return record.workflowVersion === "gpt-image-2" ? "gpt-image-2" : "flux";
 }
