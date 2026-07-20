@@ -1288,11 +1288,13 @@ export function AiGenerationPanel({
                   ? `继续生成未完成的 ${remainingCount} 张`
                   : `生成 ${generationItems.length * candidateCount} 张候选`}
             </button>
-            <button
-              className="ai-recover-existing"
-              disabled={controlsDisabled || !generationItems.length}
-              onClick={() => void handleRecoverExisting()}
-            >{recovering ? "正在恢复……" : "恢复已有候选（不生成）"}</button>
+            {stats.unknown || recovering ? (
+              <button
+                className="ai-recover-existing"
+                disabled={controlsDisabled || !generationItems.length}
+                onClick={() => void handleRecoverExisting()}
+              >{recovering ? "正在恢复……" : "恢复已有候选（不生成）"}</button>
+            ) : null}
             {stats.unknown ? (
               <button
                 className="ai-abandon-unknown"
@@ -1300,11 +1302,26 @@ export function AiGenerationPanel({
                 onClick={handleAbandonUnknowns}
               >确认放弃 {stats.unknown} 张待确认结果</button>
             ) : null}
-          </div>
-
-          <div className="ai-progress-card">
-            <div><span>候选图片进度</span><strong>{stats.completed} / {stats.total} 张</strong></div>
-            <progress value={stats.completed} max={Math.max(1, stats.total)} />
+            <div className="ai-generation-progress">
+              <div><span>候选图片进度</span><strong>{stats.completed} / {stats.total} 张</strong></div>
+              <div
+                className="ai-progress-track"
+                role="progressbar"
+                aria-label="候选图片进度"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(1, stats.total)}
+                aria-valuenow={stats.completed}
+              >
+                <div
+                  className="ai-progress-fill"
+                  style={{
+                    width: `${stats.total > 0
+                      ? Math.min(100, (stats.completed / stats.total) * 100)
+                      : 0}%`
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
           {activeGroups.length ? (

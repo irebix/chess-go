@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-20
-当前发布版本：`0.5.6`
+当前发布版本：`0.5.7`
 
 ## 一句话摘要
 
@@ -11,17 +11,22 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.6`（以当前分支 HEAD 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.6`（以当前分支 HEAD 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.7`（以当前分支 HEAD 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.7`（以当前分支 HEAD 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.5.6`。
+- `manifest.json` 与 `package.json` 均为 `0.5.7`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及七个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 保存已发布的 `0.5.6` 七个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
-- `0.5.6` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 保存已发布的 `0.5.7` 七个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
+- `0.5.7` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+
+## `0.5.7` 发布内容
+
+- 收紧 AI 面板与相邻折叠区的垂直间距，消除全部折叠时的空白条；常态隐藏“恢复已有候选（不生成）”，仅在存在待确认结果或正在恢复时显示，减少无效控件占位。
+- 候选进度改为不受 UXP 原生主题覆盖的自绘进度条，使用中性中灰轨道和低饱和绿色进度；进度信息并入“每个物品生成”卡片，工作流与棋子链列表继续保持独立，并微调文字、进度条及棋子链列表的间距。
 
 ## `0.5.6` 发布内容
 
@@ -66,7 +71,7 @@
 - Photoshop 25.4 不能稳定使用 UXP `<img>` 直接解码动态 Holopix 的压缩 PNG/JPEG；候选预览先由零计费的 ComfyUI 本地工作流规范化为 `96×96` RGB JPEG，再用纯 JavaScript 解码为 RGBA 像素，并通过 UXP `ImageBlob({ type: "image/uncompressed" })` 生成高清 `<img>` Object URL。该路径不把压缩数据交给宿主原生解码器；ImageBlob 不可用时直接报错，不再提供 Canvas 降级路径。
 - Excel 参考图使用 `object-fit: contain` 放入 `1:1` 方格：长边贴住方格边缘，短边留白，始终完整显示而不裁切。
 - 候选方格保持 `1:1`，只显示 `96×96` 原始 RGBA ImageBlob 高清缩略图；失败时在原槽位明确显示 ImageBlob 错误。候选行使用 `IntersectionObserver` 按可视区挂载并释放离屏 Object URL。矩阵内容本体不使用原生滚动，底部独立横向滚动条以 `scrollLeft → translateX` 同步水平位置，避免横向滚动容器吞掉顶层纵向滚轮。候选角标和可见“选用”按钮均已移除，只有已选项显示绿框。
-- “恢复已有候选（不生成）”从 ComfyUI 最近最多 1000 条历史找回当前棋子链的 `Holopix/ChessGo` 输出，不提交 Holopix 生成工作流，供闪退后复用已付费生成的结果；恢复时以最新输出的真实提示词为批次边界，只合并提示词完全一致的候选，避免把旧任务图片混入当前候选排。每个付费 `/prompt` 在请求发出前即以本地持久记录为硬前置：记录失败时请求不会发送；拿到 `prompt_id` 后继续更新。记录按规范化完整 PSD 路径身份、assetCode、画板与参考层稳定 ID 精确匹配，同名 PSD 或复制模板不会误接管；目标智能对象 ID 只保留为诊断字段，不参与恢复匹配，因此缺失目标在回填时补建后不会丢失已付费记录。未保存或 Photoshop 无法提供稳定路径的 PSD 会先要求保存，不允许付费提交。确定拒绝时删除记录；已返回原图或按 `prompt_id` 精确恢复成功时改存为 `outcome=output` 原图元数据，插件重载后直接恢复为 ready 而不是 idle，防止再次付费；安全预览可由恢复操作按同图 key 就地增强，不覆盖原图或 submission 身份。切换/关闭 PSD、面板隐藏或插件重载后，未确认记录会恢复为“结果待确认”并禁止直接重试；已取得 `prompt_id` 的提交会优先按该 ID 单独读取历史，并且只填入同一 `prompt_id` 的待确认格。按 assetCode 查找的宽泛历史只补普通空格，不会再用旧图清除本次待确认状态。HTTP `408/5xx`、响应正文中断或缺少 `prompt_id` 都按可能已受理处理；无 ID 的记录必须由用户在检查 ComfyUI 后点击“确认放弃待确认结果”才能重新生成。
+- “恢复已有候选（不生成）”仅在存在待确认结果或正在恢复时显示；它会从 ComfyUI 最近最多 1000 条历史找回当前棋子链的 `Holopix/ChessGo` 输出，不提交 Holopix 生成工作流。恢复时以最新输出的真实提示词为批次边界，只合并提示词完全一致的候选，避免把旧任务图片混入当前候选排。每个付费 `/prompt` 在请求发出前即以本地持久记录为硬前置：记录失败时请求不会发送；拿到 `prompt_id` 后继续更新。记录按规范化完整 PSD 路径身份、assetCode、画板与参考层稳定 ID 精确匹配，同名 PSD 或复制模板不会误接管；目标智能对象 ID 只保留为诊断字段，不参与恢复匹配，因此缺失目标在回填时补建后不会丢失已付费记录。未保存或 Photoshop 无法提供稳定路径的 PSD 会先要求保存，不允许付费提交。确定拒绝时删除记录；已返回原图或按 `prompt_id` 精确恢复成功时改存为 `outcome=output` 原图元数据，插件重载后直接恢复为 ready 而不是 idle，防止再次付费；安全预览可由恢复操作按同图 key 就地增强，不覆盖原图或 submission 身份。切换/关闭 PSD、面板隐藏或插件重载后，未确认记录会恢复为“结果待确认”并禁止直接重试；已取得 `prompt_id` 的提交会优先按该 ID 单独读取历史，并且只填入同一 `prompt_id` 的待确认格。按 assetCode 查找的宽泛历史只补普通空格，不会再用旧图清除本次待确认状态。HTTP `408/5xx`、响应正文中断或缺少 `prompt_id` 都按可能已受理处理；无 ID 的记录必须由用户在检查 ComfyUI 后点击“确认放弃待确认结果”才能重新生成。
 - 运行时通过 UXP `getPluginFolder()` 读取当前实际加载插件目录根部的 `Holopix.json` 与 `GptImage2.json`。两个模板均在首次读取后按当前插件会话缓存，修改文件必须重载插件才生效。Flux 模板使用 QwenVL，运行时会注入参考图路径、物品名称/用户提示词、候选数量、请求 nonce、付费确认、保存前缀、`1:1` 与 `1024×1024` 方图约束，并始终删除 `HolopixGenerate.reference`。GPT Image 2 模板保留 JSON 内置风格图，只注入整链物品描述和输出映射等运行参数。
 - ComfyUI API、历史、上传、候选图和安全预览统一使用局域网端点 `http://192.168.1.32:8188`，不再生成 `127.0.0.1` 地址；本机 Comfy Desktop 的该安装实例已配置追加 `--listen 0.0.0.0`，监听所有 IPv4 接口，插件和浏览器仍使用具体可访问地址而不把 `0.0.0.0` 当作客户端地址。配置需重启 ComfyUI 后生效；本机同时存在以太网和 Tailscale，Windows 防火墙应把 8188 端口限制在可信网络范围。
 - AI 面板只提交当前 PSD 范围内实际勾选、并且明确选择了 Excel 参考图的节点；不会因为选择了整条分组而把组内未勾选节点或默认第一张参考图一并提交。生成任务与每个付费批次提交前都会复核当前 document、稳定文件身份、artboard 与参考层；缺少目标不阻断生成，多个目标的歧义节点仍不提交。切换 PSD 或改变节点范围后，尚未提交的旧任务会停止，不继续为已离开范围的节点付费。点击生成后直接提交 Holopix 工作流，不显示二次确认弹窗；自动化验证不提交真实生成任务。
@@ -117,14 +122,15 @@
 - `0.5.4`：AI 生成模块新增顶部 `Flux / GPT Image 2` 版本选择，Flux 保持原逐物品流程；GPT Image 2 使用 `GptImage2.json` 内置风格参考，一次生成完整物件链并按稳定 `assetCode` 裁切回填。节点按语义标题定位，候选状态与待确认记录按工作流隔离；GPT 单格生成入口禁用，“重新生成选中链”会为整链所有物品追加候选并重新运行完整链。候选回填命名同时改为供应方无关的“AI 候选”。
 - `0.5.5`：动态 AI 候选预览强制只使用 UXP uncompressed ImageBlob；删除 Canvas 兜底组件、量化绘制函数、滚动/尺寸重绘调度、相关样式与测试。ImageBlob 创建或 Object URL 显示失败时直接在槽位提示并记录错误，不再静默降级。
 - `0.5.6`：ImageBlob 强制模式新增完整分阶段运行诊断，成功和失败均写入现有 `holopix.ai` 日志与诊断导出；记录 API 暴露位置、UXP/插件/Photoshop 版本、预览像素信息以及构造器、Object URL、HTMLImageElement 等具体阶段。Canvas 继续保持删除。
+- `0.5.7`：收紧折叠区间距并按状态隐藏恢复按钮；候选进度改为 UXP 不可覆盖的自绘中灰/绿色进度条并合入生成卡片，保持两个选择列表独立，微调进度与棋子链列表间距。
 
 ## 验证状态
 
 - 最近一次 `pnpm verify`：通过。
 - TypeScript strict：通过。
 - Vitest：`41` 个测试文件、`193/193` 测试通过。
-- Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 491 KiB），不是构建失败。
-- `dist` 与 `ChessGo-Release/release` 均为正式 `0.5.6`，七个运行文件哈希一致并已推送。
+- Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 492 KiB），不是构建失败。
+- `dist` 与 `ChessGo-Release/release` 均为正式 `0.5.7`，七个运行文件哈希一致并已推送。
 - 已通过局域网 ComfyUI `object_info` 只读核对 `LoadImage`、`PrimitiveStringMultiline`、`HolopixGenerateV3`、`AutoObjectSheetCrop`、`BiRefNetRMBG`、`InvertMask`、`JoinImageWithAlpha`、`SaveNamedImageBatch` 均存在且输入/输出类型匹配；没有提交 `/prompt` 或付费生成任务。
 - Photoshop 2024 实机已重启并加载 `0.3.4`：导入 1.2 MB 带图 Excel、选择 9 个参考图后，用“恢复已有候选（不生成）”找回 5 张历史候选；候选仅显示“查看 / 选用”，持续观察 30 秒 Photoshop 未闪退，且没有新增应用崩溃事件。
 - Photoshop 2024 实机已通过 UXP Developer Tools 热重载 `0.3.5`：导入同一带图 Excel、选择清洁工具链后，从 ComfyUI 历史恢复并直接绘制 `18/18` 张候选；持续观察 30 秒面板保持可用、Photoshop 正常响应，新增应用崩溃事件为 `0`，日志确认未提交新生成任务。
@@ -136,6 +142,7 @@
 
 ## 仍需人工验证
 
+- 在 Photoshop 中重载 `0.5.7`，确认工作流和棋子链列表仍为独立控件；候选进度位于“每个物品生成”同一外框内，中灰轨道不再被 UXP 画成白色，文字与进度条、棋子链列表与上方卡片之间均保留适度间距。普通状态不显示“恢复已有候选（不生成）”，出现待确认结果时该按钮仍能显示并恢复。
 - 在 Photoshop 中加载当前 `dist`，确认 AI 面板最上方只有一个 `Flux / GPT Image 2` 版本列表；切换版本时矩阵布局不变，Flux 已有候选仍保留，切回 Flux 后不会显示 GPT Image 2 候选。
 - 恢复或生成候选后，确认所有动态候选只使用 ImageBlob 显示；在不支持 ImageBlob 或 Object URL 显示失败的环境中，槽位必须明确显示“ImageBlob 失败”，日志不得出现 Canvas 回退，也不得创建 `<canvas>`。
 - 触发一次 ImageBlob 成功或失败后导出诊断，确认 `holopix.ai` 事件包含完整 `ImageBlob 诊断`，能够区分构造器未暴露、构造失败、Object URL 失败和 `<img>` 加载失败，并记录实际 UXP、插件与 Photoshop 版本。
