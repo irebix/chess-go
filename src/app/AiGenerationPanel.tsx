@@ -49,11 +49,6 @@ import {
   createHolopixImageBlobResource,
   type HolopixImageBlobResource
 } from "../ai/holopixImageBlob";
-import {
-  buildHolopixCanvasStripRuns,
-  holopixCanvasStripWidth,
-  HOLOPIX_CANVAS_PREVIEW_SIZE
-} from "../ai/holopixSafePreview";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
 import { inspectActiveReferenceDocument } from "../photoshop/referenceViewController";
@@ -95,8 +90,8 @@ interface AiGenerationPanelProps {
   onPsdBackfillSettled: (replacementMayHaveMutated: boolean) => Promise<void>;
 }
 
-type CandidatePreviewMode = "imageblob" | "canvas";
-const mountedCanvasRedraws = new Set<() => void>();
+type CandidatePreviewState = "ready" | "error";
+const AI_CANDIDATE_PREVIEW_SIZE = 64;
 
 interface QueuedFluxGenerationJob {
   workflowVersion: "flux";
@@ -184,18 +179,18 @@ export function AiGenerationPanel({
   const matrixContentRef = useRef<HTMLDivElement | null>(null);
   const matrixScrollbarRef = useRef<HTMLDivElement | null>(null);
   const onStatusRef = useRef(onStatus);
-  const previewModeReportedRef = useRef({ imageblob: false, canvas: false });
+  const previewStateReportedRef = useRef({ ready: false, error: false });
   onStatusRef.current = onStatus;
-  const reportPreviewMode = useCallback((mode: CandidatePreviewMode, detail?: string): void => {
-    if (previewModeReportedRef.current[mode]) return;
-    previewModeReportedRef.current[mode] = true;
-    if (mode === "imageblob") {
+  const reportPreviewState = useCallback((state: CandidatePreviewState, detail?: string): void => {
+    if (previewStateReportedRef.current[state]) return;
+    previewStateReportedRef.current[state] = true;
+    if (state === "ready") {
       onStatusRef.current("AI 候选预览：ImageBlob 原始 RGBA 高清模式已加载。");
       return;
     }
     onStatusRef.current(
-      `AI 候选预览：ImageBlob 不可用，已回退 Canvas${detail ? `：${detail}` : "。"}`,
-      "warn"
+      `AI 候选预览失败：强制 ImageBlob 模式不可用${detail ? `：${detail}` : "。"}`,
+      "error"
     );
   }, []);
   currentPsdScopeKeysRef.current = new Set(
@@ -239,8 +234,6 @@ export function AiGenerationPanel({
     setStates(nextStates);
     setWorkflowVersion(nextVersion);
   }, [workflowVersion]);
-  useCanvasRedrawScheduler(open);
-
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
   const groupItems = useMemo(
     () => selectedGroup ? filterItemsByGroups(items, [selectedGroup]) : [],
@@ -1387,7 +1380,7 @@ export function AiGenerationPanel({
                                 ? "无参考图，无法运行 QwenVL"
                                 : "当前 PSD 无对应节点"
                             }
-                            onPreviewMode={reportPreviewMode}
+                            onPreviewState={reportPreviewState}
                             onAccept={(candidate) => void handleAccept(item, candidate)}
                             onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
                           />
@@ -1467,7 +1460,7 @@ function CandidateStrip({
   generationDisabled,
   backfillDisabled,
   noReferenceLabel,
-  onPreviewMode,
+  onPreviewState,
   onAccept,
   onRegenerate
 }: {
@@ -1476,7 +1469,7 @@ function CandidateStrip({
   generationDisabled: boolean;
   backfillDisabled: boolean;
   noReferenceLabel: string;
-  onPreviewMode: (mode: CandidatePreviewMode, detail?: string) => void;
+  onPreviewState: (state: CandidatePreviewState, detail?: string) => void;
   onAccept: (candidate: AiCandidateSlot) => void;
   onRegenerate: (slotIndex: number) => void;
 }): React.ReactElement {
@@ -1490,7 +1483,7 @@ function CandidateStrip({
             ? <ImageBlobCandidatePreview
                 key={`${candidate.id}:${candidate.image.filename}`}
                 preview={candidate.image.preview}
-                onPreviewMode={onPreviewMode}
+                onPreviewState={onPreviewState}
               />
             : null}
           <CandidateCell
@@ -1563,111 +1556,56 @@ function CandidateCell({
 
 function ImageBlobCandidatePreview({
   preview,
-  onPreviewMode
+  onPreviewState
 }: {
   preview: AiCandidatePreview;
-  onPreviewMode: (mode: CandidatePreviewMode, detail?: string) => void;
+  onPreviewState: (state: CandidatePreviewState, detail?: string) => void;
 }): React.ReactElement {
   const [resource, setResource] = useState<HolopixImageBlobResource | null>(null);
-  const [imageFailed, setImageFailed] = useState(false);
-  const fallbackPreviews = useMemo(() => [preview], [preview]);
+  const [failure, setFailure] = useState("");
 
   useEffect(() => {
     let next: HolopixImageBlobResource | undefined;
     setResource(null);
-    setImageFailed(false);
+    setFailure("");
     try {
       next = createHolopixImageBlobResource(preview);
       setResource(next);
-      onPreviewMode("imageblob");
+      onPreviewState("ready");
     } catch (error) {
-      console.warn("Holopix ImageBlob 原始像素预览不可用，回退 Canvas。", error);
-      onPreviewMode("canvas", toErrorMessage(error));
-      setImageFailed(true);
+      const detail = toErrorMessage(error);
+      console.error("Holopix ImageBlob 原始像素预览不可用。", error);
+      onPreviewState("error", detail);
+      setFailure(detail);
     }
     return () => next?.revoke();
-  }, [onPreviewMode, preview]);
+  }, [onPreviewState, preview]);
 
-  const fallbackToCanvas = (): void => {
+  const handleImageError = (): void => {
+    const detail = "原始像素 Object URL 无法由 UXP <img> 显示。";
     resource?.revoke();
     setResource(null);
-    setImageFailed(true);
-    onPreviewMode("canvas", "原始像素 Object URL 无法由 UXP <img> 显示。");
+    setFailure(detail);
+    onPreviewState("error", detail);
   };
 
   return (
     <span className="ai-candidate-image-host">
-      {imageFailed
-        ? <CandidateCanvasSurface previews={fallbackPreviews} className="ai-candidate-preview-canvas" />
+      {failure
+        ? <small className="ai-candidate-preview-fallback">ImageBlob 失败</small>
         : resource
           ? <img
               className="ai-candidate-image"
               src={resource.url}
-              width={HOLOPIX_CANVAS_PREVIEW_SIZE}
-              height={HOLOPIX_CANVAS_PREVIEW_SIZE}
+              width={AI_CANDIDATE_PREVIEW_SIZE}
+              height={AI_CANDIDATE_PREVIEW_SIZE}
               draggable={false}
               alt=""
               aria-hidden="true"
-              onError={fallbackToCanvas}
+              onError={handleImageError}
             />
           : null}
     </span>
-  );
-}
-
-function CandidateCanvasSurface({
-  previews,
-  className
-}: {
-  previews: Array<AiCandidatePreview | undefined>;
-  className: string;
-}): React.ReactElement {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [renderFailed, setRenderFailed] = useState(false);
-  const runs = useMemo(() => buildHolopixCanvasStripRuns(previews), [previews]);
-  const canvasWidth = holopixCanvasStripWidth(previews.length);
-
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    try {
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("当前 UXP 不支持 Canvas 2D 上下文。");
-      context.clearRect(0, 0, canvasWidth, HOLOPIX_CANVAS_PREVIEW_SIZE);
-      let fillColor = "";
-      for (const run of runs) {
-        if (run.color !== fillColor) {
-          context.fillStyle = run.color;
-          fillColor = run.color;
-        }
-        context.fillRect(run.x, run.y, run.width, run.height);
-      }
-      setRenderFailed(false);
-    } catch (error) {
-      console.error("Holopix Canvas 安全预览绘制失败", error);
-      setRenderFailed(true);
-    }
-  }, [canvasWidth, runs]);
-
-  useEffect(() => {
-    draw();
-    mountedCanvasRedraws.add(draw);
-    return () => {
-      mountedCanvasRedraws.delete(draw);
-    };
-  }, [draw]);
-
-  if (renderFailed) return <small className="ai-candidate-preview-fallback">预览失败</small>;
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className={className}
-      width={canvasWidth}
-      height={HOLOPIX_CANVAS_PREVIEW_SIZE}
-      style={{ width: `${canvasWidth}px`, height: `${HOLOPIX_CANVAS_PREVIEW_SIZE}px` }}
-      aria-label="Holopix 安全候选缩略图"
-    />
   );
 }
 
@@ -1692,29 +1630,6 @@ function useNearViewport<T extends Element>(
   }, [retainOnceVisible]);
 
   return [rootRef, visible];
-}
-
-function useCanvasRedrawScheduler(enabled: boolean): void {
-  useEffect(() => {
-    if (!enabled) return;
-    let timer: number | undefined;
-    const scheduleRedraw = (): void => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        timer = undefined;
-        for (const redraw of Array.from(mountedCanvasRedraws)) redraw();
-      }, 180);
-    };
-    document.addEventListener("scroll", scheduleRedraw, true);
-    window.addEventListener("resize", scheduleRedraw);
-    document.addEventListener("visibilitychange", scheduleRedraw);
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("scroll", scheduleRedraw, true);
-      window.removeEventListener("resize", scheduleRedraw);
-      document.removeEventListener("visibilitychange", scheduleRedraw);
-    };
-  }, [enabled]);
 }
 
 async function runItemGeneration(

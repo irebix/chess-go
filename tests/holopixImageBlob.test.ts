@@ -65,7 +65,7 @@ describe("Holopix ImageBlob preview", () => {
     }, runtime)).toThrow(/RGBA 像素长度/);
   });
 
-  it("reports an unsupported host so the UI can retain the Canvas fallback", () => {
+  it("reports an unsupported host so the UI can surface the forced ImageBlob failure", () => {
     expect(() => createHolopixImageBlobResource({
       width: 1,
       height: 1,

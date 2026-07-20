@@ -4,20 +4,6 @@ import type { ComfyWorkflow } from "./holopixWorkflow";
 
 export const HOLOPIX_SAFE_PREVIEW_SIZE = 96;
 export const HOLOPIX_SAFE_PREVIEW_MAX_BYTES = 128 * 1024;
-export const HOLOPIX_CANVAS_PREVIEW_SIZE = 64;
-export const HOLOPIX_CANVAS_SAMPLE_SIZE = 16;
-export const HOLOPIX_CANVAS_CELL_GAP = 7;
-
-export interface HolopixCanvasRun {
-  x: number;
-  y: number;
-  width: number;
-  color: string;
-}
-
-export interface HolopixCanvasStripRun extends HolopixCanvasRun {
-  height: number;
-}
 
 export interface PreparedHolopixSafePreviewWorkflow {
   workflow: ComfyWorkflow;
@@ -109,104 +95,6 @@ export function decodeHolopixSafeJpeg(
     height: decoded.height,
     pixels: new Uint8ClampedArray(decoded.data)
   };
-}
-
-export function buildHolopixCanvasRuns(
-  preview: AiCandidatePreview,
-  outputSize = HOLOPIX_CANVAS_PREVIEW_SIZE
-): HolopixCanvasRun[] {
-  if (!Number.isInteger(outputSize) || outputSize < 1 || outputSize > preview.width || outputSize > preview.height) {
-    throw new Error("Holopix Canvas 预览尺寸无效。");
-  }
-  if (preview.pixels.length !== preview.width * preview.height * 4) {
-    throw new Error("Holopix Canvas 预览像素长度无效。");
-  }
-
-  const runs: HolopixCanvasRun[] = [];
-  for (let y = 0; y < outputSize; y += 1) {
-    let runColor = "";
-    let runStart = 0;
-    for (let x = 0; x < outputSize; x += 1) {
-      const color = sampleQuantizedColor(preview, x, y, outputSize);
-      if (x === 0) {
-        runColor = color;
-        continue;
-      }
-      if (color !== runColor) {
-        runs.push({ x: runStart, y, width: x - runStart, color: runColor });
-        runStart = x;
-        runColor = color;
-      }
-    }
-    runs.push({ x: runStart, y, width: outputSize - runStart, color: runColor });
-  }
-  return runs;
-}
-
-export function holopixCanvasStripWidth(candidateCount: number): number {
-  if (!Number.isInteger(candidateCount) || candidateCount < 1 || candidateCount > 4) {
-    throw new Error("Holopix Canvas 候选数量无效。");
-  }
-  return candidateCount * HOLOPIX_CANVAS_PREVIEW_SIZE
-    + (candidateCount - 1) * HOLOPIX_CANVAS_CELL_GAP;
-}
-
-export function buildHolopixCanvasStripRuns(
-  previews: Array<AiCandidatePreview | undefined>
-): HolopixCanvasStripRun[] {
-  holopixCanvasStripWidth(previews.length);
-  const scale = HOLOPIX_CANVAS_PREVIEW_SIZE / HOLOPIX_CANVAS_SAMPLE_SIZE;
-  const runs: HolopixCanvasStripRun[] = [];
-  const lastRunBySignature = new Map<string, HolopixCanvasStripRun>();
-  previews.forEach((preview, index) => {
-    if (!preview) return;
-    const offsetX = index * (HOLOPIX_CANVAS_PREVIEW_SIZE + HOLOPIX_CANVAS_CELL_GAP);
-    for (const run of buildHolopixCanvasRuns(preview, HOLOPIX_CANVAS_SAMPLE_SIZE)) {
-      const x = offsetX + run.x * scale;
-      const y = run.y * scale;
-      const width = run.width * scale;
-      const signature = `${x}:${width}:${run.color}`;
-      const previous = lastRunBySignature.get(signature);
-      if (previous && previous.y + previous.height === y) {
-        previous.height += scale;
-        continue;
-      }
-      const next = { x, y, width, height: scale, color: run.color };
-      runs.push(next);
-      lastRunBySignature.set(signature, next);
-    }
-  });
-  return runs;
-}
-
-function sampleQuantizedColor(
-  preview: AiCandidatePreview,
-  outputX: number,
-  outputY: number,
-  outputSize: number
-): string {
-  const startX = Math.floor(outputX * preview.width / outputSize);
-  const endX = Math.max(startX + 1, Math.floor((outputX + 1) * preview.width / outputSize));
-  const startY = Math.floor(outputY * preview.height / outputSize);
-  const endY = Math.max(startY + 1, Math.floor((outputY + 1) * preview.height / outputSize));
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  let count = 0;
-  for (let y = startY; y < endY; y += 1) {
-    for (let x = startX; x < endX; x += 1) {
-      const offset = (y * preview.width + x) * 4;
-      red += preview.pixels[offset]!;
-      green += preview.pixels[offset + 1]!;
-      blue += preview.pixels[offset + 2]!;
-      count += 1;
-    }
-  }
-  return `rgb(${quantizeColor(red / count)},${quantizeColor(green / count)},${quantizeColor(blue / count)})`;
-}
-
-function quantizeColor(value: number): number {
-  return Math.min(255, Math.max(0, Math.round(value / 16) * 16));
 }
 
 function buildAnnotatedOutputPath(
