@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  filterHolopixDeletedCandidateImages,
   HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY,
   holopixPendingSubmissionMatchesScope,
   loadHolopixPendingSubmissions,
   promoteHolopixPendingSubmissionToOutput,
+  removeHolopixPersistedCandidateImages,
   removeHolopixPendingSubmissions,
   saveHolopixPendingSubmission,
   type HolopixPendingSubmissionRecord,
@@ -54,6 +56,48 @@ describe("Holopix pending submission persistence", () => {
     saveHolopixPendingSubmission(record({ submissionKey: "second" }), store);
     expect(removeHolopixPendingSubmissions(["c_cleaning1:123:0"], store)).toBe(true);
     expect(loadHolopixPendingSubmissions(store).map((entry) => entry.submissionKey)).toEqual(["second"]);
+  });
+
+  it("removes only selected persisted output images and drops an empty output record", () => {
+    const store = new MemoryStorage();
+    const scope = {
+      documentIdentity: "file:d:/work/cleaning.psd",
+      assetCode: "c_cleaning1",
+      workflowVersion: "flux" as const
+    };
+    const imageA = { filename: "a.png", subfolder: "batch", type: "output", url: "a" };
+    const imageB = { filename: "b.png", subfolder: "batch", type: "output", url: "b" };
+    const imageC = { filename: "c.png", subfolder: "batch", type: "output", url: "c" };
+    saveHolopixPendingSubmission(record({
+      outcome: "output",
+      images: [imageA, imageB]
+    }), store);
+    saveHolopixPendingSubmission(record({
+      submissionKey: "second",
+      outcome: "output",
+      images: [imageC]
+    }), store);
+
+    expect(removeHolopixPersistedCandidateImages([{
+      submissionKey: "c_cleaning1:123:0",
+      image: imageA,
+      scope
+    }], store)).toBe(true);
+    expect(loadHolopixPendingSubmissions(store)).toEqual([
+      expect.objectContaining({ images: [expect.objectContaining({ filename: "b.png" })] }),
+      expect.objectContaining({ submissionKey: "second" })
+    ]);
+
+    expect(removeHolopixPersistedCandidateImages([
+      { submissionKey: "c_cleaning1:123:0", image: imageB, scope },
+      { submissionKey: "second", image: imageC, scope }
+    ], store)).toBe(true);
+    expect(loadHolopixPendingSubmissions(store)).toEqual([]);
+    expect(filterHolopixDeletedCandidateImages([imageA, imageB, imageC], scope, store)).toEqual([]);
+    expect(filterHolopixDeletedCandidateImages([imageA], {
+      ...scope,
+      workflowVersion: "gpt-image-2"
+    }, store)).toEqual([imageA]);
   });
 
   it("ignores malformed stored records", () => {

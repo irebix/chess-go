@@ -37,6 +37,7 @@ export interface GptImage2ChainGenerationOptions {
   items: GptImage2ChainItem[];
   signal?: AbortSignal;
   onStage?: (message: string) => void;
+  onExecutionStatus?: (message: string) => void;
   onBeforeSubmit?: () => void | Promise<void>;
   onSubmissionLifecycle?: (event: HolopixSubmissionLifecycleEvent) => void;
   onImagesReady?: (
@@ -93,9 +94,15 @@ export async function generateGptImage2Chain(
     ...submissionEvent
   }, options.onStage);
 
+  let queuedPrompt: Awaited<ReturnType<typeof queueComfyWorkflow>>;
   let promptId: string;
   try {
-    promptId = await queueComfyWorkflow(prepared.workflow, options.signal);
+    queuedPrompt = await queueComfyWorkflow(
+      prepared.workflow,
+      options.signal,
+      options.onExecutionStatus
+    );
+    promptId = queuedPrompt.promptId;
   } catch (error) {
     if (!isAmbiguousSubmissionTransportError(error)) {
       notifyHolopixSubmissionLifecycle(options.onSubmissionLifecycle, {
@@ -146,6 +153,8 @@ export async function generateGptImage2Chain(
       "GPT Image 2 整链已提交，但等待结果时被中止；任务可能仍在 ComfyUI 后台运行。",
       { promptId, submissionKey }
     );
+  } finally {
+    queuedPrompt.stopStatusMonitor();
   }
 
   const rawByAssetCode = mapImagesToItems(rawImages, options.items);

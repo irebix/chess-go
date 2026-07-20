@@ -8,10 +8,12 @@ import {
   appendAiCandidateSlots,
   buildAiCandidateGenerationBatches,
   failAiCandidateGenerationRemainder,
+  isAiCandidateDeletable,
   isAiCandidateActionDisabled,
   markAiCandidateGenerationUnknown,
   mergeRecoveredAiCandidateImages,
   reconcileAiItemStates,
+  removeAiCandidateImages,
   restoreAiPendingSubmission,
   selectedAiReferenceImage,
   summarizeAiCandidates,
@@ -61,13 +63,16 @@ import {
 import { isStablePsdDocumentIdentity } from "../photoshop/psdDocumentIdentity";
 import { toErrorMessage } from "../utils/errors";
 import {
+  filterHolopixDeletedCandidateImages,
   holopixPendingSubmissionMatchesScope,
   effectivePendingWorkflowVersion,
   loadHolopixPendingSubmissions,
   persistableHolopixImages,
   promoteHolopixPendingSubmissionToOutput,
+  removeHolopixPersistedCandidateImages,
   removeHolopixPendingSubmissions,
   saveHolopixPendingSubmission,
+  type HolopixPersistedCandidateRemoval,
   type HolopixPendingSubmissionRecord
 } from "../services/HolopixPendingSubmissionService";
 
@@ -159,6 +164,10 @@ export function AiGenerationPanel({
   const [running, setRunning] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [syncingCandidateId, setSyncingCandidateId] = useState<string | null>(null);
+  const [editingCandidates, setEditingCandidates] = useState(false);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(() => new Set());
+  const [generationProgressText, setGenerationProgressText] = useState("候选图片进度");
+  const [queuedGenerationJobs, setQueuedGenerationJobs] = useState(0);
   const [promptSource, setPromptSource] = useState<HolopixPromptSource | null>(null);
   const [promptDraft, setPromptDraft] = useState("");
   const [promptEditorHeight, setPromptEditorHeight] = useState(86);
@@ -260,7 +269,23 @@ export function AiGenerationPanel({
   );
   const itemStates = groupItems.flatMap((item) => states[item.key] ? [states[item.key]!] : []);
   const stats = summarizeAiCandidates(itemStates);
+  const deletableCandidates = useMemo(
+    () => groupItems.flatMap((item) => (
+      states[item.key]?.candidates.filter(isAiCandidateDeletable) ?? []
+    )),
+    [groupItems, states]
+  );
+  const deletableCandidateIds = useMemo(
+    () => new Set(deletableCandidates.map((candidate) => candidate.id)),
+    [deletableCandidates]
+  );
+  const selectedDeletableCount = deletableCandidates.filter(
+    (candidate) => selectedCandidateIds.has(candidate.id)
+  ).length;
+  const allDeletableSelected = deletableCandidates.length > 0
+    && selectedDeletableCount === deletableCandidates.length;
   const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
+  const currentPsdIdentity = psdReferences[0]?.documentIdentity ?? "";
   const runtimePromptText = useMemo(() => {
     if (!selectedItem) return "";
     const candidates = states[selectedItem.key]?.candidates ?? [];
@@ -270,10 +295,13 @@ export function AiGenerationPanel({
       ?.image?.promptText?.trim()
       ?? (workflowVersion === "gpt-image-2" ? selectedItem.name?.trim() || selectedItem.assetCode : "");
   }, [selectedItem, states, workflowVersion]);
-  const controlsDisabled = externalBusy || running || recovering || Boolean(syncingCandidateId);
-  const countControlsDisabled = externalBusy || recovering || Boolean(syncingCandidateId);
-  const backfillDisabled = externalBusy || recovering || Boolean(syncingCandidateId);
-  const promptRegenerationDisabled = externalBusy || recovering || Boolean(syncingCandidateId);
+  const candidateEditingLocked = externalBusy || running || recovering || Boolean(syncingCandidateId);
+  const controlsDisabled = candidateEditingLocked || editingCandidates;
+  const countControlsDisabled = externalBusy || recovering || Boolean(syncingCandidateId) || editingCandidates;
+  const backfillDisabled = externalBusy || recovering || Boolean(syncingCandidateId) || editingCandidates;
+  const promptRegenerationDisabled = externalBusy || recovering
+    || Boolean(syncingCandidateId)
+    || editingCandidates;
   const remainingCount = itemStates.reduce(
     (count, state) => count + state.candidates.filter(
       (candidate) => candidate.status === "idle" || candidate.status === "failed"
@@ -285,6 +313,11 @@ export function AiGenerationPanel({
     ...itemStates.map((state) => state.candidates.length)
   );
   const matrixWidth = aiCandidateMatrixWidth(displayedCandidateCount);
+  const displayedGenerationProgressText = running
+    ? `${generationProgressText}${queuedGenerationJobs ? ` · 本地排队 ${queuedGenerationJobs} 项` : ""}`
+    : recovering
+      ? "正在恢复已有候选"
+      : "候选图片进度";
 
   useEffect(() => {
     if (!activeGroups.length) {
@@ -322,6 +355,18 @@ export function AiGenerationPanel({
       setSelectedItemKey(groupItems[0]?.key ?? "");
     }
   }, [groupItems, selectedItemKey]);
+
+  useEffect(() => {
+    setEditingCandidates(false);
+    setSelectedCandidateIds(new Set());
+  }, [currentPsdIdentity, selectedGroup?.id, workflowVersion]);
+
+  useEffect(() => {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => deletableCandidateIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [deletableCandidateIds]);
 
   useEffect(() => {
     setPromptDraft(runtimePromptText);
@@ -454,6 +499,16 @@ export function AiGenerationPanel({
     return () => onBusyChange(false);
   }, [onBusyChange, recovering, running, syncingCandidateId]);
 
+  function visibleRecoveredImages(item: AssetCandidate, images: AiGeneratedImage[]): AiGeneratedImage[] {
+    const reference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+    if (!reference) return images;
+    return filterHolopixDeletedCandidateImages(images, {
+      documentIdentity: reference.documentIdentity,
+      assetCode: reference.assetCode,
+      workflowVersion
+    });
+  }
+
   async function handleRecoverExisting(): Promise<void> {
     if (!selectedGroup || controlsDisabled || !generationItems.length) return;
     setRecovering(true);
@@ -490,7 +545,10 @@ export function AiGenerationPanel({
               : []
           )));
           for (const promptId of promptIds) {
-            const exactImages = recovered.byPromptId[promptId] ?? [];
+            const exactImages = visibleRecoveredImages(
+              item,
+              recovered.byPromptId[promptId] ?? []
+            );
             const merged = mergeRecoveredAiCandidateImages(
               state,
               exactImages,
@@ -519,7 +577,7 @@ export function AiGenerationPanel({
           }
           const mergedRecent = mergeRecoveredAiCandidateImages(
             state,
-            recovered.recentByAssetCode[item.assetCode] ?? []
+            visibleRecoveredImages(item, recovered.recentByAssetCode[item.assetCode] ?? [])
           );
           next[item.key] = mergedRecent.item;
           recoveredCount += mergedRecent.recoveredCount;
@@ -583,7 +641,10 @@ export function AiGenerationPanel({
             : []
         )));
         for (const promptId of promptIds) {
-          const exactImages = recovered.byPromptId[promptId]?.[item.assetCode] ?? [];
+          const exactImages = visibleRecoveredImages(
+            item,
+            recovered.byPromptId[promptId]?.[item.assetCode] ?? []
+          );
           const merged = mergeRecoveredAiCandidateImages(state, exactImages, { promptId });
           state = merged.item;
           recoveredCount += merged.recoveredCount;
@@ -608,7 +669,7 @@ export function AiGenerationPanel({
         }
         const mergedRecent = mergeRecoveredAiCandidateImages(
           state,
-          recovered.recentByAssetCode[item.assetCode] ?? []
+          visibleRecoveredImages(item, recovered.recentByAssetCode[item.assetCode] ?? [])
         );
         next[item.key] = mergedRecent.item;
         recoveredCount += mergedRecent.recoveredCount;
@@ -656,13 +717,91 @@ export function AiGenerationPanel({
     });
     removeHolopixPendingSubmissions(submissionKeys);
     onStatus(
-      `已确认放弃 ${abandonedCount} 张待确认候选；请先检查“恢复已有候选（不生成）”，再决定是否重新生成。`,
+      `已确认放弃 ${abandonedCount} 张待确认候选；请先检查“恢复已有候选”，再决定是否重新生成。`,
       "warn"
+    );
+  }
+
+  function beginCandidateEditing(): void {
+    if (candidateEditingLocked || !deletableCandidates.length) return;
+    setSelectedCandidateIds(new Set());
+    setEditingCandidates(true);
+  }
+
+  function finishCandidateEditing(): void {
+    setSelectedCandidateIds(new Set());
+    setEditingCandidates(false);
+  }
+
+  function toggleCandidateForDeletion(candidateId: string): void {
+    if (!editingCandidates || !deletableCandidateIds.has(candidateId)) return;
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (next.has(candidateId)) next.delete(candidateId);
+      else next.add(candidateId);
+      return next;
+    });
+  }
+
+  function toggleAllCandidatesForDeletion(): void {
+    if (!editingCandidates) return;
+    setSelectedCandidateIds(allDeletableSelected
+      ? new Set()
+      : new Set(deletableCandidateIds));
+  }
+
+  function handleDeleteSelectedCandidates(): void {
+    if (!editingCandidates || candidateEditingLocked || !selectedDeletableCount) return;
+    const selectedIds = new Set(
+      Array.from(selectedCandidateIds).filter((id) => deletableCandidateIds.has(id))
+    );
+    const next = { ...statesRef.current };
+    const removedCandidates: ReturnType<typeof removeAiCandidateImages>["removed"] = [];
+    const persistedRemovals: HolopixPersistedCandidateRemoval[] = [];
+    for (const item of groupItems) {
+      const state = next[item.key];
+      if (!state) continue;
+      const result = removeAiCandidateImages(state, selectedIds, candidateCount);
+      next[item.key] = result.item;
+      removedCandidates.push(...result.removed);
+      const reference = generatablePsdReferencesByAssetCode.get(item.assetCode);
+      if (reference) {
+        persistedRemovals.push(...result.removed.map((candidate) => ({
+          ...(candidate.submissionKey ? { submissionKey: candidate.submissionKey } : {}),
+          image: candidate.image,
+          scope: {
+            documentIdentity: reference.documentIdentity,
+            assetCode: reference.assetCode,
+            workflowVersion
+          }
+        })));
+      }
+    }
+    if (!removedCandidates.length) {
+      finishCandidateEditing();
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定从当前候选列表删除已选的 ${removedCandidates.length} 张图片吗？\n\n`
+      + "不会删除 ComfyUI 原图或历史；已经回填到 PSD 的图层也不会改变。"
+    );
+    if (!confirmed) return;
+    const persisted = removeHolopixPersistedCandidateImages(persistedRemovals);
+    if (!persisted) {
+      onStatus("删除候选失败：无法更新本地候选记录；没有移除任何图片。", "error");
+      return;
+    }
+    updateStates(() => next);
+    finishCandidateEditing();
+    onStatus(
+      `已从当前候选列表删除 ${removedCandidates.length} 张图片；ComfyUI 原图、历史和 PSD 均未修改。`
     );
   }
 
   function enqueueGeneration(job: QueuedGenerationJob): void {
     generationQueueRef.current.push(job);
+    setQueuedGenerationJobs(generationQueueRef.current.length);
+    if (!queueProcessingRef.current) setGenerationProgressText("正在准备 ComfyUI");
     void processGenerationQueue();
   }
 
@@ -673,6 +812,12 @@ export function AiGenerationPanel({
     try {
       while (generationQueueRef.current.length) {
         const job = generationQueueRef.current.shift()!;
+        setQueuedGenerationJobs(generationQueueRef.current.length);
+        setGenerationProgressText(
+          job.workflowVersion === "gpt-image-2"
+            ? "正在准备 GPT Image 2 整链"
+            : `正在准备 ${job.item.assetCode}`
+        );
         if (job.workflowVersion === "gpt-image-2") {
           await processGptImage2GenerationJob(job);
           continue;
@@ -723,6 +868,7 @@ export function AiGenerationPanel({
             job.slotIndexes.length,
             controller.signal,
             (message) => onStatus(`Holopix ${job.item.assetCode}：${message}`),
+            setGenerationProgressText,
             job.promptText,
             job.psdReference,
             (batchImages, completedBeforeBatch, _totalCandidates, submission) => {
@@ -791,7 +937,7 @@ export function AiGenerationPanel({
               } : current;
             });
             onStatus(
-              `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选（不生成）”核对结果。`,
+              `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选”核对结果。`,
               "warn"
             );
           } else if (!failedSlotIndexes.length && completedSlotCount === job.slotIndexes.length) {
@@ -836,6 +982,8 @@ export function AiGenerationPanel({
       }
     } finally {
       queueProcessingRef.current = false;
+      setQueuedGenerationJobs(0);
+      setGenerationProgressText("候选图片进度");
       setRunning(false);
     }
   }
@@ -876,6 +1024,7 @@ export function AiGenerationPanel({
         })),
         signal: controller.signal,
         onStage: (message) => onStatus(`GPT Image 2：${message}`),
+        onExecutionStatus: setGenerationProgressText,
         onBeforeSubmit: async () => {
           for (const entry of job.entries) {
             if (!currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(entry.psdReference))) {
@@ -930,7 +1079,7 @@ export function AiGenerationPanel({
           error.submissionKey
         ));
         onStatus(
-          `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选（不生成）”核对结果。`,
+          `${job.failurePrefix}：${detail} 请稍后使用“恢复已有候选”核对结果。`,
           "warn"
         );
       } else if (remaining.length) {
@@ -1293,7 +1442,7 @@ export function AiGenerationPanel({
                 className="ai-recover-existing"
                 disabled={controlsDisabled || !generationItems.length}
                 onClick={() => void handleRecoverExisting()}
-              >{recovering ? "正在恢复……" : "恢复已有候选（不生成）"}</button>
+              >{recovering ? "正在恢复……" : "恢复已有候选"}</button>
             ) : null}
             {stats.unknown ? (
               <button
@@ -1303,11 +1452,16 @@ export function AiGenerationPanel({
               >确认放弃 {stats.unknown} 张待确认结果</button>
             ) : null}
             <div className="ai-generation-progress">
-              <div><span>候选图片进度</span><strong>{stats.completed} / {stats.total} 张</strong></div>
+              <div>
+                <span className="ai-generation-progress-label" title={displayedGenerationProgressText}>
+                  {displayedGenerationProgressText}
+                </span>
+                <strong>{stats.completed} / {stats.total} 张</strong>
+              </div>
               <div
                 className="ai-progress-track"
                 role="progressbar"
-                aria-label="候选图片进度"
+                aria-label={displayedGenerationProgressText}
                 aria-valuemin={0}
                 aria-valuemax={Math.max(1, stats.total)}
                 aria-valuenow={stats.completed}
@@ -1340,7 +1494,36 @@ export function AiGenerationPanel({
             </div>
           ) : null}
 
-          <div className="ai-matrix-shell">
+          <div className={`ai-matrix-shell ${editingCandidates ? "is-editing" : ""}`}>
+            <div className={`ai-candidate-edit-actions ${editingCandidates ? "is-expanded" : "is-compact"}`}>
+              {editingCandidates ? (
+                <>
+                  <small>已选 {selectedDeletableCount}</small>
+                  <button
+                    type="button"
+                    disabled={candidateEditingLocked || !deletableCandidates.length}
+                    aria-pressed={allDeletableSelected}
+                    onClick={toggleAllCandidatesForDeletion}
+                  >{allDeletableSelected ? "取消全选" : "全选"}</button>
+                  <button
+                    type="button"
+                    className="is-danger"
+                    disabled={candidateEditingLocked || !selectedDeletableCount}
+                    onClick={handleDeleteSelectedCandidates}
+                  >删除</button>
+                  <button type="button" onClick={finishCandidateEditing}>完成</button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="ai-candidate-more"
+                  disabled={candidateEditingLocked || !deletableCandidates.length}
+                  aria-label="管理候选"
+                  title="管理候选"
+                  onClick={beginCandidateEditing}
+                >···</button>
+              )}
+            </div>
             <div className="ai-matrix-viewport" ref={matrixViewportRef}>
               <div
                 className="ai-matrix-content"
@@ -1392,6 +1575,8 @@ export function AiGenerationPanel({
                         ) : (
                           <CandidateStrip
                             candidates={state?.candidates}
+                            editMode={editingCandidates}
+                            selectedCandidateIds={selectedCandidateIds}
                             individualGenerationEnabled={workflowVersion === "flux"}
                             generationDisabled={controlsDisabled}
                             backfillDisabled={backfillDisabled}
@@ -1403,6 +1588,7 @@ export function AiGenerationPanel({
                             onPreviewState={reportPreviewState}
                             onAccept={(candidate) => void handleAccept(item, candidate)}
                             onRegenerate={(slotIndex) => void handleRegenerate(item, slotIndex)}
+                            onToggleDeletion={toggleCandidateForDeletion}
                           />
                         )}
                       </div>
@@ -1476,15 +1662,20 @@ function ReferencePreview({
 
 function CandidateStrip({
   candidates,
+  editMode,
+  selectedCandidateIds,
   individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
   noReferenceLabel,
   onPreviewState,
   onAccept,
-  onRegenerate
+  onRegenerate,
+  onToggleDeletion
 }: {
   candidates?: AiCandidateSlot[];
+  editMode: boolean;
+  selectedCandidateIds: ReadonlySet<string>;
   individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
@@ -1492,6 +1683,7 @@ function CandidateStrip({
   onPreviewState: (state: CandidatePreviewState, detail?: string) => void;
   onAccept: (candidate: AiCandidateSlot) => void;
   onRegenerate: (slotIndex: number) => void;
+  onToggleDeletion: (candidateId: string) => void;
 }): React.ReactElement {
   const [rootRef, visible] = useNearViewport<HTMLDivElement>(true);
 
@@ -1508,11 +1700,14 @@ function CandidateStrip({
             : null}
           <CandidateCell
             candidate={candidate}
+            editMode={editMode}
+            selectedForDeletion={selectedCandidateIds.has(candidate.id)}
             individualGenerationEnabled={individualGenerationEnabled}
             generationDisabled={generationDisabled}
             backfillDisabled={backfillDisabled}
             onAccept={() => onAccept(candidate)}
             onRegenerate={() => onRegenerate(slotIndex)}
+            onToggleDeletion={() => onToggleDeletion(candidate.id)}
           />
         </span>
       ))}
@@ -1523,50 +1718,75 @@ function CandidateStrip({
 
 function CandidateCell({
   candidate,
+  editMode,
+  selectedForDeletion,
   individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
   onAccept,
-  onRegenerate
+  onRegenerate,
+  onToggleDeletion
 }: {
   candidate: AiCandidateSlot;
+  editMode: boolean;
+  selectedForDeletion: boolean;
   individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
   onAccept: () => void;
   onRegenerate: () => void;
+  onToggleDeletion: () => void;
 }): React.ReactElement {
   const action = aiCandidateAction(candidate);
   const interactive = action === "backfill";
   const preview = candidate.image?.preview;
-  const actionDisabled = action === "generate" && !individualGenerationEnabled
-    ? true
-    : isAiCandidateActionDisabled(candidate, generationDisabled, backfillDisabled);
-  const actionable = !actionDisabled;
+  const deleteEligible = isAiCandidateDeletable(candidate);
+  const actionDisabled = editMode
+    ? !deleteEligible
+    : action === "generate" && !individualGenerationEnabled
+      ? true
+      : isAiCandidateActionDisabled(candidate, generationDisabled, backfillDisabled);
+  const actionable = editMode ? deleteEligible : !actionDisabled;
   const activate = (): void => {
     if (!actionable) return;
+    if (editMode) {
+      onToggleDeletion();
+      return;
+    }
     if (action === "backfill") onAccept();
     else if (action === "generate") onRegenerate();
   };
   return (
     <button
-      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""}`}
+      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""} ${editMode ? "is-delete-mode" : ""} ${selectedForDeletion ? "is-delete-selected" : ""}`}
       disabled={actionDisabled}
-      aria-label={candidate.status === "accepted" ? "重新插入当前画板预览候选" : interactive ? "插入画板预览候选" : candidateStatusLabel(candidate)}
-      title={candidate.error || candidate.image?.previewError || (
-        candidate.status === "accepted"
-          ? "当前画板预览；点击可重新插入"
-          : interactive
-            ? "点击图片插入对应 Photoshop 画板预览"
-            : individualGenerationEnabled
-              ? "点击生成或重试"
-              : "GPT Image 2 需要使用“重新生成选中链”生成整条链"
-      )}
+      aria-pressed={editMode && deleteEligible ? selectedForDeletion : undefined}
+      aria-label={editMode && deleteEligible
+        ? `${selectedForDeletion ? "取消选择" : "选择"}删除候选 ${candidate.label}`
+        : candidate.status === "accepted"
+          ? "重新插入当前画板预览候选"
+          : interactive ? "插入画板预览候选" : candidateStatusLabel(candidate)}
+      title={editMode
+        ? deleteEligible ? "选择或取消选择这张候选" : "当前状态不可删除"
+        : candidate.error || candidate.image?.previewError || (
+          candidate.status === "accepted"
+            ? "当前画板预览；点击可重新插入"
+            : interactive
+              ? "点击图片插入对应 Photoshop 画板预览"
+              : individualGenerationEnabled
+                ? "点击生成或重试"
+                : "GPT Image 2 需要使用“重新生成选中链”生成整条链"
+        )}
       onClick={(event) => {
         event.stopPropagation();
         activate();
       }}
     >
+      {editMode && deleteEligible ? (
+        <span className={`ai-candidate-delete-check ${selectedForDeletion ? "is-selected" : ""}`}>
+          {selectedForDeletion ? "✓" : ""}
+        </span>
+      ) : null}
       {interactive
         ? preview ? null : <small className="ai-candidate-preview-fallback">预览失败</small>
         : <span className="ai-candidate-status">{candidateStatusLabel(candidate)}</span>}
@@ -1663,6 +1883,7 @@ async function runItemGeneration(
   candidateCount: number,
   signal: AbortSignal,
   onStage: (message: string) => void,
+  onExecutionStatus: (message: string) => void,
   promptText?: string,
   psdReference?: PsdAiReference,
   onBatchCompleted?: (
@@ -1685,6 +1906,7 @@ async function runItemGeneration(
       assetCode: item.assetCode,
       signal,
       onStage,
+      onExecutionStatus,
       onBatchCompleted,
       onBeforeBatchSubmit,
       onSubmissionLifecycle
@@ -1702,6 +1924,7 @@ async function runItemGeneration(
       assetCode: item.assetCode,
       signal,
       onStage,
+      onExecutionStatus,
       onBatchCompleted,
       onBeforeBatchSubmit,
       onSubmissionLifecycle
@@ -1730,6 +1953,7 @@ async function runItemGeneration(
     assetCode: item.assetCode,
     signal,
     onStage,
+    onExecutionStatus,
     onBatchCompleted,
     onBeforeBatchSubmit,
     onSubmissionLifecycle

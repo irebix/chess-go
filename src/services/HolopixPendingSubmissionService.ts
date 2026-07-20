@@ -5,6 +5,7 @@ import type {
 import type { AiWorkflowVersion } from "../ai/aiWorkflowVersion";
 
 export const HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY = "chess-go:holopix-pending-submissions:v2";
+export const HOLOPIX_DELETED_CANDIDATES_STORAGE_KEY = "chess-go:deleted-ai-candidates:v1";
 
 export interface HolopixPendingSubmissionRecord extends AiPendingSubmissionSnapshot {
   version: 2;
@@ -31,6 +32,24 @@ export interface HolopixPendingSubmissionScope {
   artboardId: number;
   referenceLayerId: number;
   workflowVersion?: AiWorkflowVersion;
+}
+
+export interface HolopixPersistedCandidateRemoval {
+  submissionKey?: string;
+  image: AiGeneratedImage;
+  scope: HolopixDeletedCandidateScope;
+}
+
+export interface HolopixDeletedCandidateScope {
+  documentIdentity: string;
+  assetCode: string;
+  workflowVersion: AiWorkflowVersion;
+}
+
+export interface HolopixDeletedCandidateRecord extends HolopixDeletedCandidateScope {
+  version: 1;
+  imageKey: string;
+  deletedAt: number;
 }
 
 export function holopixPendingSubmissionMatchesScope(
@@ -121,6 +140,90 @@ export function removeHolopixPendingSubmissions(
   }
 }
 
+export function removeHolopixPersistedCandidateImages(
+  removals: Iterable<HolopixPersistedCandidateRemoval>,
+  store: PendingSubmissionStorageLike = localStorage
+): boolean {
+  const normalizedRemovals = Array.from(removals).filter((removal) => (
+    Boolean(removal.scope.documentIdentity.trim())
+    && Boolean(removal.scope.assetCode.trim())
+  ));
+  if (!normalizedRemovals.length) return true;
+  const imageKeysBySubmission = new Map<string, Set<string>>();
+  for (const removal of normalizedRemovals) {
+    const submissionKey = removal.submissionKey?.trim();
+    if (!submissionKey) continue;
+    const imageKeys = imageKeysBySubmission.get(submissionKey) ?? new Set<string>();
+    imageKeys.add(persistedImageKey(removal.image));
+    imageKeysBySubmission.set(submissionKey, imageKeys);
+  }
+  try {
+    const previousPendingRaw = store.getItem(HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY);
+    const nextPending = loadHolopixPendingSubmissions(store).flatMap((record) => {
+      const imageKeys = imageKeysBySubmission.get(record.submissionKey);
+      if (!imageKeys || !record.images?.length) return [record];
+      const images = record.images.filter((image) => !imageKeys.has(persistedImageKey(image)));
+      if (images.length === record.images.length) return [record];
+      if (record.outcome === "output" && !images.length) return [];
+      return [{ ...record, images }];
+    });
+    if (imageKeysBySubmission.size) {
+      store.setItem(HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY, JSON.stringify(nextPending));
+    }
+    const deletedByKey = new Map(
+      loadHolopixDeletedCandidates(store).map((record) => [deletedCandidateRecordKey(record), record])
+    );
+    const deletedAt = Date.now();
+    for (const removal of normalizedRemovals) {
+      const record: HolopixDeletedCandidateRecord = {
+        version: 1,
+        ...removal.scope,
+        imageKey: persistedImageKey(removal.image),
+        deletedAt
+      };
+      deletedByKey.set(deletedCandidateRecordKey(record), record);
+    }
+    const deleted = Array.from(deletedByKey.values())
+      .sort((left, right) => right.deletedAt - left.deletedAt)
+      .slice(0, 2000);
+    try {
+      store.setItem(HOLOPIX_DELETED_CANDIDATES_STORAGE_KEY, JSON.stringify(deleted));
+    } catch (error) {
+      if (imageKeysBySubmission.size) {
+        store.setItem(HOLOPIX_PENDING_SUBMISSIONS_STORAGE_KEY, previousPendingRaw ?? "[]");
+      }
+      throw error;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadHolopixDeletedCandidates(
+  store: PendingSubmissionStorageLike = localStorage
+): HolopixDeletedCandidateRecord[] {
+  try {
+    const raw = store.getItem(HOLOPIX_DELETED_CANDIDATES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isDeletedCandidateRecord) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function filterHolopixDeletedCandidateImages(
+  images: AiGeneratedImage[],
+  scope: HolopixDeletedCandidateScope,
+  store: PendingSubmissionStorageLike = localStorage
+): AiGeneratedImage[] {
+  const deletedImageKeys = new Set(loadHolopixDeletedCandidates(store).flatMap((record) => (
+    deletedCandidateMatchesScope(record, scope) ? [record.imageKey] : []
+  )));
+  return images.filter((image) => !deletedImageKeys.has(persistedImageKey(image)));
+}
+
 function isPendingSubmissionRecord(value: unknown): value is HolopixPendingSubmissionRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Partial<HolopixPendingSubmissionRecord>;
@@ -165,6 +268,43 @@ function isPersistedGeneratedImage(value: unknown): boolean {
     && Boolean(image.url)
     && (image.promptText === undefined || typeof image.promptText === "string")
     && (image.previewError === undefined || typeof image.previewError === "string");
+}
+
+function isDeletedCandidateRecord(value: unknown): value is HolopixDeletedCandidateRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Partial<HolopixDeletedCandidateRecord>;
+  return record.version === 1
+    && typeof record.documentIdentity === "string"
+    && Boolean(record.documentIdentity.trim())
+    && typeof record.assetCode === "string"
+    && Boolean(record.assetCode.trim())
+    && (record.workflowVersion === "flux" || record.workflowVersion === "gpt-image-2")
+    && typeof record.imageKey === "string"
+    && Boolean(record.imageKey)
+    && typeof record.deletedAt === "number"
+    && Number.isFinite(record.deletedAt);
+}
+
+function deletedCandidateMatchesScope(
+  record: HolopixDeletedCandidateRecord,
+  scope: HolopixDeletedCandidateScope
+): boolean {
+  return record.documentIdentity === scope.documentIdentity
+    && record.assetCode === scope.assetCode
+    && record.workflowVersion === scope.workflowVersion;
+}
+
+function deletedCandidateRecordKey(record: HolopixDeletedCandidateRecord): string {
+  return [
+    record.documentIdentity,
+    record.assetCode,
+    record.workflowVersion,
+    record.imageKey
+  ].join("|");
+}
+
+function persistedImageKey(image: Pick<AiGeneratedImage, "filename" | "subfolder" | "type">): string {
+  return `${image.type}:${image.subfolder}:${image.filename}`;
 }
 
 function isFiniteInteger(value: unknown): value is number {

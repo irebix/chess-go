@@ -8,10 +8,12 @@ import {
   appendAiCandidateSlots,
   buildAiCandidateGenerationBatches,
   failAiCandidateGenerationRemainder,
+  isAiCandidateDeletable,
   isAiCandidateActionDisabled,
   markAiCandidateGenerationUnknown,
   mergeRecoveredAiCandidateImages,
   reconcileAiItemStates,
+  removeAiCandidateImages,
   restoreAiPendingSubmission,
   selectedAiReferenceImage,
   summarizeAiCandidates
@@ -49,6 +51,49 @@ describe("AI candidate state", () => {
     const second = acceptAiCandidate(first, first.candidates[1]!.id);
     expect(second.candidates.map((slot) => slot.status)).toEqual(["ready", "accepted"]);
     expect(summarizeAiCandidates([second])).toMatchObject({ total: 2, completed: 2, accepted: 1 });
+  });
+
+  it("removes selected generated images, preserves base slots and trims deleted history slots", () => {
+    let state = appendAiCandidateSlots(
+      reconcileAiItemStates({}, [item], 2)[item.key]!,
+      2
+    );
+    state = {
+      ...state,
+      candidates: state.candidates.map((candidate, index) => ({
+        ...candidate,
+        status: index === 1 ? "accepted" as const : "ready" as const,
+        image: {
+          filename: `${candidate.label}.png`,
+          subfolder: "Holopix/ChessGo/103001",
+          type: "output",
+          url: candidate.label,
+          promptText: `prompt ${candidate.label}`
+        },
+        submissionKey: index < 2 ? "batch-1" : `batch-${index}`
+      }))
+    };
+
+    expect(state.candidates.every(isAiCandidateDeletable)).toBe(true);
+    const removed = removeAiCandidateImages(
+      state,
+      [state.candidates[1]!.id, state.candidates[3]!.id],
+      2
+    );
+
+    expect(removed.removed.map((candidate) => candidate.image.filename)).toEqual(["B.png", "D.png"]);
+    expect(removed.item.candidates).toHaveLength(3);
+    expect(removed.item.candidates.map((candidate) => candidate.status)).toEqual(["ready", "idle", "ready"]);
+    expect(removed.item.candidates[1]).toMatchObject({ retryPromptText: "prompt B" });
+    expect(isAiCandidateDeletable(removed.item.candidates[1]!)).toBe(false);
+
+    const cleared = removeAiCandidateImages(
+      removed.item,
+      removed.item.candidates.filter(isAiCandidateDeletable).map((candidate) => candidate.id),
+      2
+    );
+    expect(cleared.item.candidates).toHaveLength(2);
+    expect(cleared.item.candidates.map((candidate) => candidate.status)).toEqual(["idle", "idle"]);
   });
 
   it("uses only the Excel image explicitly selected for the generated PSD", () => {

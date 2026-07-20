@@ -65,6 +65,12 @@ export interface AiCandidateStats {
   accepted: number;
 }
 
+export interface RemovedAiCandidateImage {
+  candidateId: string;
+  image: AiGeneratedImage;
+  submissionKey?: string;
+}
+
 export type AiCandidateAction = "backfill" | "generate" | null;
 
 export function reconcileAiItemStates(
@@ -396,6 +402,51 @@ export function acceptAiCandidate(
       if (candidate.status === "accepted") return { ...candidate, status: "ready" };
       return candidate;
     })
+  };
+}
+
+export function isAiCandidateDeletable(candidate: AiCandidateSlot): boolean {
+  return Boolean(
+    candidate.image
+    && (candidate.status === "ready" || candidate.status === "accepted")
+  );
+}
+
+export function removeAiCandidateImages(
+  item: AiItemState,
+  candidateIds: Iterable<string>,
+  minimumSlotCount: number
+): { item: AiItemState; removed: RemovedAiCandidateImage[] } {
+  const ids = new Set(candidateIds);
+  const removed: RemovedAiCandidateImage[] = [];
+  const candidates = item.candidates.map((candidate) => {
+    if (!ids.has(candidate.id) || !isAiCandidateDeletable(candidate) || !candidate.image) {
+      return candidate;
+    }
+    removed.push({
+      candidateId: candidate.id,
+      image: candidate.image,
+      ...(candidate.submissionKey ? { submissionKey: candidate.submissionKey } : {})
+    });
+    const retryPromptText = candidate.retryPromptText?.trim()
+      || candidate.image.promptText?.trim()
+      || undefined;
+    return {
+      id: candidate.id,
+      label: candidate.label,
+      status: "idle" as const,
+      ...(retryPromptText ? { retryPromptText } : {})
+    };
+  });
+  const minimum = normalizeCandidateCount(minimumSlotCount);
+  while (candidates.length > minimum) {
+    const tail = candidates[candidates.length - 1]!;
+    if (tail.status !== "idle" || tail.image) break;
+    candidates.pop();
+  }
+  return {
+    item: { ...item, candidates },
+    removed
   };
 }
 

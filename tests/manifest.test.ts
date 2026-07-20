@@ -12,4 +12,10 @@ describe("UXP manifest", () => {
       extensions: []
     });
   });
+
+  it("allows the panel to grow tall without changing its preferred size", () => {
+    const panel = manifest.entrypoints[0];
+    expect(panel?.preferredFloatingSize.height).toBe(720);
+    expect(panel?.maximumSize.height).toBe(2000);
+  });
 });

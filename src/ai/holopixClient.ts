@@ -1,5 +1,9 @@
 import { storage } from "uxp";
 import type { AiGeneratedImage } from "../domain/aiCandidates";
+import {
+  describeComfyExecutionMessage,
+  describeComfyQueueStatus
+} from "./comfyPromptStatus";
 import { COMFY_BASE_URL } from "./holopixEndpoint";
 import {
   HolopixGenerationOutcomeUnknownError,
@@ -51,6 +55,16 @@ interface QueueResponse {
   error?: string;
 }
 
+export interface QueuedComfyPrompt {
+  promptId: string;
+  stopStatusMonitor: () => void;
+}
+
+interface ComfyPromptStatusMonitor {
+  start: (promptId: string) => void;
+  stop: () => void;
+}
+
 interface HolopixGenerationCommonOptions {
   candidateCount: number;
   assetCode: string;
@@ -68,6 +82,7 @@ interface HolopixGenerationCommonOptions {
   ) => void | Promise<void>;
   onSubmissionLifecycle?: (event: HolopixSubmissionLifecycleEvent) => void;
   onStage?: (message: string) => void;
+  onExecutionStatus?: (message: string) => void;
 }
 
 interface HolopixReferenceGenerationOptions {
@@ -212,9 +227,15 @@ export async function generateHolopixImages(
       ...(sharedPromptText ? { promptText: sharedPromptText } : {})
     };
     notifySubmissionLifecycle(options, { state: "started", ...submissionEvent });
+    let queuedPrompt: QueuedComfyPrompt;
     let promptId: string;
     try {
-      promptId = await queuePrompt(prepared.workflow, options.signal);
+      queuedPrompt = await queuePrompt(
+        prepared.workflow,
+        options.signal,
+        options.onExecutionStatus
+      );
+      promptId = queuedPrompt.promptId;
     } catch (error) {
       if (!isAmbiguousSubmissionTransportError(error)) {
         notifySubmissionLifecycle(options, {
@@ -265,6 +286,8 @@ export async function generateHolopixImages(
         "Holopix 已提交，但等待结果时被中止；任务可能仍在 ComfyUI 后台运行，已禁止直接重试。",
         { promptId, submissionKey }
       );
+    } finally {
+      queuedPrompt.stopStatusMonitor();
     }
     const images = generated.images;
     const hadSharedPrompt = Boolean(sharedPromptText);
@@ -362,8 +385,18 @@ async function createSafePreview(
   signal?: AbortSignal
 ) {
   const prepared = prepareHolopixSafePreviewWorkflow(image);
-  const promptId = await queuePrompt(prepared.workflow, signal);
-  const previewImage = await waitForPreviewImage(promptId, prepared.previewNodeId, 30, signal);
+  const queuedPrompt = await queuePrompt(prepared.workflow, signal);
+  let previewImage: AiGeneratedImage;
+  try {
+    previewImage = await waitForPreviewImage(
+      queuedPrompt.promptId,
+      prepared.previewNodeId,
+      30,
+      signal
+    );
+  } finally {
+    queuedPrompt.stopStatusMonitor();
+  }
   const response = await fetchBinary(
     buildHolopixSafeJpegUrl(previewImage, COMFY_BASE_URL),
     signal,
@@ -416,29 +449,146 @@ async function uploadReference(
   return response;
 }
 
-async function queuePrompt(workflow: ComfyWorkflow, signal?: AbortSignal): Promise<string> {
-  const response = await fetchJson(`${COMFY_BASE_URL}/prompt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: workflow,
-      client_id: `chess-go-${Date.now()}-${Math.random().toString(16).slice(2)}`
-    }),
-    signal
-  }, 30_000) as QueueResponse;
-  if (response.error) throw new Error(`ComfyUI 拒绝工作流：${response.error}`);
-  if (response.node_errors && Object.keys(response.node_errors).length) {
-    throw new Error(`ComfyUI 节点校验失败：${JSON.stringify(response.node_errors)}`);
+async function queuePrompt(
+  workflow: ComfyWorkflow,
+  signal?: AbortSignal,
+  onExecutionStatus?: (message: string) => void
+): Promise<QueuedComfyPrompt> {
+  const clientId = `chess-go-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const monitor = createComfyPromptStatusMonitor(
+    clientId,
+    workflow,
+    signal,
+    onExecutionStatus
+  );
+  try {
+    const response = await fetchJson(`${COMFY_BASE_URL}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+      signal
+    }, 30_000) as QueueResponse;
+    if (response.error) throw new Error(`ComfyUI 拒绝工作流：${response.error}`);
+    if (response.node_errors && Object.keys(response.node_errors).length) {
+      throw new Error(`ComfyUI 节点校验失败：${JSON.stringify(response.node_errors)}`);
+    }
+    if (!response.prompt_id) throw new Error("ComfyUI 未返回 prompt_id。");
+    monitor.start(response.prompt_id);
+    return { promptId: response.prompt_id, stopStatusMonitor: monitor.stop };
+  } catch (error) {
+    monitor.stop();
+    throw error;
   }
-  if (!response.prompt_id) throw new Error("ComfyUI 未返回 prompt_id。");
-  return response.prompt_id;
 }
 
 export async function queueComfyWorkflow(
   workflow: ComfyWorkflow,
-  signal?: AbortSignal
-): Promise<string> {
-  return queuePrompt(workflow, signal);
+  signal?: AbortSignal,
+  onExecutionStatus?: (message: string) => void
+): Promise<QueuedComfyPrompt> {
+  return queuePrompt(workflow, signal, onExecutionStatus);
+}
+
+function createComfyPromptStatusMonitor(
+  clientId: string,
+  workflow: ComfyWorkflow,
+  externalSignal?: AbortSignal,
+  onExecutionStatus?: (message: string) => void
+): ComfyPromptStatusMonitor {
+  if (!onExecutionStatus) return { start: () => undefined, stop: () => undefined };
+
+  let stopped = false;
+  let promptId: string | undefined;
+  let socket: WebSocket | null = null;
+  let reconnectTimer: number | undefined;
+  let hasSocketExecutionStatus = false;
+  let lastStatus = "";
+  const monitorController = new AbortController();
+  const report = (message: string): void => {
+    if (stopped || message === lastStatus) return;
+    lastStatus = message;
+    onExecutionStatus(message);
+  };
+
+  const connectSocket = (): void => {
+    if (stopped || typeof globalThis.WebSocket !== "function") return;
+    try {
+      const socketUrl = `${COMFY_BASE_URL.replace(/^http/i, "ws")}/ws?clientId=${encodeURIComponent(clientId)}`;
+      const nextSocket = new globalThis.WebSocket(socketUrl);
+      socket = nextSocket;
+      nextSocket.onmessage = (event): void => {
+        if (stopped || typeof event.data !== "string") return;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        const status = describeComfyExecutionMessage(parsed, promptId, workflow);
+        if (!status) return;
+        hasSocketExecutionStatus = true;
+        report(status.text);
+      };
+      nextSocket.onerror = (): void => undefined;
+      nextSocket.onclose = (): void => {
+        if (socket === nextSocket) socket = null;
+        hasSocketExecutionStatus = false;
+        if (!stopped) reconnectTimer = window.setTimeout(connectSocket, 1000);
+      };
+    } catch {
+      socket = null;
+    }
+  };
+
+  const pollQueue = async (): Promise<void> => {
+    while (!stopped && promptId) {
+      try {
+        const queue = await fetchJson(
+          `${COMFY_BASE_URL}/queue`,
+          { signal: monitorController.signal },
+          6000
+        );
+        const status = describeComfyQueueStatus(queue, promptId);
+        if (status?.kind === "queued") {
+          hasSocketExecutionStatus = false;
+          report(status.text);
+        } else if (status?.kind === "running" && !hasSocketExecutionStatus) {
+          report(status.text);
+        }
+      } catch {
+        if (stopped || monitorController.signal.aborted) return;
+      }
+      try {
+        await delay(800, monitorController.signal);
+      } catch {
+        return;
+      }
+    }
+  };
+
+  const abortFromExternal = (): void => stop();
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    monitorController.abort();
+    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    const activeSocket = socket;
+    socket = null;
+    if (activeSocket && activeSocket.readyState < 2) activeSocket.close();
+    externalSignal?.removeEventListener("abort", abortFromExternal);
+  };
+  const start = (nextPromptId: string): void => {
+    if (stopped) return;
+    promptId = nextPromptId;
+    report("ComfyUI 已提交 · 正在查询队列");
+    void pollQueue();
+  };
+
+  externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+  if (externalSignal?.aborted) stop();
+  else connectSocket();
+  return { start, stop };
 }
 
 async function waitForImages(
