@@ -97,6 +97,11 @@ label {
   margin-top: 0;
 }
 
+.app > .ai-panel-host,
+.app > .ai-panel-host + .panel-section {
+  margin-top: 0;
+}
+
 .panel-section {
   overflow: hidden;
   border: 0;
@@ -793,7 +798,6 @@ button:disabled {
 
 .ai-connection-card,
 .ai-generation-card,
-.ai-progress-card,
 .ai-prompt-editor,
 .ai-panel-message {
   border: 1px solid var(--uxp-host-border-color, #5d5d5d);
@@ -826,7 +830,6 @@ button:disabled {
 }
 
 .ai-generation-card,
-.ai-progress-card,
 .ai-prompt-editor {
   display: flex;
   flex-direction: column;
@@ -835,7 +838,7 @@ button:disabled {
 }
 
 .ai-generation-summary,
-.ai-progress-card > div,
+.ai-generation-progress > div:first-child,
 .ai-prompt-heading,
 .ai-prompt-actions,
 .ai-workflow-select,
@@ -845,13 +848,12 @@ button:disabled {
 }
 
 .ai-generation-summary,
-.ai-progress-card > div,
+.ai-generation-progress > div:first-child,
 .ai-prompt-heading {
   justify-content: space-between;
 }
 
 .ai-generation-card > small,
-.ai-progress-card > small,
 .ai-prompt-heading small,
 .ai-cost-note,
 .ai-group-select small {
@@ -906,10 +908,26 @@ button:disabled {
   background: rgba(132, 82, 28, 0.22);
 }
 
-.ai-progress-card progress {
-  display: block;
+.ai-generation-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-progress-track {
   width: 100%;
   height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #6f6f6f;
+}
+
+.ai-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #3f8f68;
 }
 
 .ai-tabs {
@@ -938,6 +956,10 @@ button:disabled {
 .ai-group-select {
   min-height: 34px;
   gap: 8px;
+}
+
+.ai-group-select {
+  margin-top: 4px;
 }
 
 .ai-workflow-select select,
