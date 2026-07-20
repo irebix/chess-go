@@ -47,6 +47,7 @@ import { safeGptImage2OutputName } from "../ai/gptImage2Workflow";
 import { HolopixGenerationOutcomeUnknownError } from "../ai/holopixErrors";
 import {
   createHolopixImageBlobResource,
+  describeHolopixImageBlobFailure,
   type HolopixImageBlobResource
 } from "../ai/holopixImageBlob";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
@@ -185,7 +186,9 @@ export function AiGenerationPanel({
     if (previewStateReportedRef.current[state]) return;
     previewStateReportedRef.current[state] = true;
     if (state === "ready") {
-      onStatusRef.current("AI 候选预览：ImageBlob 原始 RGBA 高清模式已加载。");
+      onStatusRef.current(
+        `AI 候选预览：ImageBlob 原始 RGBA 高清模式已加载${detail ? `；${detail}` : "。"}`
+      );
       return;
     }
     onStatusRef.current(
@@ -1571,7 +1574,7 @@ function ImageBlobCandidatePreview({
     try {
       next = createHolopixImageBlobResource(preview);
       setResource(next);
-      onPreviewState("ready");
+      onPreviewState("ready", next.diagnostic);
     } catch (error) {
       const detail = toErrorMessage(error);
       console.error("Holopix ImageBlob 原始像素预览不可用。", error);
@@ -1582,7 +1585,12 @@ function ImageBlobCandidatePreview({
   }, [onPreviewState, preview]);
 
   const handleImageError = (): void => {
-    const detail = "原始像素 Object URL 无法由 UXP <img> 显示。";
+    const detail = describeHolopixImageBlobFailure(
+      "image-element",
+      "原始像素 Object URL 无法由 UXP <img> 显示。",
+      preview
+    );
+    console.error(detail);
     resource?.revoke();
     setResource(null);
     setFailure(detail);

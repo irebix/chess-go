@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-20
-当前发布版本：`0.5.5`
+当前发布版本：`0.5.6`
 
 ## 一句话摘要
 
@@ -11,17 +11,21 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.5`（以当前分支 HEAD 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.5`（以当前分支 HEAD 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.6`（以当前分支 HEAD 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.6`（以当前分支 HEAD 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.5.5`。
+- `manifest.json` 与 `package.json` 均为 `0.5.6`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及七个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 保存已发布的 `0.5.5` 七个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
-- `0.5.5` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 保存已发布的 `0.5.6` 七个运行文件，并与源码仓库 `dist` 对应文件哈希一致。
+- `0.5.6` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+
+## `0.5.6` 发布内容
+
+- ImageBlob 强制模式新增一次性分阶段诊断并接入现有 `holopix.ai` 日志/诊断导出：记录 `stage`（validation、constructor-availability、constructor、object-url、image-element、ready）、预览尺寸/字节数、`runtime/window/globalThis.ImageBlob` 类型、`URL.createObjectURL`、UXP/插件/Photoshop 运行版本和 user agent。Canvas 仍保持删除状态；本改动只增强证据，不改变渲染策略。
 
 ## `0.5.5` 发布内容
 
@@ -112,14 +116,15 @@
 - `0.5.3`：候选矩阵不再用 CSS `translateX` 移动画面。Photoshop UXP 实机证明 `overflow: hidden` 视口的 `scrollLeft` 不产生可见滚动，而让视口自身使用原生 `overflow-x: auto` 又会先吞掉候选区域的纵向滚轮；最终方案保留独立底部横向滚动条和非滚动视口，使用负 `margin-left` 进行真实布局位移，使视觉位置与按钮命中一起移动，同时让候选区域的纵向滚轮继续由最外层面板处理。水平偏移按内容与视口宽度夹紧，动态追加候选后不会停在无效区域。
 - `0.5.4`：AI 生成模块新增顶部 `Flux / GPT Image 2` 版本选择，Flux 保持原逐物品流程；GPT Image 2 使用 `GptImage2.json` 内置风格参考，一次生成完整物件链并按稳定 `assetCode` 裁切回填。节点按语义标题定位，候选状态与待确认记录按工作流隔离；GPT 单格生成入口禁用，“重新生成选中链”会为整链所有物品追加候选并重新运行完整链。候选回填命名同时改为供应方无关的“AI 候选”。
 - `0.5.5`：动态 AI 候选预览强制只使用 UXP uncompressed ImageBlob；删除 Canvas 兜底组件、量化绘制函数、滚动/尺寸重绘调度、相关样式与测试。ImageBlob 创建或 Object URL 显示失败时直接在槽位提示并记录错误，不再静默降级。
+- `0.5.6`：ImageBlob 强制模式新增完整分阶段运行诊断，成功和失败均写入现有 `holopix.ai` 日志与诊断导出；记录 API 暴露位置、UXP/插件/Photoshop 版本、预览像素信息以及构造器、Object URL、HTMLImageElement 等具体阶段。Canvas 继续保持删除。
 
 ## 验证状态
 
 - 最近一次 `pnpm verify`：通过。
 - TypeScript strict：通过。
-- Vitest：`41` 个测试文件、`192/192` 测试通过。
-- Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 489 KiB），不是构建失败。
-- `dist` 与 `ChessGo-Release/release` 均为正式 `0.5.5`，七个运行文件哈希一致并已推送。
+- Vitest：`41` 个测试文件、`193/193` 测试通过。
+- Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 491 KiB），不是构建失败。
+- `dist` 与 `ChessGo-Release/release` 均为正式 `0.5.6`，七个运行文件哈希一致并已推送。
 - 已通过局域网 ComfyUI `object_info` 只读核对 `LoadImage`、`PrimitiveStringMultiline`、`HolopixGenerateV3`、`AutoObjectSheetCrop`、`BiRefNetRMBG`、`InvertMask`、`JoinImageWithAlpha`、`SaveNamedImageBatch` 均存在且输入/输出类型匹配；没有提交 `/prompt` 或付费生成任务。
 - Photoshop 2024 实机已重启并加载 `0.3.4`：导入 1.2 MB 带图 Excel、选择 9 个参考图后，用“恢复已有候选（不生成）”找回 5 张历史候选；候选仅显示“查看 / 选用”，持续观察 30 秒 Photoshop 未闪退，且没有新增应用崩溃事件。
 - Photoshop 2024 实机已通过 UXP Developer Tools 热重载 `0.3.5`：导入同一带图 Excel、选择清洁工具链后，从 ComfyUI 历史恢复并直接绘制 `18/18` 张候选；持续观察 30 秒面板保持可用、Photoshop 正常响应，新增应用崩溃事件为 `0`，日志确认未提交新生成任务。
@@ -127,11 +132,13 @@
 - `0.3.7` 已通过本机 ComfyUI 零付费节点实测：从既有输入图仅运行 `LoadImage → HolopixUploadReference → HolopixImageToPrompt → easy showAnything`，约 3 秒后历史输出真实中文提示词；该验证没有包含或执行 `HolopixGenerate`。`object_info` 同时确认 `HolopixGenerate.reference` 为 optional，发布工作流中该输入不存在。
 - Photoshop 2024 已热重载 `0.3.8`：重新打开当前 PSD 与最近 Excel，选择清洁工具链后用“恢复已有候选（不生成）”恢复 `18/18` 张历史候选；上下滚动逐行确认 9 个节点、18 张 Canvas 缩略图全部可见。纵向和横向 Excel 参考图均按长边贴边完整显示，无裁切；面板状态和日志确认未提交新生成任务，也未点击候选回填。检查结束时 ComfyUI running/pending 均为 `0`，Photoshop 继续响应，最近 30 分钟新增 Photoshop 崩溃事件为 `0`。
 - Photoshop 25.4 已热重载当前测试包：用户确认 ImageBlob 候选可正常加载且无闪退；清洁工具链取消勾选 `c_cleaning8`、`c_cleaning9` 后，AI 面板范围从 9 条准确变为 7 条，历史恢复也只恢复这 7 条且未提交新生成任务。点击 `c_cleaning1` 候选后已实际回填当前 PSD，最终图层边界为 `[1732,148,1880,296]`，中心误差 `[0,0]`、四边溢出均为 `0`。
+- Photoshop 25.4 / UXP `uxp-7.3.0-6` 已完成一次 GPT Image 2 整链 1 轮、6 张候选的成功实测；ImageBlob 诊断为 `stage=ready`，`runtime/window/globalThis.ImageBlob` 与 `URL.createObjectURL` 均为函数，预览为 `96×96 RGBA / 36864 bytes`。直接 Photoshop 字段为 `missing`，但 user agent 明确记录 Photoshop `25.4.0`；该基线证明当前面板上下文支持 ImageBlob 构造与 Object URL 路径。
 
 ## 仍需人工验证
 
 - 在 Photoshop 中加载当前 `dist`，确认 AI 面板最上方只有一个 `Flux / GPT Image 2` 版本列表；切换版本时矩阵布局不变，Flux 已有候选仍保留，切回 Flux 后不会显示 GPT Image 2 候选。
 - 恢复或生成候选后，确认所有动态候选只使用 ImageBlob 显示；在不支持 ImageBlob 或 Object URL 显示失败的环境中，槽位必须明确显示“ImageBlob 失败”，日志不得出现 Canvas 回退，也不得创建 `<canvas>`。
+- 触发一次 ImageBlob 成功或失败后导出诊断，确认 `holopix.ai` 事件包含完整 `ImageBlob 诊断`，能够区分构造器未暴露、构造失败、Object URL 失败和 `<img>` 加载失败，并记录实际 UXP、插件与 Photoshop 版本。
 - 选择 GPT Image 2 后以同一链运行 1 张候选，确认日志明确显示使用 `GptImage2.json` 内置风格参考，没有读取 PSD 参考图、没有调用 ComfyUI `/upload/image`；整链只提交 1 个 `HolopixGenerateV3` 任务，输出按阅读顺序和 `assetCode` 正确拆回每一行。
 - 以 `每个物品生成 2 张` 再运行一次，确认实际是整链两轮，每行得到两张独立候选；任一透明 PNG 仍可直接点击并通过既有回填链插入对应画板。
 - 在 GPT Image 2 模式单击待生成或失败格，确认单格生成入口不可用；修改底部当前物品描述并点击“重新生成选中链”，确认旧候选保留，当前链每一行都在右侧追加新候选，并按完整整链重新生成。

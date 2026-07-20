@@ -23,7 +23,16 @@ describe("Holopix ImageBlob preview", () => {
     const runtime: HolopixImageBlobRuntime = {
       ImageBlob: FakeImageBlob,
       createObjectURL: () => "blob:chess-go-preview",
-      revokeObjectURL
+      revokeObjectURL,
+      diagnostics: {
+        windowImageBlob: "function:ImageBlob",
+        globalThisImageBlob: "function:ImageBlob",
+        createObjectURL: "function:createObjectURL",
+        uxpVersion: "uxp-7.3.0",
+        pluginVersion: "0.5.5",
+        photoshopVersion: "25.4.0",
+        userAgent: "UXP-test"
+      }
     };
 
     const resource = createHolopixImageBlobResource({ width: 1, height: 2, pixels }, runtime);
@@ -44,6 +53,12 @@ describe("Holopix ImageBlob preview", () => {
     expect(resource.retainedSource?.pixels).toBeInstanceOf(Uint8Array);
     expect(resource.retainedSource?.pixels).not.toBe(pixels);
     expect(Array.from(resource.retainedSource!.pixels)).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+    expect(resource.diagnostic).toContain("stage=ready");
+    expect(resource.diagnostic).toContain("runtime.ImageBlob=function:FakeImageBlob");
+    expect(resource.diagnostic).toContain("window.ImageBlob=function:ImageBlob");
+    expect(resource.diagnostic).toContain("UXP=uxp-7.3.0");
+    expect(resource.diagnostic).toContain("plugin=0.5.5");
+    expect(resource.diagnostic).toContain("Photoshop=25.4.0");
 
     resource.revoke();
     resource.revoke();
@@ -62,7 +77,7 @@ describe("Holopix ImageBlob preview", () => {
       width: 2,
       height: 2,
       pixels: new Uint8ClampedArray(4)
-    }, runtime)).toThrow(/RGBA 像素长度/);
+    }, runtime)).toThrow(/stage=validation.*RGBA 像素长度/s);
   });
 
   it("reports an unsupported host so the UI can surface the forced ImageBlob failure", () => {
@@ -74,6 +89,31 @@ describe("Holopix ImageBlob preview", () => {
       ImageBlob: undefined,
       createObjectURL: () => "unused",
       revokeObjectURL: () => undefined
-    })).toThrow(/不支持 ImageBlob/);
+    })).toThrow(/stage=constructor-availability.*没有暴露 ImageBlob 构造器/s);
+  });
+
+  it("records constructor and Object URL failures as separate stages", () => {
+    const preview = {
+      width: 1,
+      height: 1,
+      pixels: new Uint8ClampedArray([0, 0, 0, 255])
+    };
+    expect(() => createHolopixImageBlobResource(preview, {
+      ImageBlob: class {
+        constructor() {
+          throw new TypeError("constructor rejected pixels");
+        }
+      },
+      createObjectURL: () => "unused",
+      revokeObjectURL: () => undefined
+    })).toThrow(/stage=constructor.*TypeError:constructor rejected pixels/s);
+
+    expect(() => createHolopixImageBlobResource(preview, {
+      ImageBlob: class {},
+      createObjectURL: () => {
+        throw new Error("URL rejected ImageBlob");
+      },
+      revokeObjectURL: () => undefined
+    })).toThrow(/stage=object-url.*Error:URL rejected ImageBlob/s);
   });
 });
