@@ -56,6 +56,7 @@ import {
   shouldConfirmPsdAiScopeShrink
 } from "../domain/psdAiScopeStability";
 import { AiGenerationPanel } from "./AiGenerationPanel";
+import { SpectrumSelect } from "./SpectrumSelect";
 
 type UiPhase =
   | "idle"
@@ -1049,18 +1050,16 @@ export function App(): React.ReactElement {
               <span className="panel-disclosure is-open" aria-hidden="true">⌄</span>
               <h2>选择棋子链</h2>
             </div>
-            <select
-              aria-label="工作表"
+            <SpectrumSelect
+              ariaLabel="工作表"
               value={sheetName}
               disabled={busy}
-              onChange={(event) => handleSheetChange(event.currentTarget.value)}
-            >
-              {workbook.reader.index.sheets.map((sheet) => (
-                <option key={sheet.relationshipId} value={sheet.name}>
-                  {sheet.name}{sheet.state !== "visible" ? `（${sheet.state}）` : ""}
-                </option>
-              ))}
-            </select>
+              options={workbook.reader.index.sheets.map((sheet) => ({
+                value: sheet.name,
+                label: `${sheet.name}${sheet.state !== "visible" ? `（${sheet.state}）` : ""}`
+              }))}
+              onValueChange={handleSheetChange}
+            />
             {groups.length ? (
               <div className="group-picker">
                 <div className="group-list-shell">
@@ -1218,22 +1217,24 @@ export function App(): React.ReactElement {
                     />
                     <div className="batch-image-control-copy">
                       <span className="batch-image-title">批量选图</span>
-                      <select
-                        aria-label={`${group.label}批量选图`}
+                      <SpectrumSelect
+                        ariaLabel={`${group.label}批量选图`}
                         disabled={busy}
-                        value={selectedRowOffset ?? ""}
-                        onChange={(event) => {
-                          const rowOffset = Number(event.currentTarget.value);
+                        value={selectedRowOffset === undefined ? "" : String(selectedRowOffset)}
+                        options={[
+                          ...(selectedRowOffset === undefined
+                            ? [{ value: "", label: "选择图片排位" }]
+                            : []),
+                          ...rowChoices.map((choice) => ({
+                            value: String(choice.rowOffset),
+                            label: `第 ${choice.rowOffset} 排 · ${choice.coverage}/${groupItems.length}`
+                          }))
+                        ]}
+                        onValueChange={(value) => {
+                          const rowOffset = Number(value);
                           if (Number.isFinite(rowOffset)) handleBatchImageRowChoice(group.id, groupItems, rowOffset);
                         }}
-                      >
-                        {selectedRowOffset === undefined ? <option value="">选择图片排位</option> : null}
-                        {rowChoices.map((choice) => (
-                          <option key={choice.rowOffset} value={choice.rowOffset}>
-                            第 {choice.rowOffset} 排 · {choice.coverage}/{groupItems.length}
-                          </option>
-                        ))}
-                      </select>
+                      />
                       <span className={`batch-image-feedback ${feedback?.missingItemKeys.length ? "has-missing" : ""}`}>
                         {feedback
                           ? `已切换 ${feedback.appliedCount} 项${feedback.missingItemKeys.length

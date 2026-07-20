@@ -53,6 +53,7 @@ import {
   type HolopixImageBlobResource
 } from "../ai/holopixImageBlob";
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
+import { SpectrumSelect } from "./SpectrumSelect";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
 import { inspectActiveReferenceDocument } from "../photoshop/referenceViewController";
 import {
@@ -183,7 +184,7 @@ export function AiGenerationPanel({
   const psdThumbnailRequestsRef = useRef(new Set<string>());
   const psdThumbnailQueueRef = useRef(Promise.resolve());
   const psdThumbnailResourcesRef = useRef(new Map<string, HolopixImageBlobResource>());
-  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptTextareaRef = useRef<SpectrumTextareaElement | null>(null);
   const promptResizeCleanupRef = useRef<(() => void) | null>(null);
   const matrixViewportRef = useRef<HTMLDivElement | null>(null);
   const matrixContentRef = useRef<HTMLDivElement | null>(null);
@@ -246,6 +247,13 @@ export function AiGenerationPanel({
     setStates(nextStates);
     setWorkflowVersion(nextVersion);
   }, [workflowVersion]);
+  const activeGroupOptions = useMemo(
+    () => activeGroups.map((group) => ({
+      value: group.id,
+      label: `${group.label}（${filterItemsByGroups(items, [group]).length}）`
+    })),
+    [activeGroups, items]
+  );
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) ?? activeGroups[0];
   const groupItems = useMemo(
     () => selectedGroup ? filterItemsByGroups(items, [selectedGroup]) : [],
@@ -371,6 +379,22 @@ export function AiGenerationPanel({
   useEffect(() => {
     setPromptDraft(runtimePromptText);
   }, [runtimePromptText, selectedItem?.key]);
+
+  useEffect(() => {
+    const textarea = promptTextareaRef.current;
+    if (!textarea || textarea.value === promptDraft) return;
+    textarea.value = promptDraft;
+  }, [promptDraft, selectedItem?.key]);
+
+  useEffect(() => {
+    const textarea = promptTextareaRef.current;
+    if (!textarea) return;
+    const handleInput = (event: Event): void => {
+      setPromptDraft((event.currentTarget as SpectrumTextareaElement).value);
+    };
+    textarea.addEventListener("input", handleInput);
+    return () => textarea.removeEventListener("input", handleInput);
+  }, [selectedItem?.key]);
 
   useEffect(() => {
     if (!open) return;
@@ -1397,33 +1421,56 @@ export function AiGenerationPanel({
       </div>
       {open ? (
         <div className="panel-section-content ai-panel-content">
-          <div className="ai-workflow-select">
-            <select
-              id="ai-workflow-version"
-              aria-label="AI 生成版本"
-              value={workflowVersion}
-              disabled={controlsDisabled}
-              onChange={(event) => switchWorkflowVersion(event.currentTarget.value as AiWorkflowVersion)}
-            >
-              <option value="flux">Flux</option>
-              <option value="gpt-image-2">GPT Image 2</option>
-            </select>
-          </div>
           <div className="ai-generation-card">
-            <div className="ai-generation-summary">
-              <span>每个物品生成</span>
-              <div className="ai-stepper" aria-label="每个棋子候选数量">
-                <button
-                  className="compact"
-                  disabled={countControlsDisabled || candidateCount <= 1}
-                  onClick={() => setCandidateCount((value) => Math.max(1, value - 1))}
-                >−</button>
-                <strong>{candidateCount}</strong>
-                <button
-                  className="compact"
-                  disabled={countControlsDisabled || candidateCount >= 4}
-                  onClick={() => setCandidateCount((value) => Math.min(4, value + 1))}
-                >＋</button>
+            <div className="ai-generation-settings">
+              <div className="ai-setting-row">
+                <span className="ai-setting-label">工作流</span>
+                <div className="ai-setting-control">
+                  <SpectrumSelect
+                    id="ai-workflow-version"
+                    ariaLabel="AI 生成版本"
+                    value={workflowVersion}
+                    disabled={controlsDisabled}
+                    options={[
+                      { value: "flux", label: "Flux · 单物品候选" },
+                      { value: "gpt-image-2", label: "GPT Image 2 · 整链候选" }
+                    ]}
+                    onValueChange={(value) => switchWorkflowVersion(value as AiWorkflowVersion)}
+                  />
+                </div>
+              </div>
+              {activeGroups.length ? (
+                <div className="ai-setting-row">
+                  <span className="ai-setting-label">物品链</span>
+                  <div className="ai-setting-control">
+                    <SpectrumSelect
+                      id="ai-group-select"
+                      ariaLabel="物品链"
+                      value={selectedGroup?.id ?? ""}
+                      disabled={controlsDisabled}
+                      options={activeGroupOptions}
+                      onValueChange={setSelectedGroupId}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className="ai-setting-row">
+                <span className="ai-setting-label">候选数</span>
+                <div className="ai-setting-control is-compact">
+                  <div className="ai-stepper" aria-label="每个物品候选数量">
+                    <button
+                      className="compact"
+                      disabled={countControlsDisabled || candidateCount <= 1}
+                      onClick={() => setCandidateCount((value) => Math.max(1, value - 1))}
+                    >−</button>
+                    <strong>{candidateCount}</strong>
+                    <button
+                      className="compact"
+                      disabled={countControlsDisabled || candidateCount >= 4}
+                      onClick={() => setCandidateCount((value) => Math.min(4, value + 1))}
+                    >＋</button>
+                  </div>
+                </div>
               </div>
             </div>
             <button
@@ -1477,22 +1524,6 @@ export function AiGenerationPanel({
               </div>
             </div>
           </div>
-
-          {activeGroups.length ? (
-            <div className="ai-group-select">
-              <select
-                id="ai-group-select"
-                aria-label="棋子链"
-                value={selectedGroup?.id ?? ""}
-                disabled={controlsDisabled}
-                onChange={(event) => setSelectedGroupId(event.currentTarget.value)}
-              >
-                {activeGroups.map((group) => (
-                  <option key={group.id} value={group.id}>{group.label}</option>
-                ))}
-              </select>
-            </div>
-          ) : null}
 
           <div className={`ai-matrix-shell ${editingCandidates ? "is-editing" : ""}`}>
             <div className={`ai-candidate-edit-actions ${editingCandidates ? "is-expanded" : "is-compact"}`}>
@@ -1608,13 +1639,12 @@ export function AiGenerationPanel({
           {selectedItem ? (
             <div className="ai-prompt-editor ai-prompt-editor-bottom">
               <div className="ai-prompt-textarea-shell">
-                <textarea
+                <sp-textarea
                   ref={promptTextareaRef}
                   value={promptDraft}
                   style={{ height: `${promptEditorHeight}px` }}
                   placeholder={promptSource?.detail ?? "生成或恢复候选后，可在这里修改当前物品描述。"}
                   aria-label={`${selectedItem.name || selectedItem.assetCode} 的可编辑 AI 生成描述`}
-                  onChange={(event) => setPromptDraft(event.currentTarget.value)}
                 />
                 <span
                   className="ai-prompt-resize-handle"
