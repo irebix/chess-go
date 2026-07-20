@@ -1,9 +1,151 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+set "CHESSGO_INSTALLER_REVISION=1"
 set "CHESSGO_INSTALLER=%~f0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$marker=':__CHESSGO_POWERSHELL__'; $raw=[IO.File]::ReadAllText($env:CHESSGO_INSTALLER); $start=$raw.LastIndexOf($marker); if($start -lt 0){throw 'Installer payload was not found.'}; Invoke-Expression $raw.Substring($start+$marker.Length)"
+set "CHESSGO_PWSH="
+where pwsh.exe >nul 2>nul
+if not errorlevel 1 set "CHESSGO_PWSH=pwsh.exe"
+if not defined CHESSGO_PWSH if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "CHESSGO_PWSH=%ProgramFiles%\PowerShell\7\pwsh.exe"
+if not defined CHESSGO_PWSH (
+  echo PowerShell 7 is required. Installing it with Windows Package Manager...
+  where winget.exe >nul 2>nul
+  if errorlevel 1 (
+    echo PowerShell 7 was not found, and winget.exe is unavailable.
+    exit /b 1
+  )
+  winget.exe install --id Microsoft.PowerShell --exact --source winget --accept-source-agreements --accept-package-agreements --silent
+  if errorlevel 1 exit /b 1
+  if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "CHESSGO_PWSH=%ProgramFiles%\PowerShell\7\pwsh.exe"
+)
+if not defined CHESSGO_PWSH (
+  echo PowerShell 7 installation completed, but pwsh.exe could not be located. Restart Windows and run this installer again.
+  exit /b 1
+)
+set "CHESSGO_UPDATE_FILE=%CHESSGO_INSTALLER%.chessgo-update"
+if /I not "%CHESSGO_SELF_UPDATE_RESTARTED%"=="1" if /I not "%CHESSGO_SKIP_SELF_UPDATE%"=="1" (
+  "%CHESSGO_PWSH%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$begin=':__CHESSGO_SELF_UPDATE_POWERSHELL__'; $end=':__CHESSGO_POWERSHELL__'; $raw=[IO.File]::ReadAllText($env:CHESSGO_INSTALLER, [Text.Encoding]::UTF8); $start=$raw.LastIndexOf($begin); $finish=$raw.LastIndexOf($end); if($start -lt 0 -or $finish -le $start){throw 'Installer self-update payload was not found.'}; Invoke-Expression $raw.Substring($start+$begin.Length,$finish-($start+$begin.Length))"
+  if errorlevel 20 if not errorlevel 21 (
+    "%CHESSGO_PWSH%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$current=[IO.Path]::GetFullPath($env:CHESSGO_INSTALLER); $candidate=[IO.Path]::GetFullPath($env:CHESSGO_UPDATE_FILE); $backup=$current+'.previous'; if(Test-Path -LiteralPath $backup -PathType Leaf){Remove-Item -LiteralPath $backup -Force}; [IO.File]::Replace($candidate,$current,$backup,$true)"
+    if errorlevel 1 (
+      if exist "%CHESSGO_UPDATE_FILE%" del /f /q "%CHESSGO_UPDATE_FILE%" >nul 2>nul
+      echo Warning: the latest installer was downloaded but could not replace the current file.
+    ) else (
+      set "CHESSGO_SELF_UPDATE_RESTARTED=1"
+      "%ComSpec%" /d /c ""%CHESSGO_INSTALLER%""
+      exit /b
+    )
+  )
+)
+if /I "%CHESSGO_SELF_UPDATE_ONLY%"=="1" exit /b 0
+"%CHESSGO_PWSH%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$marker=':__CHESSGO_POWERSHELL__'; $raw=[IO.File]::ReadAllText($env:CHESSGO_INSTALLER, [Text.Encoding]::UTF8); $start=$raw.LastIndexOf($marker); if($start -lt 0){throw 'Installer payload was not found.'}; Invoke-Expression $raw.Substring($start+$marker.Length)"
 set "CHESSGO_EXIT=%ERRORLEVEL%"
 endlocal & exit /b %CHESSGO_EXIT%
+
+:__CHESSGO_SELF_UPDATE_POWERSHELL__
+$ErrorActionPreference = "Stop"
+$installerPath = [IO.Path]::GetFullPath($env:CHESSGO_INSTALLER)
+$candidatePath = [IO.Path]::GetFullPath($env:CHESSGO_UPDATE_FILE)
+$releaseApiUrl = "https://api.github.com/repos/irebix/chess-go/commits/release"
+
+function Get-InstallerRevision([string]$content, [string]$label) {
+  $match = [regex]::Match(
+    $content,
+    '(?m)^set "CHESSGO_INSTALLER_REVISION=([0-9]+)"\s*$'
+  )
+  if (-not $match.Success) {
+    throw "$label does not declare a ChessGo installer revision."
+  }
+  return [int64]$match.Groups[1].Value
+}
+
+function Assert-ChessGoInstaller([string]$content, [string]$label) {
+  if ($content.Length -lt 10000) {
+    throw "$label is unexpectedly small."
+  }
+  if (-not $content.TrimStart().StartsWith("@echo off", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "$label is not a CMD installer."
+  }
+  $selfUpdateMarkerText = ":__CHESSGO_" + "SELF_UPDATE_POWERSHELL__"
+  $selfUpdateMarker = $content.LastIndexOf($selfUpdateMarkerText)
+  $payloadMarker = $content.LastIndexOf(":__CHESSGO_POWERSHELL__")
+  if ($selfUpdateMarker -lt 0 -or $payloadMarker -le $selfUpdateMarker) {
+    throw "$label does not contain the required installer payload markers."
+  }
+  $payload = $content.Substring($payloadMarker + ":__CHESSGO_POWERSHELL__".Length)
+  if (-not $payload.Contains('$pluginId = "com.linkdesks.chess-archive-psd-generator"')) {
+    throw "$label is not a ChessGo installer."
+  }
+  $tokens = $null
+  $parseErrors = $null
+  [System.Management.Automation.Language.Parser]::ParseInput(
+    $payload,
+    [ref]$tokens,
+    [ref]$parseErrors
+  ) | Out-Null
+  if ($parseErrors.Count -gt 0) {
+    throw "$label contains an invalid PowerShell payload: $($parseErrors[0].Message)"
+  }
+}
+
+try {
+  if (Test-Path -LiteralPath $candidatePath) {
+    Remove-Item -LiteralPath $candidatePath -Force
+  }
+
+  $currentContent = [IO.File]::ReadAllText($installerPath, [Text.Encoding]::UTF8)
+  $currentRevision = Get-InstallerRevision $currentContent "The current installer"
+  $testSource = [string]$env:CHESSGO_INSTALLER_UPDATE_SOURCE
+  if (-not [string]::IsNullOrWhiteSpace($testSource)) {
+    $testSource = [IO.Path]::GetFullPath($testSource)
+    if (-not (Test-Path -LiteralPath $testSource -PathType Leaf)) {
+      throw "The requested installer update source does not exist: $testSource"
+    }
+    Copy-Item -LiteralPath $testSource -Destination $candidatePath -Force
+  } else {
+    [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{
+      "Accept" = "application/vnd.github+json"
+      "User-Agent" = "ChessGo-Installer"
+    }
+    $response = Invoke-RestMethod -Uri $releaseApiUrl -Headers $headers -TimeoutSec 10
+    $releaseSha = [string]$response.sha
+    if ($releaseSha -notmatch "^[0-9a-fA-F]{40}$") {
+      throw "GitHub returned an invalid release identifier."
+    }
+    $installerUrl = "https://raw.githubusercontent.com/irebix/chess-go/$releaseSha/install.cmd"
+    Invoke-WebRequest `
+      -Uri $installerUrl `
+      -Headers @{ "User-Agent" = "ChessGo-Installer" } `
+      -TimeoutSec 20 `
+      -OutFile $candidatePath
+  }
+
+  $candidateContent = [IO.File]::ReadAllText($candidatePath, [Text.Encoding]::UTF8)
+  $candidateRevisionMatch = [regex]::Match(
+    $candidateContent,
+    '(?m)^set "CHESSGO_INSTALLER_REVISION=([0-9]+)"\s*$'
+  )
+  if (-not $candidateRevisionMatch.Success) {
+    Remove-Item -LiteralPath $candidatePath -Force
+    exit 0
+  }
+  $candidateRevision = [int64]$candidateRevisionMatch.Groups[1].Value
+  if ($candidateRevision -le $currentRevision) {
+    Remove-Item -LiteralPath $candidatePath -Force
+    exit 0
+  }
+  Assert-ChessGoInstaller $candidateContent "The downloaded installer"
+
+  Write-Host "A newer ChessGo installer is ready. Updating revision $currentRevision to $candidateRevision..."
+  exit 20
+} catch {
+  if (Test-Path -LiteralPath $candidatePath) {
+    Remove-Item -LiteralPath $candidatePath -Force -ErrorAction SilentlyContinue
+  }
+  Write-Warning "ChessGo installer self-update was skipped: $($_.Exception.Message)"
+  exit 0
+}
 
 :__CHESSGO_POWERSHELL__
 $ErrorActionPreference = "Stop"
@@ -343,6 +485,204 @@ function Resolve-ChessGoRelease(
   throw "Git clone failed and the release archive version could not be checked."
 }
 
+function Read-UxpPluginRegistry([string]$registryPath) {
+  if (-not (Test-Path -LiteralPath $registryPath -PathType Leaf)) {
+    return [pscustomobject]@{ plugins = @() }
+  }
+
+  try {
+    $rawRegistry = Get-Content -LiteralPath $registryPath -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($rawRegistry)) {
+      throw "The registry file is empty."
+    }
+    $registry = $rawRegistry | ConvertFrom-Json
+  } catch {
+    throw "Adobe UXP plugin registry is invalid: $registryPath. $($_.Exception.Message)"
+  }
+
+  if ($registry -isnot [pscustomobject]) {
+    throw "Adobe UXP plugin registry must contain a JSON object: $registryPath"
+  }
+  if (-not $registry.PSObject.Properties["plugins"]) {
+    $registry | Add-Member -NotePropertyName "plugins" -NotePropertyValue @()
+  } elseif ($null -eq $registry.plugins) {
+    $registry.plugins = @()
+  } elseif ($registry.plugins -is [string]) {
+    throw "Adobe UXP plugin registry contains an invalid plugins field: $registryPath"
+  }
+  return $registry
+}
+
+function Install-RegisteredUxpPlugin(
+  [string]$releaseFolder,
+  [pscustomobject]$manifest,
+  [string]$photoshopRoot
+) {
+  $version = [string]$manifest.version
+  $minimumHostVersion = [string]$manifest.host.minVersion
+  if ($pluginId -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]*$") {
+    throw "The plugin id cannot be used as an installation folder name: $pluginId"
+  }
+  if ($version -notmatch "^[0-9A-Za-z][0-9A-Za-z._-]*$") {
+    throw "The plugin version cannot be used as an installation folder name: $version"
+  }
+  if ([string]::IsNullOrWhiteSpace($minimumHostVersion)) {
+    throw "The plugin manifest does not declare a Photoshop minimum version."
+  }
+
+  $uxpRoot = Join-Path $env:APPDATA "Adobe\UXP"
+  $externalRoot = Join-Path $uxpRoot "Plugins\External"
+  $registryDir = Join-Path $uxpRoot "PluginsInfo\v1"
+  $registryPath = Join-Path $registryDir "PS.json"
+  $versionFolderName = "${pluginId}_$version"
+  $destination = Join-Path $externalRoot $versionFolderName
+  $staging = Join-Path $externalRoot (".$versionFolderName.installing-" + [Guid]::NewGuid().ToString("N"))
+  $backupRoot = Join-Path $managedRoot "Backups\UxpPlugins"
+
+  New-Item -ItemType Directory -Path $externalRoot -Force | Out-Null
+  New-Item -ItemType Directory -Path $registryDir -Force | Out-Null
+  New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+  $safeDestination = Assert-PathInside $destination $externalRoot "UXP plugin destination"
+  $safeStaging = Assert-PathInside $staging $externalRoot "UXP plugin staging folder"
+
+  $registryExisted = Test-Path -LiteralPath $registryPath -PathType Leaf
+  $registry = Read-UxpPluginRegistry $registryPath
+  $otherPlugins = @(
+    $registry.plugins | Where-Object { [string]$_.pluginId -ne $pluginId }
+  )
+  $registryEntry = [pscustomobject][ordered]@{
+    hostMinVersion = $minimumHostVersion
+    name = [string]$manifest.name
+    path = '$localPlugins\External\' + $versionFolderName
+    pluginId = $pluginId
+    status = "enabled"
+    type = "uxp"
+    versionString = $version
+  }
+  $registry.plugins = @($otherPlugins) + @($registryEntry)
+
+  $destinationBackup = $null
+  $registryBackup = $null
+  $registryTemp = Join-Path $registryDir ("PS.json.chessgo-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+  try {
+    New-Item -ItemType Directory -Path $safeStaging -Force | Out-Null
+    foreach ($fileName in $requiredFiles) {
+      $sourceFile = Join-Path $releaseFolder $fileName
+      $stagedFile = Join-Path $safeStaging $fileName
+      Copy-Item -LiteralPath $sourceFile -Destination $stagedFile -Force
+      $sourceHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+      $stagedHash = (Get-FileHash -LiteralPath $stagedFile -Algorithm SHA256).Hash
+      if ($sourceHash -ne $stagedHash) {
+        throw "Plugin file verification failed: $fileName"
+      }
+    }
+
+    $stagedManifest = Get-Content -LiteralPath (Join-Path $safeStaging "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($stagedManifest.id -ne $pluginId -or [string]$stagedManifest.version -ne $version) {
+      throw "The staged plugin manifest does not match the requested plugin version."
+    }
+
+    if (Test-Path -LiteralPath $safeDestination) {
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $destinationBackup = Join-Path $backupRoot ("$versionFolderName-$timestamp-" + [Guid]::NewGuid().ToString("N"))
+      $destinationBackup = Assert-PathInside $destinationBackup $backupRoot "UXP plugin backup folder"
+      Move-Item -LiteralPath $safeDestination -Destination $destinationBackup
+    }
+    Move-Item -LiteralPath $safeStaging -Destination $safeDestination
+
+    $registryJson = $registry | ConvertTo-Json -Depth 100 -Compress
+    [IO.File]::WriteAllText($registryTemp, $registryJson, [Text.UTF8Encoding]::new($false))
+    if ($registryExisted) {
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $registryBackup = Join-Path $registryDir ("PS.json.chessgo-backup-$timestamp-" + [Guid]::NewGuid().ToString("N"))
+      [IO.File]::Replace($registryTemp, $registryPath, $registryBackup, $true)
+    } else {
+      Move-Item -LiteralPath $registryTemp -Destination $registryPath
+    }
+  } catch {
+    if (Test-Path -LiteralPath $safeStaging) {
+      Remove-SafeDirectory $safeStaging $externalRoot
+    }
+    if (Test-Path -LiteralPath $safeDestination) {
+      Remove-SafeDirectory $safeDestination $externalRoot
+    }
+    if ($destinationBackup -and (Test-Path -LiteralPath $destinationBackup)) {
+      Move-Item -LiteralPath $destinationBackup -Destination $safeDestination
+    }
+    if (Test-Path -LiteralPath $registryTemp -PathType Leaf) {
+      Remove-Item -LiteralPath $registryTemp -Force
+    }
+    if ($registryBackup -and (Test-Path -LiteralPath $registryBackup -PathType Leaf)) {
+      Copy-Item -LiteralPath $registryBackup -Destination $registryPath -Force
+    } elseif (-not $registryExisted -and (Test-Path -LiteralPath $registryPath -PathType Leaf)) {
+      Remove-Item -LiteralPath $registryPath -Force
+    }
+    throw
+  }
+
+  $registryCheck = Read-UxpPluginRegistry $registryPath
+  $registered = @(
+    $registryCheck.plugins | Where-Object {
+      [string]$_.pluginId -eq $pluginId -and
+      [string]$_.versionString -eq $version -and
+      [string]$_.path -eq ('$localPlugins\External\' + $versionFolderName) -and
+      [string]$_.status -eq "enabled"
+    }
+  )
+  if ($registered.Count -ne 1) {
+    throw "Photoshop UXP plugin registration verification failed."
+  }
+
+  $legacyDestination = Join-Path (Join-Path $photoshopRoot "Plug-ins") $pluginFolderName
+  if (Test-Path -LiteralPath $legacyDestination) {
+    $legacyItem = Get-Item -LiteralPath $legacyDestination -Force
+    $isReparsePoint = ($legacyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isReparsePoint) {
+      [IO.Directory]::Delete($legacyDestination)
+      Write-Host "Removed the legacy Photoshop Plug-ins link."
+    } else {
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $legacyBackup = Join-Path $backupRoot ("Legacy-$pluginFolderName-$timestamp")
+      $legacyBackup = Assert-PathInside $legacyBackup $backupRoot "Legacy plugin backup folder"
+      Move-Item -LiteralPath $legacyDestination -Destination $legacyBackup
+      Write-Host "Legacy Photoshop Plug-ins folder backed up to: $legacyBackup"
+    }
+  }
+
+  $obsoleteFolders = @(
+    Get-ChildItem -LiteralPath $externalRoot -Directory -Force -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.Name.StartsWith("${pluginId}_", [StringComparison]::OrdinalIgnoreCase) -and
+        -not $_.FullName.Equals($safeDestination, [StringComparison]::OrdinalIgnoreCase)
+      }
+  )
+  foreach ($obsoleteFolder in $obsoleteFolders) {
+    try {
+      $obsoleteManifestPath = Join-Path $obsoleteFolder.FullName "manifest.json"
+      if (-not (Test-Path -LiteralPath $obsoleteManifestPath -PathType Leaf)) {
+        continue
+      }
+      $obsoleteManifest = Get-Content -LiteralPath $obsoleteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ([string]$obsoleteManifest.id -ne $pluginId) {
+        continue
+      }
+      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      $obsoleteBackup = Join-Path $backupRoot ("$($obsoleteFolder.Name)-obsolete-$timestamp-" + [Guid]::NewGuid().ToString("N"))
+      $obsoleteBackup = Assert-PathInside $obsoleteBackup $backupRoot "Obsolete plugin backup folder"
+      Move-Item -LiteralPath $obsoleteFolder.FullName -Destination $obsoleteBackup
+      Write-Host "Previous registered plugin version backed up to: $obsoleteBackup"
+    } catch {
+      Write-Warning "An obsolete ChessGo plugin folder could not be archived: $($_.Exception.Message)"
+    }
+  }
+
+  return [pscustomobject]@{
+    Destination = $safeDestination
+    RegistryPath = $registryPath
+    Version = $version
+  }
+}
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -445,46 +785,15 @@ try {
   New-Item -ItemType Directory -Path $developerDir -Force | Out-Null
   Enable-UxpDeveloperMode $developerSettings
 
-  Write-Host "Linking the plugin into Photoshop..."
-  $pluginsDir = Join-Path $photoshopRoot "Plug-ins"
-  $destination = Join-Path $pluginsDir $pluginFolderName
-  New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
-
-  $sourceFullPath = [IO.Path]::GetFullPath($sourceDir).TrimEnd("\")
-  $destinationFullPath = [IO.Path]::GetFullPath($destination).TrimEnd("\")
-  if (-not $sourceFullPath.Equals($destinationFullPath, [StringComparison]::OrdinalIgnoreCase)) {
-    if (Test-Path -LiteralPath $destination) {
-      $existing = Get-Item -LiteralPath $destination -Force
-      $isReparsePoint = ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-      if ($isReparsePoint) {
-        [IO.Directory]::Delete($destination)
-      } else {
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $backupRoot = Join-Path $env:ProgramData "ChessGo\Backups"
-        New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-        $backup = Join-Path $backupRoot "$pluginFolderName-$timestamp"
-        Move-Item -LiteralPath $destination -Destination $backup
-        Write-Host "Previous plugin folder backed up to: $backup"
-      }
-    }
-    New-Item -ItemType Junction -Path $destination -Target $sourceFullPath | Out-Null
-  }
-
-  $installedManifest = Join-Path $destination "manifest.json"
-  if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) {
-    throw "Plugin link verification failed."
-  }
-  $installed = Get-Content -LiteralPath $installedManifest -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($installed.id -ne $pluginId) {
-    throw "Installed plugin verification failed."
-  }
+  Write-Host "Registering ChessGo with the Photoshop UXP plugin manager..."
+  $installation = Install-RegisteredUxpPlugin $sourceDir $manifest $photoshopRoot
 
   $photoshopIsRunning = @(Get-Process -Name Photoshop -ErrorAction SilentlyContinue).Count -gt 0
-  $result = "ChessGo $($installed.version) was installed successfully.`r`n`r`nRelease folder: $sourceDir`r`n`r`n"
+  $result = "ChessGo $($installation.Version) was installed successfully.`r`n`r`nPlugin folder: $($installation.Destination)`r`nRegistration: $($installation.RegistryPath)`r`n`r`n"
   if ($photoshopIsRunning) {
-    $result += "Restart Photoshop once to load the plugin. No other setup is required."
+    $result += "Restart Photoshop once to load the registered plugin. No other setup is required."
   } else {
-    $result += "Start Photoshop normally. No other setup is required."
+    $result += "Start Photoshop normally to load the registered plugin. No other setup is required."
   }
 
   Write-Host ""
