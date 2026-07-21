@@ -1,0 +1,108 @@
+{
+  "1": {
+    "inputs": {
+      "aspect_ratio": "1:1",
+      "batch_size": "1",
+      "request_nonce": 0,
+      "confirm_cost": true,
+      "timeout_seconds": 200,
+      "prompt": ["3", 0],
+      "images": ["5", 0]
+    },
+    "class_type": "HolopixGenerateV2",
+    "_meta": { "title": "Holopix 全能编辑 V2（2K）" }
+  },
+  "2": {
+    "inputs": { "image": "chessgo_image_editor/input.ppm" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "加载图像" }
+  },
+  "3": {
+    "inputs": { "value": "" },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": { "title": "字符串（多行）" }
+  },
+  "4": {
+    "inputs": { "filename_prefix": "Holopix/ChessGo/ImageEditor/V2", "images": ["12", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "保存图像" }
+  },
+  "5": {
+    "inputs": {
+      "image": ["2", 0],
+      "target_width": 512,
+      "target_height": 512,
+      "padding_color": "white",
+      "interpolation": "lanczos"
+    },
+    "class_type": "ResizeAndPadImage",
+    "_meta": { "title": "白底 1:1（512 × 512）" }
+  },
+  "8": {
+    "inputs": { "image": "chessgo_image_editor/input.ppm" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "加载图像" }
+  },
+  "9": {
+    "inputs": { "value": "" },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": { "title": "字符串（多行）" }
+  },
+  "10": {
+    "inputs": {
+      "aspect_ratio": "1:1",
+      "batch_size": "1",
+      "request_nonce": 0,
+      "confirm_cost": true,
+      "timeout_seconds": 200,
+      "prompt": ["9", 0],
+      "images": ["11", 0]
+    },
+    "class_type": "HolopixGenerateV3",
+    "_meta": { "title": "Holopix 全能编辑 V3（2K）" }
+  },
+  "11": {
+    "inputs": {
+      "image": ["8", 0],
+      "target_width": 512,
+      "target_height": 512,
+      "padding_color": "white",
+      "interpolation": "lanczos"
+    },
+    "class_type": "ResizeAndPadImage",
+    "_meta": { "title": "白底 1:1（512 × 512）" }
+  },
+  "12": {
+    "inputs": {
+      "model": "BiRefNet_toonout",
+      "mask_blur": 1,
+      "mask_offset": 1,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#000000",
+      "image": ["1", 0]
+    },
+    "class_type": "BiRefNetRMBG",
+    "_meta": { "title": "抠图" }
+  },
+  "13": {
+    "inputs": { "filename_prefix": "Holopix/ChessGo/ImageEditor/V3", "images": ["14", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "保存图像" }
+  },
+  "14": {
+    "inputs": {
+      "model": "BiRefNet_toonout",
+      "mask_blur": 1,
+      "mask_offset": 1,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#000000",
+      "image": ["10", 0]
+    },
+    "class_type": "BiRefNetRMBG",
+    "_meta": { "title": "抠图" }
+  }
+}
