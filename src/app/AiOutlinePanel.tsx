@@ -1,6 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CenterlineComfyClient } from "../centerline/client";
-import { assertActiveLayerSource, readActiveLayerPixels } from "../centerline/layerSource";
+import {
+  assertActiveLayerSource,
+  inspectActiveLayerIdentity,
+  isLayerAvailable,
+  readActiveLayerPixels,
+  readLayerPixels,
+  watchActiveLayerIdentity
+} from "../centerline/layerSource";
 import {
   convertSelectedPathToShapeLayer,
   createEditableWorkPath,
@@ -8,11 +15,13 @@ import {
   removeEditableWorkPath,
   type PhotoshopPathItem
 } from "../centerline/pathImporter";
+import { createCenterlinePathTransform } from "../centerline/pathGeometry";
 import { validatePathJson } from "../centerline/pathJson";
 import type {
   CenterlineJob,
+  CenterlineLayerIdentity,
+  CenterlineLayerSource,
   CenterlinePathJson,
-  CenterlinePixelSource,
   CenterlineReport
 } from "../centerline/types";
 import { toErrorMessage } from "../utils/errors";
@@ -27,7 +36,13 @@ type ConnectionState = "checking" | "ready" | "error";
 
 const client = new CenterlineComfyClient();
 const CENTERLINE_OUTPUT_NAME = "Autoline";
-let sessionPathJson: CenterlinePathJson | null = null;
+
+interface SessionReusablePath {
+  pathJson: CenterlinePathJson;
+  source: CenterlineLayerSource;
+}
+
+let sessionReusablePath: SessionReusablePath | null = null;
 
 export function AiOutlinePanel({
   externalBusy,
@@ -40,7 +55,13 @@ export function AiOutlinePanel({
   const [busy, setBusy] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const currentJobIdRef = useRef<string | null>(null);
-  const [lastPathJson, setLastPathJson] = useState<CenterlinePathJson | null>(sessionPathJson);
+  const [activeLayerIdentity, setActiveLayerIdentity] = useState<CenterlineLayerIdentity | null>(
+    inspectActiveLayerIdentity
+  );
+  const [reusablePath, setReusablePath] = useState<SessionReusablePath | null>(sessionReusablePath);
+  const [reusableSourceAvailable, setReusableSourceAvailable] = useState(
+    () => Boolean(sessionReusablePath && isLayerAvailable(sessionReusablePath.source))
+  );
   const [detail, setDetail] = useState(100);
   const [cornerSensitivity, setCornerSensitivity] = useState(80);
   const [smoothing, setSmoothing] = useState(100);
@@ -49,6 +70,11 @@ export function AiOutlinePanel({
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("正在检测 ComfyUI");
   const lastReportedStageRef = useRef("");
+  const activeReusablePath = reusablePath
+    && sameDocumentIdentity(reusablePath.source, activeLayerIdentity)
+    && reusableSourceAvailable
+    ? reusablePath
+    : null;
 
   const commitBusy = useCallback((value: boolean): void => {
     setBusy(value);
@@ -56,6 +82,12 @@ export function AiOutlinePanel({
   }, [onBusyChange]);
 
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
+  useEffect(() => watchActiveLayerIdentity((identity) => {
+    setActiveLayerIdentity(identity);
+    setReusableSourceAvailable(Boolean(
+      sessionReusablePath && isLayerAvailable(sessionReusablePath.source)
+    ));
+  }), []);
 
   useEffect(() => {
     if (!open || healthCheckedRef.current) return;
@@ -65,22 +97,12 @@ export function AiOutlinePanel({
       setProgressStage("正在检测 ComfyUI");
       try {
         await client.health();
-        let reusable = sessionPathJson;
-        if (!reusable) {
-          try {
-            reusable = validatePathJson((await client.getReusableResult()).pathJson);
-            sessionPathJson = reusable;
-          } catch {
-            // First use is valid even when no reusable result exists yet.
-          }
-        }
         if (!active) return;
         healthCheckedRef.current = true;
-        setLastPathJson(reusable);
         setConnection("ready");
         setProgress(0);
         setProgressStage("等待任务");
-        onStatus(reusable ? "AI勾线就绪 · 可复用最近结果" : "AI勾线就绪");
+        onStatus(activeReusablePath ? "AI勾线就绪 · 当前文档有就绪描边" : "AI勾线就绪");
       } catch (error) {
         if (!active) return;
         const detailMessage = toErrorMessage(error);
@@ -91,7 +113,7 @@ export function AiOutlinePanel({
       }
     })();
     return () => { active = false; };
-  }, [onStatus, open]);
+  }, [activeReusablePath, onStatus, open]);
 
   const updateJob = useCallback((job: CenterlineJob): void => {
     currentJobIdRef.current = job.id;
@@ -109,6 +131,7 @@ export function AiOutlinePanel({
     const outputName = CENTERLINE_OUTPUT_NAME;
     const normalizedStrokeWidth = Math.max(0.5, strokeWidth || 2);
     let createdPath: PhotoshopPathItem | null = null;
+    let readySource: CenterlineLayerSource | null = null;
     commitBusy(true);
     lastReportedStageRef.current = "";
     setProgress(1);
@@ -137,16 +160,32 @@ export function AiOutlinePanel({
       setProgressStage("接收路径结果");
       const result = await client.getResult(completed.id);
       const pathJson = validatePathJson(result.pathJson);
-      sessionPathJson = pathJson;
-      setLastPathJson(pathJson);
+      const nextReusablePath: SessionReusablePath = {
+        pathJson,
+        source: {
+          documentId: pixels.documentId,
+          documentName: pixels.documentName,
+          layerId: pixels.layerId,
+          layerName: pixels.layerName
+        }
+      };
+      readySource = nextReusablePath.source;
+      sessionReusablePath = nextReusablePath;
+      setReusablePath(nextReusablePath);
+      setReusableSourceAvailable(isLayerAvailable(nextReusablePath.source));
       assertActiveLayerSource(pixels);
 
       setProgress(98);
       setProgressStage("写入 Photoshop 描边");
-      createdPath = await createEditableWorkPath(pathJson, outputName, pixels.transform, {
-        keepSelected: true,
-        documentId: pixels.documentId
-      });
+      createdPath = await createEditableWorkPath(
+        pathJson,
+        outputName,
+        createCenterlinePathTransform(pathJson, pixels),
+        {
+          keepSelected: true,
+          documentId: pixels.documentId
+        }
+      );
 
       let shapeWarning: string | null = null;
       let shapeCreated = false;
@@ -170,8 +209,17 @@ export function AiOutlinePanel({
       onStatus(`AI勾线完成：${resultSummary}`, shapeWarning ? "warn" : "info");
     } catch (error) {
       const detailMessage = toErrorMessage(error);
-      setProgressStage("处理失败");
-      onStatus(`AI勾线失败：${detailMessage}`, "error");
+      if (readySource && isLayerAvailable(readySource)) {
+        setProgress(100);
+        setProgressStage("描边已就绪，等待插入");
+        onStatus(
+          `AI勾线描边已就绪：${detailMessage}\n请在来源文档中点击“插入就绪描边”。`,
+          "warn"
+        );
+      } else {
+        setProgressStage("处理失败");
+        onStatus(`AI勾线失败：${detailMessage}`, "error");
+      }
       console.error(error);
     } finally {
       currentJobIdRef.current = null;
@@ -192,23 +240,22 @@ export function AiOutlinePanel({
   ]);
 
   const createEdgeShapeFromReusableResult = useCallback(async (): Promise<void> => {
-    if (busy || externalBusy || !lastPathJson) return;
+    if (busy || externalBusy || !activeReusablePath) return;
     const outputName = CENTERLINE_OUTPUT_NAME;
     const normalizedStrokeWidth = Math.max(0.5, strokeWidth || 2);
     let createdPath: PhotoshopPathItem | null = null;
     let sourceDocumentId: number | null = null;
     commitBusy(true);
     setProgress(5);
-    setProgressStage("读取当前图层位置");
-    onStatus("AI勾线开始：仅生成描边（复用最近结果）");
+    setProgressStage("读取来源图层位置");
+    onStatus("AI勾线开始：插入就绪描边");
     try {
-      const pathJson = validatePathJson(lastPathJson);
-      const pixels = await readActiveLayerPixels();
+      const pathJson = validatePathJson(activeReusablePath.pathJson);
+      const pixels = await readLayerPixels(activeReusablePath.source);
       sourceDocumentId = pixels.documentId;
-      const transform = reusableTransform(pathJson, pixels);
-      assertActiveLayerSource(pixels);
+      const transform = createCenterlinePathTransform(pathJson, pixels);
       setProgress(55);
-      setProgressStage("复用最近路径结果");
+      setProgressStage("插入就绪路径结果");
       createdPath = await createEditableWorkPath(pathJson, outputName, transform, {
         keepSelected: true,
         documentId: pixels.documentId
@@ -225,7 +272,7 @@ export function AiOutlinePanel({
       setProgress(100);
       setProgressStage("完成");
       const resultSummary = [
-        "已复用最近结果创建仅描边 Shape；没有重新运行 ComfyUI 或 Holopix。",
+        "已插入就绪描边 Shape；没有重新运行 ComfyUI 或 Holopix。",
         `${pathJson.paths.length} 条路径 · ${countAnchors(pathJson)} 个锚点 · ${normalizedStrokeWidth}px`,
         cleanupWarning ? `中间路径清理提示：${cleanupWarning}` : null
       ].filter(Boolean).join("\n");
@@ -236,12 +283,12 @@ export function AiOutlinePanel({
         try { await deselectEditableWorkPath(sourceDocumentId); } catch { /* Keep recoverable work path. */ }
       }
       setProgressStage("处理失败");
-      onStatus(`AI勾线复用失败：${detailMessage}`, "error");
+      onStatus(`AI勾线插入失败：${detailMessage}`, "error");
       console.error(error);
     } finally {
       commitBusy(false);
     }
-  }, [busy, commitBusy, externalBusy, lastPathJson, onStatus, strokeWidth]);
+  }, [activeReusablePath, busy, commitBusy, externalBusy, onStatus, strokeWidth]);
 
   const cancelCurrentJob = useCallback(async (): Promise<void> => {
     const promptId = currentJobIdRef.current;
@@ -285,13 +332,15 @@ export function AiOutlinePanel({
           <button className="primary" disabled={controlsDisabled} onClick={() => void runVectorization()}>
             生成描边
           </button>
-          <button
-            className="secondary"
-            disabled={externalBusy || busy || !lastPathJson}
-            onClick={() => void createEdgeShapeFromReusableResult()}
-          >
-            仅生成描边
-          </button>
+          {activeReusablePath ? (
+            <button
+              className="secondary"
+              disabled={externalBusy || busy}
+              onClick={() => void createEdgeShapeFromReusableResult()}
+            >
+              插入就绪描边
+            </button>
+          ) : null}
         </div>
         <CenterlineRange
           label="描边宽度"
@@ -476,17 +525,18 @@ function normalizeProgress(progress: number): number {
   return Math.max(0, Math.min(100, Number(progress) || 0));
 }
 
-function countAnchors(pathJson: CenterlinePathJson): number {
-  return pathJson.paths.reduce((sum, path) => sum + path.points.length, 0);
+function sameDocumentIdentity(
+  left: CenterlineLayerIdentity,
+  right: CenterlineLayerIdentity | null
+): boolean {
+  return Boolean(
+    right &&
+    left.documentId === right.documentId
+  );
 }
 
-function reusableTransform(pathJson: CenterlinePathJson, pixels: CenterlinePixelSource) {
-  return {
-    scaleX: pixels.transform.scaleX * (pixels.width / pathJson.canvas.width),
-    scaleY: pixels.transform.scaleY * (pixels.height / pathJson.canvas.height),
-    offsetX: pixels.transform.offsetX,
-    offsetY: pixels.transform.offsetY
-  };
+function countAnchors(pathJson: CenterlinePathJson): number {
+  return pathJson.paths.reduce((sum, path) => sum + path.points.length, 0);
 }
 
 function formatResultStatus(

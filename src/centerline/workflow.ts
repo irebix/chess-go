@@ -1,5 +1,6 @@
 import type { CenterlineVectorSettings } from "./types";
 import {
+  CENTERLINE_MIN_INPUT_SHORT_SIDE_PX,
   CENTERLINE_OUTPUT_BASENAME,
   CENTERLINE_WORKFLOW_PADDING_PX
 } from "./config";
@@ -88,7 +89,7 @@ export function createAutomaticOutlineWorkflow(): CenterlineWorkflow {
         refine_foreground: false,
         background: "Alpha",
         background_color: "#222222",
-        image: ["7", 0]
+        image: ["28", 0]
       },
       class_type: "BiRefNetRMBG",
       _meta: { title: "④ 本地精确主体蒙版（toonout）" }
@@ -174,7 +175,7 @@ export function createAutomaticOutlineWorkflow(): CenterlineWorkflow {
         remove_bkgd_method: "none",
         invert_mask: false,
         mask_grow: 0,
-        image: ["7", 0],
+        image: ["28", 0],
         mask: ["13", 1]
       },
       class_type: "LayerUtility: GetColorToneV2",
@@ -187,22 +188,66 @@ export function createAutomaticOutlineWorkflow(): CenterlineWorkflow {
         bottom: CENTERLINE_WORKFLOW_PADDING_PX,
         left: CENTERLINE_WORKFLOW_PADDING_PX,
         right: CENTERLINE_WORKFLOW_PADDING_PX,
-        image: ["7", 0],
+        image: ["28", 0],
         mask: ["13", 1],
         color: ["23", 1]
       },
       class_type: "LayerUtility: ExtendCanvasV2",
       _meta: { title: "四周扩展 20 px（匹配背景色）" }
+    },
+    "25": {
+      inputs: {
+        image: ["7", 0],
+        side: "Shortest"
+      },
+      class_type: "easy imageSizeBySide",
+      _meta: { title: "检测输入图片短边" }
+    },
+    "26": {
+      inputs: {
+        a: ["25", 0],
+        b: CENTERLINE_MIN_INPUT_SHORT_SIDE_PX,
+        comparison: "a <= b"
+      },
+      class_type: "easy compare",
+      _meta: { title: "短边不大于 300 px" }
+    },
+    "27": {
+      inputs: {
+        aspect_ratio: "original",
+        proportional_width: 1,
+        proportional_height: 1,
+        fit: "letterbox",
+        method: "lanczos",
+        round_to_multiple: "None",
+        scale_to_side: "shortest",
+        scale_to_length: CENTERLINE_MIN_INPUT_SHORT_SIDE_PX,
+        background_color: "#FFFFFF",
+        image: ["7", 0]
+      },
+      class_type: "LayerUtility: ImageScaleByAspectRatio V2",
+      _meta: { title: "等比放大至短边 300 px" }
+    },
+    "28": {
+      inputs: {
+        boolean: ["26", 0],
+        on_true: ["27", 0],
+        on_false: ["7", 0]
+      },
+      class_type: "easy ifElse",
+      _meta: { title: "小图放大 / 大图保持原尺寸" }
     }
   };
 }
 
 export function makeAutomaticOutlinePrompt(
   uploadedImageName: string,
-  settings: CenterlineVectorSettings
+  settings: CenterlineVectorSettings,
+  requestNonce: number
 ): CenterlineWorkflow {
   const prompt = createAutomaticOutlineWorkflow();
   prompt["7"]!.inputs.image = uploadedImageName;
+  prompt["11"]!.inputs.request_nonce = normalizeRequestNonce(requestNonce);
   prompt["2"]!.inputs.detail = clampPercent(settings.detail);
   prompt["2"]!.inputs.corner_sensitivity = clampPercent(settings.cornerSensitivity);
   prompt["2"]!.inputs.smoothing = clampPercent(settings.smoothing);
@@ -211,4 +256,9 @@ export function makeAutomaticOutlinePrompt(
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+}
+
+function normalizeRequestNonce(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value)));
 }

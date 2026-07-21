@@ -38,11 +38,17 @@ export interface CenterlinePixelTransform {
   offsetY: number;
 }
 
-export interface CenterlinePixelSource {
+export interface CenterlineLayerIdentity {
   documentId: number;
-  documentName: string;
   layerId: number;
+}
+
+export interface CenterlineLayerSource extends CenterlineLayerIdentity {
+  documentName: string;
   layerName: string;
+}
+
+export interface CenterlinePixelSource extends CenterlineLayerSource {
   bytes: Uint8Array;
   width: number;
   height: number;

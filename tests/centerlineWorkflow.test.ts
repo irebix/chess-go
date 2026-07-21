@@ -15,19 +15,47 @@ describe("Centerline Forge workflow integration", () => {
 
     expect(Object.keys(workflow)).toEqual([
       "2", "3", "4", "6", "7", "9", "11", "12", "13",
-      "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"
+      "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24",
+      "25", "26", "27", "28"
     ]);
     expect(workflow["2"]?.class_type).toBe("CenterlineForgeVectorize");
     expect(workflow["4"]?.class_type).toBe("CenterlineForgeSave");
     expect(workflow["11"]?.class_type).toBe("HolopixGenerateV3");
     expect(workflow["13"]?.inputs.model).toBe("BiRefNet_toonout");
     expect(workflow["20"]?.class_type).toBe("AILab_ImageCompare");
+    expect(workflow["25"]).toMatchObject({
+      class_type: "easy imageSizeBySide",
+      inputs: { image: ["7", 0], side: "Shortest" }
+    });
+    expect(workflow["26"]).toMatchObject({
+      class_type: "easy compare",
+      inputs: { a: ["25", 0], b: 300, comparison: "a <= b" }
+    });
+    expect(workflow["27"]).toMatchObject({
+      class_type: "LayerUtility: ImageScaleByAspectRatio V2",
+      inputs: {
+        aspect_ratio: "original",
+        method: "lanczos",
+        round_to_multiple: "None",
+        scale_to_side: "shortest",
+        scale_to_length: 300,
+        image: ["7", 0]
+      }
+    });
+    expect(workflow["28"]).toMatchObject({
+      class_type: "easy ifElse",
+      inputs: {
+        boolean: ["26", 0],
+        on_true: ["27", 0],
+        on_false: ["7", 0]
+      }
+    });
     expect(workflow["23"]).toMatchObject({
       class_type: "LayerUtility: GetColorToneV2",
       inputs: {
         mode: "main_color",
         color_of: "background",
-        image: ["7", 0],
+        image: ["28", 0],
         mask: ["13", 1]
       }
     });
@@ -38,7 +66,7 @@ describe("Centerline Forge workflow integration", () => {
         bottom: 20,
         left: 20,
         right: 20,
-        image: ["7", 0],
+        image: ["28", 0],
         mask: ["13", 1],
         color: ["23", 1]
       }
@@ -46,11 +74,13 @@ describe("Centerline Forge workflow integration", () => {
     expect(workflow["11"]?.inputs.images).toEqual(["24", 0]);
     expect(workflow["14"]?.inputs.mask).toEqual(["24", 1]);
     expect(workflow["15"]?.inputs.mask).toEqual(["24", 1]);
+    expect(workflow["13"]?.inputs.image).toEqual(["28", 0]);
   });
 
-  it("changes only the uploaded image and the three exposed vector controls", () => {
+  it("changes the uploaded image, request nonce, and the three exposed vector controls", () => {
     const expected = createAutomaticOutlineWorkflow();
     expected["7"]!.inputs.image = "centerline_forge/current-layer.ppm";
+    expected["11"]!.inputs.request_nonce = 1784614660068;
     expected["2"]!.inputs.detail = 72;
     expected["2"]!.inputs.corner_sensitivity = 64;
     expected["2"]!.inputs.smoothing = 91;
@@ -59,7 +89,7 @@ describe("Centerline Forge workflow integration", () => {
       detail: 72,
       cornerSensitivity: 64,
       smoothing: 91
-    })).toEqual(expected);
+    }, 1784614660068)).toEqual(expected);
   });
 
   it("keeps fixed Holopix and save parameters while clamping slider values", () => {
@@ -67,7 +97,7 @@ describe("Centerline Forge workflow integration", () => {
       detail: 120,
       cornerSensitivity: -8,
       smoothing: 50
-    });
+    }, 1784614660069);
 
     expect(workflow["2"]?.inputs).toMatchObject({
       detail: 100,
@@ -80,6 +110,7 @@ describe("Centerline Forge workflow integration", () => {
     expect(workflow["11"]?.inputs).toMatchObject({
       aspect_ratio: "1:1",
       batch_size: "1",
+      request_nonce: 1784614660069,
       confirm_cost: true,
       timeout_seconds: 150
     });
@@ -87,5 +118,15 @@ describe("Centerline Forge workflow integration", () => {
       filename_prefix: "centerline_forge/centerline_pad20",
       overwrite: true
     });
+  });
+
+  it("uses a different Holopix nonce for each explicit generation request", () => {
+    const settings = { detail: 100, cornerSensitivity: 80, smoothing: 100 };
+    const first = makeAutomaticOutlinePrompt("run-one/input.ppm", settings, 101);
+    const second = makeAutomaticOutlinePrompt("run-two/input.ppm", settings, 102);
+
+    expect(first["7"]?.inputs.image).not.toBe(second["7"]?.inputs.image);
+    expect(first["11"]?.inputs.request_nonce).toBe(101);
+    expect(second["11"]?.inputs.request_nonce).toBe(102);
   });
 });

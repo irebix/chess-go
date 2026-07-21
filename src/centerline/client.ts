@@ -160,6 +160,7 @@ function findExecutionError(entry: JsonRecord): string | null {
 export class CenterlineComfyClient {
   private readonly baseUrl: string;
   private readonly canceledJobs = new Set<string>();
+  private lastRequestNonce = 0;
 
   constructor(baseUrl = CENTERLINE_COMFY_BASE_URL) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
@@ -193,14 +194,14 @@ export class CenterlineComfyClient {
     }
   }
 
-  async uploadPixels(pixelSource: CenterlinePixelSource): Promise<unknown> {
+  async uploadPixels(pixelSource: CenterlinePixelSource, requestNonce: number): Promise<unknown> {
     const ppm = pixelsToPpm(pixelSource);
     const form = new FormData();
     const filename = `centerline-${Date.now()}-${Math.random().toString(16).slice(2, 10)}.ppm`;
     const buffer = ppm.buffer.slice(ppm.byteOffset, ppm.byteOffset + ppm.byteLength) as ArrayBuffer;
     form.append("image", new Blob([buffer], { type: "image/x-portable-pixmap" }), filename);
     form.append("type", "input");
-    form.append("subfolder", "centerline_forge");
+    form.append("subfolder", `centerline_forge/run-${requestNonce}`);
     form.append("overwrite", "false");
     return this.json("/upload/image", { method: "POST", body: form }, 60_000);
   }
@@ -209,12 +210,17 @@ export class CenterlineComfyClient {
     pixelSource: CenterlinePixelSource,
     settings: CenterlineVectorSettings
   ): Promise<CenterlineJob> {
-    const uploaded = await this.uploadPixels(pixelSource);
+    const requestNonce = this.nextRequestNonce();
+    const uploaded = await this.uploadPixels(pixelSource, requestNonce);
     const response = await this.json<JsonRecord>("/prompt", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        prompt: makeAutomaticOutlinePrompt(safeUploadedImageName(uploaded), settings),
+        prompt: makeAutomaticOutlinePrompt(
+          safeUploadedImageName(uploaded),
+          settings,
+          requestNonce
+        ),
         client_id: `chessgo-centerline-${Date.now()}`
       })
     }, 30_000);
@@ -231,6 +237,11 @@ export class CenterlineComfyClient {
       stage: "已进入 ComfyUI 队列",
       progress: 12
     };
+  }
+
+  private nextRequestNonce(): number {
+    this.lastRequestNonce = Math.max(this.lastRequestNonce + 1, Date.now());
+    return this.lastRequestNonce;
   }
 
   async getJob(promptId: string): Promise<CenterlineJob> {

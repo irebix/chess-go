@@ -56,6 +56,7 @@ import {
   shouldConfirmPsdAiScopeShrink
 } from "../domain/psdAiScopeStability";
 import { AiGenerationPanel } from "./AiGenerationPanel";
+import { AiEditPanel } from "./AiEditPanel";
 import { AiOutlinePanel } from "./AiOutlinePanel";
 import { SpectrumSelect } from "./SpectrumSelect";
 
@@ -939,8 +940,12 @@ export function App(): React.ReactElement {
       </div>
 
       {activePhotoshopDocumentId !== null ? (
+        <AiEditPanel key={`ai-edit-${activePhotoshopDocumentId}`} />
+      ) : null}
+
+      {activePhotoshopDocumentId !== null ? (
         <AiOutlinePanel
-          key={activePhotoshopDocumentId}
+          key={`ai-outline-${activePhotoshopDocumentId}`}
           externalBusy={
             nonAiBusy || aiBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }

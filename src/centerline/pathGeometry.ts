@@ -1,4 +1,22 @@
-import type { CenterlineCoordinate, CenterlineSubpath } from "./types";
+import type {
+  CenterlineCoordinate,
+  CenterlinePathJson,
+  CenterlinePixelSource,
+  CenterlinePixelTransform,
+  CenterlineSubpath
+} from "./types";
+
+export function createCenterlinePathTransform(
+  pathJson: CenterlinePathJson,
+  pixels: CenterlinePixelSource
+): CenterlinePixelTransform {
+  return {
+    scaleX: pixels.transform.scaleX * (pixels.width / pathJson.canvas.width),
+    scaleY: pixels.transform.scaleY * (pixels.height / pathJson.canvas.height),
+    offsetX: pixels.transform.offsetX,
+    offsetY: pixels.transform.offsetY
+  };
+}
 
 function cubicPoint(
   p0: CenterlineCoordinate,

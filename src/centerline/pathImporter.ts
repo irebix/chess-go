@@ -22,7 +22,21 @@ interface PhotoshopSubPathInfo {
 }
 
 interface PhotoshopPathItem {
-  remove(): Promise<void> | void;
+  id?: number;
+  name: string;
+}
+
+interface PhotoshopPathDomItem extends PhotoshopPathItem {
+  remove?: () => Promise<void> | void;
+}
+
+interface PhotoshopPathItems {
+  length: number;
+  [index: number]: PhotoshopPathDomItem;
+  add(
+    name: string,
+    subpaths: PhotoshopSubPathInfo[]
+  ): PhotoshopPathDomItem | Promise<PhotoshopPathDomItem>;
 }
 
 type EmptyConstructor<T> = new () => T;
@@ -113,10 +127,17 @@ export async function createEditableWorkPath(
   await core.executeAsModal(async () => {
     assertDocument(options.documentId);
     const document = app.activeDocument as unknown as {
-      pathItems: { add(name: string, subpaths: PhotoshopSubPathInfo[]): PhotoshopPathItem };
+      pathItems: PhotoshopPathItems;
     };
     const suffix = new Date().toISOString().replace(/[:.]/g, "-");
-    createdPath = document.pathItems.add(`${name} ${suffix}`, makeSubPathInfos(validated, transform));
+    const pathName = `${name} ${suffix}`;
+    const addedPath = await Promise.resolve(
+      document.pathItems.add(pathName, makeSubPathInfos(validated, transform))
+    );
+    createdPath = {
+      id: Number.isFinite(addedPath?.id) ? addedPath.id : undefined,
+      name: pathName
+    };
     if (!options.keepSelected) {
       try {
         await deselectPathUiInsideModal();
@@ -132,7 +153,33 @@ export async function createEditableWorkPath(
 export async function removeEditableWorkPath(path: PhotoshopPathItem, documentId: number): Promise<void> {
   await core.executeAsModal(async () => {
     assertDocument(documentId);
-    await path.remove();
+    const document = app.activeDocument as unknown as { pathItems: PhotoshopPathItems };
+    const current = Array.from(
+      { length: document.pathItems.length },
+      (_, index) => document.pathItems[index]
+    ).find((candidate) => Boolean(
+      candidate && (
+        (path.id !== undefined && candidate.id === path.id)
+        || candidate.name === path.name
+      )
+    ));
+    if (!current) return;
+    if (typeof current.remove === "function") {
+      await current.remove();
+      return;
+    }
+    const target = Number.isFinite(current.id)
+      ? { _ref: "path", _id: current.id }
+      : { _ref: "path", _name: current.name };
+    const [response] = await action.batchPlay([{
+      _obj: "delete",
+      _target: [target],
+      _options: { dialogOptions: "dontDisplay" }
+    }], {});
+    const result = response as unknown as { _obj?: string; message?: string } | undefined;
+    if (result?._obj === "error") {
+      throw new Error(result.message || `无法清理中间工作路径“${current.name}”。`);
+    }
   }, { commandName: "AI勾线 · 清理工作路径" });
 }
 

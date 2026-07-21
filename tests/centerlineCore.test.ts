@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pixelsToPpm } from "../src/centerline/client";
-import { classifyNestedSubpaths } from "../src/centerline/pathGeometry";
+import { classifyNestedSubpaths, createCenterlinePathTransform } from "../src/centerline/pathGeometry";
 import type { CenterlineCoordinate, CenterlinePixelSource, CenterlineSubpath } from "../src/centerline/types";
 
 function pixelSource(bytes: number[], components: number, width = 1, height = 1): CenterlinePixelSource {
@@ -48,6 +48,24 @@ describe("Centerline core helpers", () => {
     const ppm = pixelsToPpm(pixelSource([255, 0, 0, 128], 4));
 
     expect(Array.from(ppm.slice(11))).toEqual([255, 127, 127]);
+  });
+
+  it("maps a workflow-upscaled path canvas back to the original Photoshop layer size", () => {
+    const pixels = pixelSource([], 4, 120, 240);
+    pixels.transform = { scaleX: 2, scaleY: 3, offsetX: 17, offsetY: 29 };
+
+    const transform = createCenterlinePathTransform({
+      format: "photoshop-path-json",
+      canvas: { width: 300, height: 600 },
+      paths: []
+    }, pixels);
+
+    expect(transform.scaleX).toBeCloseTo(0.8);
+    expect(transform.scaleY).toBeCloseTo(1.2);
+    expect(transform).toMatchObject({
+      offsetX: 17,
+      offsetY: 29
+    });
   });
 
   it("marks nested closed paths as subtractive holes", () => {
