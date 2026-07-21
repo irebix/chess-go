@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-21
-当前发布版本：`0.5.9`
+当前发布版本：`0.5.10`
 
 ## 一句话摘要
 
@@ -11,17 +11,21 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.9`（以当前分支 HEAD 为准） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.9`（以当前分支 HEAD 为准） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.5.10`（以当前分支 HEAD 为准） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.5.10`（以当前分支 HEAD 为准） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.5.9`。
+- `manifest.json` 与 `package.json` 均为 `0.5.10`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及七个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 保存已发布的 `0.5.9` 七个运行文件，并与源码仓库 `dist` 哈希一致。
-- `0.5.9` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 保存已发布的 `0.5.10` 七个运行文件，并与源码仓库 `dist` 哈希一致。
+- `0.5.10` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+
+## `0.5.10` 发布内容
+
+- 所有一级折叠区展开内容相对插件可用区域的左右外缩进由 `16 px` 统一收紧为 `6 px`；AI 生成区同步采用相同外缩进，卡片自身内部留白保持不变。
 
 ## `0.5.9` 发布内容
 
@@ -126,6 +130,7 @@
 
 ## 最近完成
 
+- `0.5.10`：所有一级折叠区展开内容相对插件可用区域的左右外缩进由 `16 px` 统一收紧为 `6 px`；AI 生成区同步采用相同外缩进，卡片自身内部留白保持不变。
 - `0.5.9`：在“AI 生成”下方加入一级折叠栏“AI勾线”，将 Centerline Forge 的当前图层读取、20 节点 ComfyUI 工作流、进度/取消、Shape 图层写入、最近结果复用及四个调节项迁入 React/TypeScript 主插件；工作流在 ComfyUI 内部按背景主色四周扩展 20 px，并在返回时补偿路径坐标。视觉复用棋子go既有控件体系，独立状态卡片合并到“运行与诊断”，生成动作置顶，高级参数合并折叠且支持滑杆/数字双向输入。另包含 AI 提示词草稿隔离、缺少参考图时保留矩阵成员、连续候选回填使用固定画板边界等修复，运行文件清单保持七项不变。
 - `0.2.4`：安装器先比较 GitHub 远端版本；相同版本跳过 Git，有更新时优先 Git，Git 通道失败后回退到 Codeload 精确提交压缩包。
 - `0.2.5`：在画板间距上方增加“智能对象边长”，默认 `1024 px`；实际创建对应尺寸的正方形 PSB，图层名带尺寸，画板内仍为 `148×148 px`。
@@ -160,7 +165,7 @@
 - Vitest：`46` 个测试文件、`220/220` 测试通过。
 - Webpack production build：通过；`GptImage2.json` 已进入 `dist`，仅有 `main.js` 体积建议警告（约 531 KiB），不是构建失败。
 - AI勾线已通过局域网 ComfyUI 只读核对：当前工作流引用节点 `15/15` 可用，新增的背景取色与画布扩展节点输入/输出类型匹配，`BiRefNet_toonout` 模型存在；没有提交 `/prompt`、Holopix 付费生成或 Photoshop 自动化交互。新的 `centerline_pad20.path.json` 需首次实机生成后才会出现。
-- `ChessGo-Release/release` 已同步正式 `0.5.9`，七个运行文件与源码 `dist` 哈希一致并已推送。
+- `ChessGo-Release/release` 已同步正式 `0.5.10`，七个运行文件与源码 `dist` 哈希一致并已推送。
 - 已通过局域网 ComfyUI `object_info` 只读核对 `LoadImage`、`PrimitiveStringMultiline`、`HolopixGenerateV3`、`AutoObjectSheetCrop`、`BiRefNetRMBG`、`InvertMask`、`JoinImageWithAlpha`、`SaveNamedImageBatch` 均存在且输入/输出类型匹配；没有提交 `/prompt` 或付费生成任务。
 - Photoshop 2024 实机已重启并加载 `0.3.4`：导入 1.2 MB 带图 Excel、选择 9 个参考图后，用“恢复已有候选（不生成）”找回 5 张历史候选；候选仅显示“查看 / 选用”，持续观察 30 秒 Photoshop 未闪退，且没有新增应用崩溃事件。
 - Photoshop 2024 实机已通过 UXP Developer Tools 热重载 `0.3.5`：导入同一带图 Excel、选择清洁工具链后，从 ComfyUI 历史恢复并直接绘制 `18/18` 张候选；持续观察 30 秒面板保持可用、Photoshop 正常响应，新增应用崩溃事件为 `0`，日志确认未提交新生成任务。
