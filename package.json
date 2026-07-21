@@ -1,6 +1,6 @@
 {
   "name": "chess-archive-psd-generator",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "private": true,
   "description": "Offline Photoshop UXP tool for parsing Tencent XLSX exports and generating archive PSD artboards.",
   "scripts": {
