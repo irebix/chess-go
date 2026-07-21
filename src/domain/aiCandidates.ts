@@ -29,6 +29,7 @@ export interface AiCandidateSlot {
   id: string;
   label: string;
   status: AiCandidateStatus;
+  preserveIdleSlot?: boolean;
   image?: AiGeneratedImage;
   error?: string;
   retryPromptText?: string;
@@ -83,7 +84,11 @@ export function reconcileAiItemStates(
   for (const item of items) {
     const previous = current[item.key];
     const preservedCount = previous?.candidates.reduce(
-      (lastUsedIndex, candidate, index) => candidate.status === "idle" ? lastUsedIndex : index + 1,
+      (lastUsedIndex, candidate, index) => (
+        candidate.status === "idle" && !candidate.preserveIdleSlot
+          ? lastUsedIndex
+          : index + 1
+      ),
       0
     ) ?? 0;
     const slotCount = Math.max(count, preservedCount);
@@ -105,7 +110,8 @@ export function reconcileAiItemStates(
 export function appendAiCandidateSlots(
   item: AiItemState,
   candidateCount: number,
-  retryPromptText?: string
+  retryPromptText?: string,
+  initialStatus: Extract<AiCandidateStatus, "idle" | "queued"> = "queued"
 ): AiItemState {
   const count = normalizeCandidateCount(candidateCount);
   const startIndex = item.candidates.length;
@@ -119,12 +125,86 @@ export function appendAiCandidateSlots(
         return {
           id: `${item.itemKey}:${index}`,
           label: aiCandidateSlotLabel(index),
-          status: "queued" as const,
+          status: initialStatus,
+          ...(initialStatus === "idle" ? { preserveIdleSlot: true } : {}),
           ...(normalizedPromptText ? { retryPromptText: normalizedPromptText } : {})
         };
       })
     ]
   };
+}
+
+export function applyAiPromptDraftToGeneratableCandidates(
+  item: AiItemState,
+  promptText: string | undefined
+): AiItemState {
+  const normalizedPromptText = promptText?.trim();
+  if (!normalizedPromptText) return item;
+  let changed = false;
+  const candidates = item.candidates.map((candidate) => {
+    if (
+      (candidate.status !== "idle" && candidate.status !== "failed")
+      || candidate.retryPromptText === normalizedPromptText
+    ) return candidate;
+    changed = true;
+    return { ...candidate, retryPromptText: normalizedPromptText };
+  });
+  return changed ? { ...item, candidates } : item;
+}
+
+export function canAppendAiCandidateSlots(
+  current: Record<string, AiItemState>,
+  itemKeys: string[]
+): boolean {
+  return itemKeys.length > 0 && itemKeys.every((itemKey) => {
+    const item = current[itemKey];
+    if (!item?.candidates.length) return false;
+    return item.candidates.every(
+      (candidate) => candidate.status === "ready" || candidate.status === "accepted"
+    );
+  });
+}
+
+export function reconcileAiPendingCandidateGroups(
+  current: Record<string, AiItemState>,
+  itemKeys: string[],
+  candidateCount: number
+): Record<string, AiItemState> {
+  const desiredCount = normalizeCandidateCount(candidateCount);
+  const plans = itemKeys.map((itemKey) => {
+    const item = current[itemKey];
+    if (!item) return undefined;
+    let baseCount = item.candidates.length;
+    while (baseCount > 0) {
+      const candidate = item.candidates[baseCount - 1]!;
+      if (candidate.status !== "idle" || !candidate.preserveIdleSlot) break;
+      baseCount -= 1;
+    }
+    const baseCandidates = item.candidates.slice(0, baseCount);
+    if (!baseCandidates.length || !baseCandidates.every(
+      (candidate) => candidate.status === "ready" || candidate.status === "accepted"
+    )) return undefined;
+    return {
+      itemKey,
+      item,
+      baseCandidates,
+      pendingCount: item.candidates.length - baseCount
+    };
+  });
+  if (!plans.length || plans.some((plan) => !plan)) return current;
+  if (plans.every((plan) => plan!.pendingCount === desiredCount)) return current;
+
+  const next = { ...current };
+  for (const plan of plans) {
+    if (!plan || plan.pendingCount === desiredCount) continue;
+    next[plan.itemKey] = appendAiCandidateSlots(
+      { ...plan.item, candidates: plan.baseCandidates },
+      desiredCount,
+      undefined,
+      "idle"
+    );
+  }
+  return next;
 }
 
 export function restoreAiPendingSubmission(
@@ -389,6 +469,18 @@ export function mergeRecoveredAiCandidateImages(
   };
 }
 
+export function collectAiCandidateImagesMissingPreview(item: AiItemState): AiGeneratedImage[] {
+  const seen = new Set<string>();
+  return item.candidates.flatMap((candidate) => {
+    const image = candidate.image;
+    if (!image || image.preview) return [];
+    const key = aiGeneratedImageKey(image);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [image];
+  });
+}
+
 export function acceptAiCandidate(
   item: AiItemState,
   candidateId: string
@@ -441,7 +533,7 @@ export function removeAiCandidateImages(
   const minimum = normalizeCandidateCount(minimumSlotCount);
   while (candidates.length > minimum) {
     const tail = candidates[candidates.length - 1]!;
-    if (tail.status !== "idle" || tail.image) break;
+    if (tail.status !== "idle" || tail.image || tail.preserveIdleSlot) break;
     candidates.pop();
   }
   return {
@@ -502,7 +594,7 @@ export function selectedAiReferenceImage(item: AssetCandidate) {
   return item.imageCandidates.find((candidate) => candidate.id === item.selectedImageId);
 }
 
-function aiGeneratedImageKey(image: AiGeneratedImage): string {
+export function aiGeneratedImageKey(image: AiGeneratedImage): string {
   return `${image.type}:${image.subfolder}:${image.filename}`;
 }
 

@@ -22,7 +22,9 @@ import {
 } from "./holopixRecovery";
 import {
   buildHolopixSafeJpegUrl,
+  decodeHolopixDirectJpeg,
   decodeHolopixSafeJpeg,
+  HOLOPIX_DIRECT_PREVIEW_MAX_BYTES,
   HOLOPIX_SAFE_PREVIEW_MAX_BYTES,
   prepareHolopixSafePreviewWorkflow
 } from "./holopixSafePreview";
@@ -352,14 +354,15 @@ export async function generateHolopixImages(
 async function loadSafePreviews(
   images: AiGeneratedImage[],
   signal?: AbortSignal,
-  onStage?: (message: string) => void
+  onStage?: (message: string) => void,
+  allowWorkflowFallback = true
 ): Promise<AiGeneratedImage[]> {
   const results: AiGeneratedImage[] = [];
   for (let index = 0; index < images.length; index += 1) {
     throwIfAborted(signal);
     const image = images[index]!;
     try {
-      const preview = await createSafePreview(image, signal);
+      const preview = await createSafePreview(image, signal, allowWorkflowFallback);
       results.push({ ...image, preview, previewError: undefined });
       onStage?.(`安全预览 ${index + 1}/${images.length} 已就绪。`);
     } catch (error) {
@@ -380,29 +383,63 @@ export async function loadHolopixSafePreviewsForImages(
   return loadSafePreviews(images, signal, onStage);
 }
 
+export async function loadHolopixDirectPreviewsForImages(
+  images: AiGeneratedImage[],
+  signal?: AbortSignal,
+  onStage?: (message: string) => void
+): Promise<AiGeneratedImage[]> {
+  return loadSafePreviews(images, signal, onStage, false);
+}
+
 async function createSafePreview(
   image: AiGeneratedImage,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowWorkflowFallback = true
 ) {
-  const prepared = prepareHolopixSafePreviewWorkflow(image);
-  const queuedPrompt = await queuePrompt(prepared.workflow, signal);
-  let previewImage: AiGeneratedImage;
+  let directError = "";
   try {
-    previewImage = await waitForPreviewImage(
-      queuedPrompt.promptId,
-      prepared.previewNodeId,
-      30,
-      signal
+    const directResponse = await fetchBinary(
+      buildHolopixSafeJpegUrl(image, COMFY_BASE_URL),
+      signal,
+      20_000,
+      HOLOPIX_DIRECT_PREVIEW_MAX_BYTES
     );
-  } finally {
-    queuedPrompt.stopStatusMonitor();
+    return decodeHolopixDirectJpeg(directResponse.bytes, directResponse.mediaType);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    directError = error instanceof Error ? error.message : String(error);
   }
-  const response = await fetchBinary(
-    buildHolopixSafeJpegUrl(previewImage, COMFY_BASE_URL),
-    signal,
-    20_000
-  );
-  return decodeHolopixSafeJpeg(response.bytes, response.mediaType);
+  if (!allowWorkflowFallback) {
+    throw new Error(`直读 JPEG 预览失败：${directError}`);
+  }
+
+  const prepared = prepareHolopixSafePreviewWorkflow(image);
+  try {
+    const queuedPrompt = await queuePrompt(prepared.workflow, signal);
+    let previewImage: AiGeneratedImage;
+    try {
+      previewImage = await waitForPreviewImage(
+        queuedPrompt.promptId,
+        prepared.previewNodeId,
+        30,
+        signal
+      );
+    } finally {
+      queuedPrompt.stopStatusMonitor();
+    }
+    const response = await fetchBinary(
+      buildHolopixSafeJpegUrl(previewImage, COMFY_BASE_URL),
+      signal,
+      20_000
+    );
+    return decodeHolopixSafeJpeg(response.bytes, response.mediaType);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    const fallbackError = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `直读 JPEG 预览失败：${directError}；本地缩放工作流兜底失败：${fallbackError}`
+    );
+  }
 }
 
 export async function loadHolopixPromptSource(): Promise<HolopixPromptSource> {
@@ -744,7 +781,8 @@ export async function fetchComfyJson(
 async function fetchBinary(
   url: string,
   signal?: AbortSignal,
-  timeoutMs = 15_000
+  timeoutMs = 15_000,
+  maxBytes = HOLOPIX_SAFE_PREVIEW_MAX_BYTES
 ): Promise<{ bytes: Uint8Array; mediaType: string | null }> {
   const controller = new AbortController();
   const abortFromExternal = (): void => controller.abort();
@@ -754,10 +792,13 @@ async function fetchBinary(
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) throw new Error(`ComfyUI HTTP ${response.status}。`);
     const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > HOLOPIX_SAFE_PREVIEW_MAX_BYTES) {
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
       throw new Error(`Holopix 安全缩略图超过上限（${Math.ceil(contentLength / 1024)} KiB）。`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`Holopix 安全缩略图超过上限（${Math.ceil(bytes.byteLength / 1024)} KiB）。`);
+    }
     return { bytes, mediaType: response.headers.get("content-type") };
   } catch (error) {
     if (signal?.aborted) throw abortError();

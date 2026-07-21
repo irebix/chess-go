@@ -2,6 +2,7 @@ import { encode } from "jpeg-js";
 import { describe, expect, it } from "vitest";
 import {
   buildHolopixSafeJpegUrl,
+  decodeHolopixDirectJpeg,
   decodeHolopixSafeJpeg,
   HOLOPIX_SAFE_PREVIEW_MAX_BYTES,
   HOLOPIX_SAFE_PREVIEW_SIZE,
@@ -100,5 +101,28 @@ describe("Holopix safe preview", () => {
 
     expect(() => decodeHolopixSafeJpeg(new Uint8Array(jpeg), "image/jpeg"))
       .toThrow(/尺寸必须为 96×96/);
+  });
+
+  it("decodes and center-crops a direct ComfyUI JPEG without using an image element", () => {
+    const width = 128;
+    const height = 64;
+    const rgba = new Uint8Array(width * height * 4);
+    for (let index = 0; index < rgba.length; index += 4) {
+      rgba[index] = 40;
+      rgba[index + 1] = 120;
+      rgba[index + 2] = 220;
+      rgba[index + 3] = 255;
+    }
+    const jpeg = encode({ width, height, data: rgba }, 82).data;
+
+    const preview = decodeHolopixDirectJpeg(
+      new Uint8Array(jpeg),
+      "image/jpeg; charset=binary"
+    );
+
+    expect(preview.width).toBe(96);
+    expect(preview.height).toBe(96);
+    expect(preview.pixels).toHaveLength(96 * 96 * 4);
+    expect(preview.pixels[3]).toBe(255);
   });
 });

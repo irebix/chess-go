@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildGptImage2GenerationRounds } from "../src/domain/gptImage2Generation";
-import type { AiItemState } from "../src/domain/aiCandidates";
+import {
+  appendAiCandidateSlots,
+  applyAiPromptDraftToGeneratableCandidates,
+  type AiItemState
+} from "../src/domain/aiCandidates";
 
 const items = [
   { key: "one", assetCode: "a1" },
@@ -34,6 +38,48 @@ describe("GPT Image 2 generation rounds", () => {
       slotIndex: 1,
       entries: [{ item: items[0], promptText: "custom one" }]
     });
+  });
+
+  it("turns an appended four-group batch into four new whole-chain rounds", () => {
+    const completed = {
+      one: state("one", ["ready", "ready"]),
+      two: state("two", ["ready", "ready"])
+    };
+    const appended = {
+      one: appendAiCandidateSlots(completed.one, 4, undefined, "idle"),
+      two: appendAiCandidateSlots(completed.two, 4, undefined, "idle")
+    };
+
+    const rounds = buildGptImage2GenerationRounds(items, appended);
+    expect(rounds.map((round) => ({
+      slotIndex: round.slotIndex,
+      assetCodes: round.entries.map((entry) => entry.item.assetCode)
+    }))).toEqual([
+      { slotIndex: 2, assetCodes: ["a1", "a2"] },
+      { slotIndex: 3, assetCodes: ["a1", "a2"] },
+      { slotIndex: 4, assetCodes: ["a1", "a2"] },
+      { slotIndex: 5, assetCodes: ["a1", "a2"] }
+    ]);
+  });
+
+  it("uses an edited item prompt in the existing pending whole-chain column", () => {
+    const pending = {
+      one: state("one", ["ready", "idle"]),
+      two: state("two", ["ready", "idle"])
+    };
+    pending.one = applyAiPromptDraftToGeneratableCandidates(pending.one, "edited one");
+
+    const rounds = buildGptImage2GenerationRounds(items, pending);
+
+    expect(pending.one.candidates).toHaveLength(2);
+    expect(pending.two.candidates).toHaveLength(2);
+    expect(rounds).toEqual([{
+      slotIndex: 1,
+      entries: [
+        { item: items[0], promptText: "edited one" },
+        { item: items[1] }
+      ]
+    }]);
   });
 });
 

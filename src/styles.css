@@ -1281,7 +1281,7 @@ button:disabled {
 }
 
 .ai-matrix-header span:first-child {
-  width: 92px;
+  width: 64px;
 }
 
 .ai-matrix-header span:nth-child(2) {
@@ -1293,9 +1293,9 @@ button:disabled {
 }
 
 .ai-matrix-row {
-  min-height: 92px;
-  gap: 8px;
-  padding: 7px 8px;
+  min-height: 78px;
+  gap: 4px;
+  padding: 3px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
 }
@@ -1312,8 +1312,8 @@ button:disabled {
 
 .ai-node-copy {
   display: flex;
-  width: 84px;
-  flex: 0 0 84px;
+  width: 60px;
+  flex: 0 0 60px;
   align-items: center;
   gap: 7px;
   overflow: hidden;
@@ -1373,7 +1373,7 @@ button:disabled {
   min-width: 64px;
   flex: 0 0 auto;
   gap: 7px;
-  margin-left: 10px;
+  margin-left: 14px;
   padding-bottom: 1px;
 }
 
@@ -1629,11 +1629,6 @@ button:disabled {
   padding: 0;
   border: 0;
   background: transparent;
-}
-
-.ai-regenerate-selected {
-  width: 100%;
-  margin-top: 4px;
 }
 
 .ai-prompt-source-detail {

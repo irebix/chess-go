@@ -4,6 +4,7 @@ import type { ComfyWorkflow } from "./holopixWorkflow";
 
 export const HOLOPIX_SAFE_PREVIEW_SIZE = 96;
 export const HOLOPIX_SAFE_PREVIEW_MAX_BYTES = 128 * 1024;
+export const HOLOPIX_DIRECT_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
 
 export interface PreparedHolopixSafePreviewWorkflow {
   workflow: ComfyWorkflow;
@@ -95,6 +96,81 @@ export function decodeHolopixSafeJpeg(
     height: decoded.height,
     pixels: new Uint8ClampedArray(decoded.data)
   };
+}
+
+export function decodeHolopixDirectJpeg(
+  bytes: Uint8Array,
+  mediaType: string | null
+): AiCandidatePreview {
+  if (bytes.byteLength > HOLOPIX_DIRECT_PREVIEW_MAX_BYTES) {
+    throw new Error(`Holopix 直读预览超过上限（${Math.ceil(bytes.byteLength / 1024)} KiB）。`);
+  }
+  const normalizedMediaType = (mediaType ?? "").split(";", 1)[0]!.trim().toLowerCase();
+  if (normalizedMediaType !== "image/jpeg") {
+    throw new Error(`Holopix 直读预览格式无效：${normalizedMediaType || "unknown"}。`);
+  }
+  if (bytes.byteLength < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    throw new Error("Holopix 直读预览不是有效的 JPEG 文件。");
+  }
+
+  const decoded = decode(bytes, {
+    useTArray: true,
+    formatAsRGBA: true,
+    tolerantDecoding: false,
+    maxResolutionInMP: 4,
+    maxMemoryUsageInMB: 64
+  });
+  if (decoded.width < 1 || decoded.height < 1) {
+    throw new Error("Holopix 直读预览尺寸无效。");
+  }
+  return centerCropRgbaPreview(
+    new Uint8ClampedArray(decoded.data),
+    decoded.width,
+    decoded.height,
+    HOLOPIX_SAFE_PREVIEW_SIZE
+  );
+}
+
+function centerCropRgbaPreview(
+  source: Uint8ClampedArray,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetSize: number
+): AiCandidatePreview {
+  const expectedLength = sourceWidth * sourceHeight * 4;
+  if (source.byteLength !== expectedLength) {
+    throw new Error("Holopix 直读预览像素长度无效。");
+  }
+  const cropSize = Math.min(sourceWidth, sourceHeight);
+  const cropX = (sourceWidth - cropSize) / 2;
+  const cropY = (sourceHeight - cropSize) / 2;
+  const scale = cropSize / targetSize;
+  const pixels = new Uint8ClampedArray(targetSize * targetSize * 4);
+  for (let targetY = 0; targetY < targetSize; targetY += 1) {
+    const sourceY = cropY + (targetY + 0.5) * scale - 0.5;
+    const y0 = Math.max(0, Math.min(sourceHeight - 1, Math.floor(sourceY)));
+    const y1 = Math.max(0, Math.min(sourceHeight - 1, y0 + 1));
+    const yWeight = Math.max(0, Math.min(1, sourceY - y0));
+    for (let targetX = 0; targetX < targetSize; targetX += 1) {
+      const sourceX = cropX + (targetX + 0.5) * scale - 0.5;
+      const x0 = Math.max(0, Math.min(sourceWidth - 1, Math.floor(sourceX)));
+      const x1 = Math.max(0, Math.min(sourceWidth - 1, x0 + 1));
+      const xWeight = Math.max(0, Math.min(1, sourceX - x0));
+      const targetOffset = (targetY * targetSize + targetX) * 4;
+      const topLeft = (y0 * sourceWidth + x0) * 4;
+      const topRight = (y0 * sourceWidth + x1) * 4;
+      const bottomLeft = (y1 * sourceWidth + x0) * 4;
+      const bottomRight = (y1 * sourceWidth + x1) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        const top = source[topLeft + channel]!
+          + (source[topRight + channel]! - source[topLeft + channel]!) * xWeight;
+        const bottom = source[bottomLeft + channel]!
+          + (source[bottomRight + channel]! - source[bottomLeft + channel]!) * xWeight;
+        pixels[targetOffset + channel] = Math.round(top + (bottom - top) * yWeight);
+      }
+    }
+  }
+  return { width: targetSize, height: targetSize, pixels };
 }
 
 function buildAnnotatedOutputPath(

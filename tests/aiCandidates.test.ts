@@ -5,14 +5,18 @@ import {
   aiCandidateSlotLabel,
   aiCandidateAction,
   applyAiGeneratedCandidateBatch,
+  applyAiPromptDraftToGeneratableCandidates,
   appendAiCandidateSlots,
   buildAiCandidateGenerationBatches,
+  canAppendAiCandidateSlots,
+  collectAiCandidateImagesMissingPreview,
   failAiCandidateGenerationRemainder,
   isAiCandidateDeletable,
   isAiCandidateActionDisabled,
   markAiCandidateGenerationUnknown,
   mergeRecoveredAiCandidateImages,
   reconcileAiItemStates,
+  reconcileAiPendingCandidateGroups,
   removeAiCandidateImages,
   restoreAiPendingSubmission,
   selectedAiReferenceImage,
@@ -152,6 +156,111 @@ describe("AI candidate state", () => {
     expect(reconcileAiItemStates({ [item.key]: appended }, [item], 1)[item.key]!.candidates).toHaveLength(3);
   });
 
+  it("appends a new idle candidate group only after every selected item is complete", () => {
+    const secondItem = { ...item, key: "sheet:103002", assetCode: "103002" } as AssetCandidate;
+    const initial = reconcileAiItemStates({}, [item, secondItem], 4);
+    expect(canAppendAiCandidateSlots(initial, [item.key, secondItem.key])).toBe(false);
+
+    const completed = Object.fromEntries(Object.entries(initial).map(([key, state]) => [
+      key,
+      {
+        ...state,
+        candidates: state.candidates.map((candidate, index) => ({
+          ...candidate,
+          status: index === 0 ? "accepted" as const : "ready" as const
+        }))
+      }
+    ]));
+    expect(canAppendAiCandidateSlots(completed, [item.key, secondItem.key])).toBe(true);
+
+    const appended = appendAiCandidateSlots(completed[item.key]!, 2, undefined, "idle");
+    expect(appended.candidates.map((candidate) => candidate.status)).toEqual([
+      "accepted",
+      "ready",
+      "ready",
+      "ready",
+      "idle",
+      "idle"
+    ]);
+    expect(buildAiCandidateGenerationBatches(appended.candidates)).toEqual([{
+      slotIndexes: [4, 5]
+    }]);
+    expect(reconcileAiItemStates(
+      { [item.key]: appended },
+      [item],
+      2
+    )[item.key]!.candidates).toHaveLength(6);
+
+    const withUnknown = {
+      ...completed,
+      [secondItem.key]: {
+        ...completed[secondItem.key]!,
+        candidates: completed[secondItem.key]!.candidates.map((candidate, index) => (
+          index === 3 ? { ...candidate, status: "unknown" as const } : candidate
+        ))
+      }
+    };
+    expect(canAppendAiCandidateSlots(withUnknown, [item.key, secondItem.key])).toBe(false);
+  });
+
+  it("automatically maintains the selected pending group after four completed columns", () => {
+    const secondItem = { ...item, key: "sheet:103002", assetCode: "103002" } as AssetCandidate;
+    const completed = Object.fromEntries(Object.entries(
+      reconcileAiItemStates({}, [item, secondItem], 4)
+    ).map(([key, state]) => [
+      key,
+      {
+        ...state,
+        candidates: state.candidates.map((candidate) => ({
+          ...candidate,
+          status: "ready" as const
+        }))
+      }
+    ]));
+
+    const withTwoPending = reconcileAiPendingCandidateGroups(
+      completed,
+      [item.key, secondItem.key],
+      2
+    );
+    expect(withTwoPending[item.key]!.candidates.map((candidate) => candidate.status)).toEqual([
+      "ready",
+      "ready",
+      "ready",
+      "ready",
+      "idle",
+      "idle"
+    ]);
+    expect(withTwoPending[item.key]!.candidates.slice(4).every(
+      (candidate) => candidate.preserveIdleSlot
+    )).toBe(true);
+
+    const withThreePending = reconcileAiPendingCandidateGroups(
+      withTwoPending,
+      [item.key, secondItem.key],
+      3
+    );
+    expect(withThreePending[item.key]!.candidates).toHaveLength(7);
+    expect(withThreePending[secondItem.key]!.candidates.slice(4).map(
+      (candidate) => candidate.status
+    )).toEqual(["idle", "idle", "idle"]);
+
+    const blocked = {
+      ...completed,
+      [secondItem.key]: {
+        ...completed[secondItem.key]!,
+        candidates: completed[secondItem.key]!.candidates.map((candidate, index) => (
+          index === 3 ? { ...candidate, status: "unknown" as const } : candidate
+        ))
+      }
+    };
+    expect(reconcileAiPendingCandidateGroups(
+      blocked,
+      [item.key, secondItem.key],
+      2
+    )).toBe(blocked);
+  });
+
   it("keeps a user-edited prompt on appended slots and separates it from QwenVL retries", () => {
     const state = reconcileAiItemStates({}, [item], 2)[item.key]!;
     state.candidates[0] = { ...state.candidates[0]!, status: "failed" };
@@ -163,6 +272,26 @@ describe("AI candidate state", () => {
     expect(buildAiCandidateGenerationBatches(appended.candidates)).toEqual([
       { slotIndexes: [0, 1] },
       { slotIndexes: [2, 3], promptText: "custom prompt" }
+    ]);
+  });
+
+  it("applies an edited prompt only to existing idle or failed slots without appending columns", () => {
+    const state = reconcileAiItemStates({}, [item], 4)[item.key]!;
+    state.candidates[0] = { ...state.candidates[0]!, status: "ready" };
+    state.candidates[1] = { ...state.candidates[1]!, status: "failed" };
+    state.candidates[2] = { ...state.candidates[2]!, status: "queued" };
+
+    const promptAware = applyAiPromptDraftToGeneratableCandidates(state, "  edited prompt  ");
+
+    expect(promptAware.candidates).toHaveLength(4);
+    expect(promptAware.candidates.map((candidate) => candidate.retryPromptText)).toEqual([
+      undefined,
+      "edited prompt",
+      undefined,
+      "edited prompt"
+    ]);
+    expect(buildAiCandidateGenerationBatches(promptAware.candidates)).toEqual([
+      { slotIndexes: [1, 3], promptText: "edited prompt" }
     ]);
   });
 
@@ -372,6 +501,33 @@ describe("AI candidate state", () => {
     expect(recovered.item.candidates).toHaveLength(1);
     expect(recovered.item.candidates[0]!.image?.preview?.width).toBe(1);
     expect(recovered.item.candidates[0]!.submissionKey).toBe("request-output");
+  });
+
+  it("collects each persisted raw candidate once until its safe preview is restored", () => {
+    let state = reconcileAiItemStates({}, [item], 2)[item.key]!;
+    state = restoreAiPendingSubmission(state, {
+      slotCount: 2,
+      submissionKey: "request-output",
+      outcome: "output",
+      images: [
+        { filename: "a.png", subfolder: "folder", type: "output", url: "raw-a" },
+        { filename: "b.png", subfolder: "folder", type: "output", url: "raw-b" }
+      ]
+    });
+    state.candidates.push({ ...state.candidates[0]!, id: "duplicate-a" });
+
+    expect(collectAiCandidateImagesMissingPreview(state).map((image) => image.filename))
+      .toEqual(["a.png", "b.png"]);
+
+    const enhanced = mergeRecoveredAiCandidateImages(state, [{
+      filename: "a.png",
+      subfolder: "folder",
+      type: "output",
+      url: "raw-a",
+      preview: { width: 1, height: 1, pixels: new Uint8ClampedArray([0, 0, 0, 255]) }
+    }]).item;
+    expect(collectAiCandidateImagesMissingPreview(enhanced).map((image) => image.filename))
+      .toEqual(["b.png"]);
   });
 
   it("can reduce unused initial slots while preserving every generated or queued slot", () => {
