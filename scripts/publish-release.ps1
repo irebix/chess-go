@@ -11,6 +11,7 @@ $runtimeFiles = @(
   "manifest.json",
   "Holopix.json",
   "GptImage2.json",
+  "ImageEditor.json",
   "index.html",
   "main.js",
   "main.js.LICENSE.txt",

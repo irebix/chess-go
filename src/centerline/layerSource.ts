@@ -39,11 +39,16 @@ interface LayerCollectionLike {
   [index: number]: LayerLike;
 }
 
-function activeSource(): CenterlineLayerSource {
+interface ReadActiveLayerPixelsOptions {
+  commandName?: string;
+  missingLayerMessage?: string;
+}
+
+function activeSource(missingLayerMessage = "请先选中一个需要勾线的图层。"): CenterlineLayerSource {
   if (!app.documents?.length) throw new Error("请先打开 Photoshop 文档。");
   const document = app.activeDocument;
   const layer = document.activeLayers?.[0];
-  if (!layer) throw new Error("请先选中一个需要勾线的图层。");
+  if (!layer) throw new Error(missingLayerMessage);
   return {
     documentId: document.id,
     documentName: document.title,
@@ -136,8 +141,14 @@ export function assertActiveLayerSource(source: CenterlinePixelSource): void {
   }
 }
 
-export async function readActiveLayerPixels(): Promise<CenterlinePixelSource> {
-  return readLayerPixelsInternal(activeSource(), true);
+export async function readActiveLayerPixels(
+  options: ReadActiveLayerPixelsOptions = {}
+): Promise<CenterlinePixelSource> {
+  return readLayerPixelsInternal(
+    activeSource(options.missingLayerMessage),
+    true,
+    options.commandName
+  );
 }
 
 export async function readLayerPixels(source: CenterlineLayerSource): Promise<CenterlinePixelSource> {
@@ -150,7 +161,8 @@ export async function readLayerPixels(source: CenterlineLayerSource): Promise<Ce
 
 async function readLayerPixelsInternal(
   source: CenterlineLayerSource,
-  requireActiveLayer: boolean
+  requireActiveLayer: boolean,
+  commandName?: string
 ): Promise<CenterlinePixelSource> {
   const imagingApi = imaging ?? imaging_beta;
   if (!imagingApi) throw new Error("当前 Photoshop 不支持 Imaging API。");
@@ -196,7 +208,10 @@ async function readLayerPixelsInternal(
       } finally {
         imageObject.imageData.dispose();
       }
-    }, { commandName: requireActiveLayer ? "AI勾线 · 读取当前图层" : "AI勾线 · 读取来源图层" });
+    }, {
+      commandName: commandName
+        ?? (requireActiveLayer ? "AI勾线 · 读取当前图层" : "AI勾线 · 读取来源图层")
+    });
   } catch (error) {
     if (!requireActiveLayer && app.documents?.length && app.activeDocument.id === source.documentId) {
       throw new Error(`无法读取最近描边结果的来源图层“${source.layerName}”；该图层可能已被删除或当前不可读取。`);

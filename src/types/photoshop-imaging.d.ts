@@ -20,10 +20,12 @@ declare module "photoshop" {
     getPixels(options: {
       documentID: number;
       layerID: number;
+      sourceBounds?: { left: number; top: number; right: number; bottom: number };
       targetSize?: { width?: number; height?: number };
       colorSpace?: "RGB";
       colorProfile?: string;
       componentSize?: 8 | 16 | 32;
+      includeAlpha?: boolean;
       applyAlpha?: boolean;
     }): Promise<PhotoshopPixelResult>;
     encodeImageData(options: {

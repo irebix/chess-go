@@ -152,6 +152,7 @@ export function App(): React.ReactElement {
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
@@ -169,7 +170,7 @@ export function App(): React.ReactElement {
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
     phase === "diagnosing" || phase === "generating";
-  const busy = nonAiBusy || aiBusy || outlineBusy;
+  const busy = nonAiBusy || aiBusy || editBusy || outlineBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -251,6 +252,14 @@ export function App(): React.ReactElement {
     setMessage(detail);
     if (level === "error") setShowDiagnostics(true);
     const event = makeLog(level, "centerline.ai", detail);
+    setLogs((current) => [...current.slice(-199), event]);
+    console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
+  }, []);
+
+  const handleImageEditorStatus = useCallback((detail: string, level: "info" | "warn" | "error" = "info"): void => {
+    setMessage(detail);
+    if (level === "error") setShowDiagnostics(true);
+    const event = makeLog(level, "image-editor.ai", detail);
     setLogs((current) => [...current.slice(-199), event]);
     console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
   }, []);
@@ -925,7 +934,7 @@ export function App(): React.ReactElement {
           psdReferences={aiPsdReferences}
           thumbnails={thumbnails}
           externalBusy={
-            nonAiBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || editBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           requestThumbnail={requestThumbnail}
           onThumbnailError={handleThumbnailDecodeError}
@@ -940,14 +949,21 @@ export function App(): React.ReactElement {
       </div>
 
       {activePhotoshopDocumentId !== null ? (
-        <AiEditPanel key={`ai-edit-${activePhotoshopDocumentId}`} />
+        <AiEditPanel
+          key={`ai-edit-${activePhotoshopDocumentId}`}
+          externalBusy={
+            nonAiBusy || aiBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+          }
+          onBusyChange={setEditBusy}
+          onStatus={handleImageEditorStatus}
+        />
       ) : null}
 
       {activePhotoshopDocumentId !== null ? (
         <AiOutlinePanel
           key={`ai-outline-${activePhotoshopDocumentId}`}
           externalBusy={
-            nonAiBusy || aiBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || editBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setOutlineBusy}
           onStatus={handleOutlineStatus}
