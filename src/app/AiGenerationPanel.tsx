@@ -27,6 +27,7 @@ import {
   clampAiMatrixScrollLeft,
   shouldForwardMatrixWheel
 } from "../domain/aiMatrixLayout";
+import { aiPromptDraftKey, resolveAiPromptDraft } from "../domain/aiPromptDrafts";
 import { filterItemsByGroups } from "../domain/sheetGroups";
 import { buildGptImage2GenerationRounds } from "../domain/gptImage2Generation";
 import type { ImportedWorkbook } from "../services/WorkbookService";
@@ -140,7 +141,7 @@ type QueuedGenerationJob = QueuedFluxGenerationJob | QueuedGptImage2GenerationJo
 type GeneratablePsdReference = PsdAiReference & (
   | { targetLayerId: number; targetIssue?: undefined }
   | { targetLayerId?: undefined; targetIssue: "missing" }
-);
+) & { referenceIssue?: undefined | "missing" };
 
 export function AiGenerationPanel({
   workbook,
@@ -184,6 +185,7 @@ export function AiGenerationPanel({
   const psdThumbnailRequestsRef = useRef(new Set<string>());
   const psdThumbnailQueueRef = useRef(Promise.resolve());
   const psdThumbnailResourcesRef = useRef(new Map<string, HolopixImageBlobResource>());
+  const promptDraftsRef = useRef(new Map<string, string>());
   const promptTextareaRef = useRef<SpectrumTextareaElement | null>(null);
   const promptResizeCleanupRef = useRef<(() => void) | null>(null);
   const matrixViewportRef = useRef<HTMLDivElement | null>(null);
@@ -294,6 +296,18 @@ export function AiGenerationPanel({
     && selectedDeletableCount === deletableCandidates.length;
   const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
   const currentPsdIdentity = psdReferences[0]?.documentIdentity ?? "";
+  const selectedPsdReference = selectedItem
+    ? psdReferencesByAssetCode.get(selectedItem.assetCode)
+    : undefined;
+  const selectedPromptDraftKey = selectedItem && selectedPsdReference
+    ? aiPromptDraftKey({
+        documentId: selectedPsdReference.documentId,
+        documentIdentity: selectedPsdReference.documentIdentity,
+        artboardId: selectedPsdReference.artboardId,
+        assetCode: selectedItem.assetCode,
+        workflowVersion
+      })
+    : "";
   const runtimePromptText = useMemo(() => {
     if (!selectedItem) return "";
     const candidates = states[selectedItem.key]?.candidates ?? [];
@@ -377,8 +391,12 @@ export function AiGenerationPanel({
   }, [deletableCandidateIds]);
 
   useEffect(() => {
-    setPromptDraft(runtimePromptText);
-  }, [runtimePromptText, selectedItem?.key]);
+    setPromptDraft(
+      selectedPromptDraftKey
+        ? resolveAiPromptDraft(promptDraftsRef.current, selectedPromptDraftKey, runtimePromptText)
+        : runtimePromptText
+    );
+  }, [runtimePromptText, selectedPromptDraftKey]);
 
   useEffect(() => {
     const textarea = promptTextareaRef.current;
@@ -390,11 +408,13 @@ export function AiGenerationPanel({
     const textarea = promptTextareaRef.current;
     if (!textarea) return;
     const handleInput = (event: Event): void => {
-      setPromptDraft((event.currentTarget as SpectrumTextareaElement).value);
+      const value = (event.currentTarget as SpectrumTextareaElement).value;
+      if (selectedPromptDraftKey) promptDraftsRef.current.set(selectedPromptDraftKey, value);
+      setPromptDraft(value);
     };
     textarea.addEventListener("input", handleInput);
     return () => textarea.removeEventListener("input", handleInput);
-  }, [selectedItem?.key]);
+  }, [selectedPromptDraftKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -442,7 +462,7 @@ export function AiGenerationPanel({
   useEffect(() => {
     for (const item of groupItems) {
       const reference = psdReferencesByAssetCode.get(item.assetCode);
-      if (!reference) continue;
+      if (!reference || !hasPsdReferenceLayer(reference)) continue;
       const key = psdReferenceKey(reference);
       if (psdThumbnailRequestsRef.current.has(key)) continue;
       psdThumbnailRequestsRef.current.add(key);
@@ -467,7 +487,8 @@ export function AiGenerationPanel({
 
   useEffect(() => {
     for (const item of groupItems) {
-      if (psdReferencesByAssetCode.has(item.assetCode)) continue;
+      const reference = psdReferencesByAssetCode.get(item.assetCode);
+      if (reference && hasPsdReferenceLayer(reference)) continue;
       const image = selectedAiReferenceImage(item);
       if (image && !thumbnails[image.anchor.archiveEntry]) requestThumbnail(image.anchor.archiveEntry);
     }
@@ -894,7 +915,9 @@ export function AiGenerationPanel({
             (message) => onStatus(`Holopix ${job.item.assetCode}：${message}`),
             setGenerationProgressText,
             job.promptText,
-            job.psdReference,
+            job.psdReference && hasPsdReferenceLayer(job.psdReference)
+              ? job.psdReference
+              : undefined,
             (batchImages, completedBeforeBatch, _totalCandidates, submission) => {
               resolvedPromptText ??= batchImages[0]?.promptText?.trim() || undefined;
               updateStates((current) => {
@@ -1369,6 +1392,7 @@ export function AiGenerationPanel({
           documentId: psdReference.documentId,
           artboardId: psdReference.artboardId,
           referenceLayerId: psdReference.referenceLayerId,
+          referenceIssue: psdReference.referenceIssue,
           targetLayerId: psdReference.targetLayerId,
           targetIssue: psdReference.targetIssue
         },
@@ -1567,9 +1591,12 @@ export function AiGenerationPanel({
                 <div className="ai-matrix-list">
                   {groupItems.map((item) => {
                     const psdReference = psdReferencesByAssetCode.get(item.assetCode);
+                    const readablePsdReference = psdReference && hasPsdReferenceLayer(psdReference)
+                      ? psdReference
+                      : undefined;
                     const excelReference = selectedAiReferenceImage(item);
-                    const thumbnail = psdReference
-                      ? psdThumbnails[psdReferenceKey(psdReference)]
+                    const thumbnail = readablePsdReference
+                      ? psdThumbnails[psdReferenceKey(readablePsdReference)]
                       : excelReference ? thumbnails[excelReference.anchor.archiveEntry] : undefined;
                     const state = states[item.key];
                     const active = selectedItem?.key === item.key;
@@ -1585,10 +1612,10 @@ export function AiGenerationPanel({
                         <ReferencePreview
                           item={item}
                           thumbnail={thumbnail}
-                          hasReference={Boolean(psdReference || excelReference)}
+                          hasReference={Boolean(readablePsdReference || excelReference)}
                           onError={() => {
-                            if (psdReference) {
-                              const key = psdReferenceKey(psdReference);
+                            if (readablePsdReference) {
+                              const key = psdReferenceKey(readablePsdReference);
                               psdThumbnailResourcesRef.current.get(key)?.revoke();
                               psdThumbnailResourcesRef.current.delete(key);
                               setPsdThumbnails((current) => ({
@@ -2009,7 +2036,8 @@ function recordSubmissionLifecycle(
     documentIdentity: reference.documentIdentity,
     assetCode: reference.assetCode,
     artboardId: reference.artboardId,
-    referenceLayerId: reference.referenceLayerId,
+    ...(reference.referenceLayerId === undefined ? {} : { referenceLayerId: reference.referenceLayerId }),
+    ...(reference.referenceIssue ? { referenceIssue: reference.referenceIssue } : {}),
     ...(reference.targetLayerId === undefined ? {} : { targetLayerId: reference.targetLayerId }),
     ...(reference.targetIssue ? { targetIssue: reference.targetIssue } : {}),
     workflowVersion: "flux",
@@ -2047,7 +2075,8 @@ function recordGptImage2SubmissionLifecycle(
       documentIdentity: reference.documentIdentity,
       assetCode: reference.assetCode,
       artboardId: reference.artboardId,
-      referenceLayerId: reference.referenceLayerId,
+      ...(reference.referenceLayerId === undefined ? {} : { referenceLayerId: reference.referenceLayerId }),
+      ...(reference.referenceIssue ? { referenceIssue: reference.referenceIssue } : {}),
       ...(reference.targetLayerId === undefined ? {} : { targetLayerId: reference.targetLayerId }),
       ...(reference.targetIssue ? { targetIssue: reference.targetIssue } : {}),
       workflowVersion: "gpt-image-2" as const,
@@ -2101,20 +2130,25 @@ function pendingSubmissionMatchesReference(
   return holopixPendingSubmissionMatchesScope(pending, { ...reference, workflowVersion });
 }
 
-function psdReferenceKey(reference: PsdAiReference): string {
+function psdReferenceKey(reference: PsdAiReference & { referenceLayerId: number }): string {
   return `${reference.documentId}:${reference.referenceLayerId}`;
 }
 
 function psdGenerationScopeKey(reference: Pick<
   PsdAiReference,
-  "documentId" | "documentIdentity" | "assetCode" | "artboardId" | "referenceLayerId"
+  | "documentId"
+  | "documentIdentity"
+  | "assetCode"
+  | "artboardId"
+  | "referenceLayerId"
+  | "referenceIssue"
 >): string {
   return [
     reference.documentId,
     reference.documentIdentity,
     reference.assetCode,
     reference.artboardId,
-    reference.referenceLayerId
+    reference.referenceLayerId ?? reference.referenceIssue ?? "missing-reference"
   ].join(":");
 }
 
@@ -2137,13 +2171,25 @@ async function assertActivePsdGenerationScope(reference: GeneratablePsdReference
   }
 }
 
-function isGeneratableReference<T extends { targetLayerId?: number; targetIssue?: "missing" | "ambiguous" }>(
+function isGeneratableReference<T extends {
+  referenceIssue?: "missing" | "ambiguous";
+  targetLayerId?: number;
+  targetIssue?: "missing" | "ambiguous";
+}>(
   reference: T
 ): reference is T & (
   | { targetLayerId: number; targetIssue?: undefined }
   | { targetLayerId?: undefined; targetIssue: "missing" }
-) {
-  return Number.isInteger(reference.targetLayerId) || reference.targetIssue === "missing";
+) & { referenceIssue?: undefined | "missing" } {
+  return reference.referenceIssue !== "ambiguous"
+    && (Number.isInteger(reference.targetLayerId) || reference.targetIssue === "missing");
+}
+
+function hasPsdReferenceLayer<T extends {
+  referenceLayerId?: number;
+  referenceIssue?: "missing" | "ambiguous";
+}>(reference: T): reference is T & { referenceLayerId: number; referenceIssue?: undefined } {
+  return Number.isInteger(reference.referenceLayerId) && reference.referenceIssue === undefined;
 }
 
 function safeFilePart(value: string): string {

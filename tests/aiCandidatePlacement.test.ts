@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   artboardBoundsFromDescriptor,
   calculateAiCandidatePlacement,
+  chooseAiCandidateReplacementMeasurement,
   rebaseTargetBoundsAfterArtboardShift
 } from "../src/domain/aiCandidatePlacement";
 
@@ -35,6 +36,29 @@ describe("AI candidate Photoshop placement", () => {
     expect(sourceHeight * result.scale).toBeLessThanOrEqual(148);
     expect(result.targetCenterX).toBe(74);
     expect(result.targetCenterY).toBe(74);
+  });
+
+  it("keeps the artboard as the replacement target instead of reusing the prior candidate footprint", () => {
+    const artboard = { left: 0, top: 0, right: 148, bottom: 148 };
+    const first = chooseAiCandidateReplacementMeasurement({
+      artboardDescriptorBounds: artboard,
+      layerDomBounds: { left: 0, top: 26, right: 148, bottom: 122 }
+    });
+    const second = chooseAiCandidateReplacementMeasurement({
+      artboardDescriptorBounds: artboard,
+      layerDomBounds: { left: 26, top: 0, right: 122, bottom: 148 }
+    });
+
+    expect(first).toEqual({ source: "dom", bounds: artboard });
+    expect(second).toEqual({ source: "dom", bounds: artboard });
+  });
+
+  it("keeps the artboard target when transform geometry is the only layer measurement", () => {
+    const artboard = { left: 1732, top: 148, right: 1880, bottom: 296 };
+    expect(chooseAiCandidateReplacementMeasurement({
+      artboardDescriptorBounds: artboard,
+      smartObjectTransformBounds: { left: 1758, top: 148, right: 1854, bottom: 296 }
+    })).toEqual({ source: "transform", bounds: artboard });
   });
 
   it("rebases a stale local target when replacement reveals the artboard document coordinates", () => {

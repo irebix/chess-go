@@ -14,6 +14,7 @@ export async function readPsdAiReferenceJpeg(
   reference: PsdAiReference,
   targetHeight = 1024
 ): Promise<Uint8Array> {
+  assertPsdReferenceLayer(reference);
   return runReferenceReadModal(`读取 ${reference.assetCode} 参考图`, async () => {
     const encoded = await encodePsdAiReference(reference, targetHeight, false);
     if (typeof encoded === "string") throw new Error("Photoshop 返回了非预期的 Base64 参考图数据。");
@@ -25,6 +26,7 @@ export async function readPsdAiReferencePreview(
   reference: PsdAiReference,
   targetHeight = 128
 ): Promise<HolopixImageBlobResource> {
+  assertPsdReferenceLayer(reference);
   return runReferenceReadModal(`预览 ${reference.assetCode} 参考图`, async () => {
     const encoded = await encodePsdAiReference(reference, targetHeight, true);
     if (typeof encoded !== "string") {
@@ -69,6 +71,7 @@ async function readPsdAiReferencePixels(
   targetHeight: number,
   applyAlpha: boolean
 ) {
+  assertPsdReferenceLayer(reference);
   const imagingApi = imaging ?? imaging_beta;
   if (!imagingApi) throw new Error("当前 Photoshop 不支持只读提取 PSD 参考图像素。");
   const pixelOptions = {
@@ -122,6 +125,14 @@ function runReferenceReadModal<T>(
 function validateTargetHeight(targetHeight: number): void {
   if (!Number.isInteger(targetHeight) || targetHeight < 32 || targetHeight > 2048) {
     throw new Error("PSD 参考图读取尺寸无效。");
+  }
+}
+
+function assertPsdReferenceLayer(
+  reference: PsdAiReference
+): asserts reference is PsdAiReference & { referenceLayerId: number } {
+  if (!Number.isInteger(reference.referenceLayerId)) {
+    throw new Error(`当前 PSD 画板 ${reference.assetCode} 没有可读取的参考图。`);
   }
 }
 

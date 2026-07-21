@@ -228,7 +228,8 @@ export async function initializeGeneratedReferenceView(documentValue: unknown): 
 }
 
 export function watchActiveReferenceDocument(
-  onChange: (state: ReferenceDocumentState | null) => void
+  onChange: (state: ReferenceDocumentState | null) => void,
+  onActiveDocumentChange?: (documentId: number | null) => void
 ): () => void {
   let disposed = false;
   let timer: number | undefined;
@@ -241,6 +242,7 @@ export function watchActiveReferenceDocument(
     const document = activeDocument();
     const documentId = document?.id ?? null;
     if (!force && documentId === lastDocumentId) return;
+    if (!disposed) onActiveDocumentChange?.(documentId);
     let state: ReferenceDocumentState | null;
     try {
       state = document ? inspectDocument(document) : null;

@@ -45,6 +45,24 @@ describe("PSD AI scope stability", () => {
       .not.toBe(psdAiScopeNodeKey(42, node));
   });
 
+  it("gives a reference-less layout member a stable key until a reference is added", () => {
+    const missingReference = {
+      assetCode: "c_cleaning2",
+      artboardId: 2,
+      referenceIssue: "missing" as const,
+      targetLayerId: 21
+    };
+    expect(psdAiScopeNodeKey(42, missingReference))
+      .toBe("psd:42:c_cleaning2:2:missing");
+    expect(psdAiScopeNodeKey(42, { ...missingReference, targetLayerId: 29 }))
+      .toBe(psdAiScopeNodeKey(42, missingReference));
+    expect(psdAiScopeNodeKey(42, {
+      ...missingReference,
+      referenceIssue: undefined,
+      referenceLayerId: 22
+    })).not.toBe(psdAiScopeNodeKey(42, missingReference));
+  });
+
   it("holds a transient same-document 4 to 3 scan while backfill is locked", () => {
     const baseline = documentState(42, [1, 2, 3, 4]);
     const locked = beginPsdAiScopeBackfill(createPsdAiScopeGate(baseline), 42);

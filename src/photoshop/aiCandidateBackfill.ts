@@ -3,6 +3,7 @@ import { storage } from "uxp";
 import {
   artboardBoundsFromDescriptor,
   calculateAiCandidatePlacement,
+  chooseAiCandidateReplacementMeasurement,
   rebaseTargetBoundsAfterArtboardShift
 } from "../domain/aiCandidatePlacement";
 import { DEFAULT_EDITABLE_CANVAS_SIZE } from "../domain/generationSettings";
@@ -42,7 +43,8 @@ export interface CandidateBackfillResult {
 export interface CandidateBackfillTarget {
   documentId: number;
   artboardId: number;
-  referenceLayerId: number;
+  referenceLayerId?: number;
+  referenceIssue?: "missing";
   targetLayerId?: number;
   targetIssue?: "missing";
 }
@@ -244,7 +246,7 @@ type GeometrySource = "dom" | "transform";
 
 interface TargetMeasurement {
   source: GeometrySource;
-  basis: "artboard-dom" | "artboard-descriptor" | "layer-dom" | "layer-transform";
+  basis: "artboard-dom" | "artboard-descriptor";
   bounds: SmartObjectTransformBounds;
   artboardOffset?: { x: number; y: number };
 }
@@ -384,20 +386,17 @@ async function captureGeometry(
 }
 
 function chooseTargetMeasurement(snapshot: GeometrySnapshot): TargetMeasurement {
-  if (snapshot.artboardDomBounds && rectsNearlyEqual(
-    snapshot.artboardDomBounds,
-    snapshot.artboardDescriptorBounds,
-    1
-  )) {
-    return { source: "dom", basis: "artboard-dom", bounds: snapshot.artboardDomBounds };
-  }
-  if (snapshot.layerDomBounds) {
-    return { source: "dom", basis: "layer-dom", bounds: snapshot.layerDomBounds };
-  }
-  if (snapshot.smartObject) {
-    return { source: "transform", basis: "layer-transform", bounds: snapshot.smartObject.bounds };
-  }
-  throw new Error("Photoshop 没有返回原空白智能对象的 DOM 或 transform 边界。");
+  // boundsNoEffects can shrink to the visible pixels of the current candidate.
+  // It is valid as the measurement source, but never as the next replacement's target.
+  const measurement = chooseAiCandidateReplacementMeasurement({
+    artboardDescriptorBounds: snapshot.artboardDescriptorBounds,
+    ...(snapshot.layerDomBounds ? { layerDomBounds: snapshot.layerDomBounds } : {}),
+    ...(snapshot.smartObject ? { smartObjectTransformBounds: snapshot.smartObject.bounds } : {})
+  });
+  return {
+    ...measurement,
+    basis: "artboard-descriptor"
+  };
 }
 
 function chooseCreatedTargetMeasurement(snapshot: GeometrySnapshot): TargetMeasurement {
@@ -536,7 +535,7 @@ function stableExpectedTarget(
     target.artboard.id !== expected.artboardId
     || target.layer.id !== expected.targetLayerId
     || !isEditableCanvasLayerName(target.layer.name)
-    || !hasDirectLayerId(target.artboard, expected.referenceLayerId)
+    || !hasExpectedReference(target.artboard, expected)
   ) return undefined;
   return target;
 }
@@ -560,10 +559,18 @@ function stableExpectedBackfillScope(
   const artboard = matchingArtboards[0]!;
   if (
     artboard.id !== expected.artboardId
-    || !hasDirectLayerId(artboard, expected.referenceLayerId)
+    || !hasExpectedReference(artboard, expected)
     || findEditableCanvasTargets(document, assetCode).length !== 0
   ) return undefined;
   return { mode: "missing", artboard };
+}
+
+function hasExpectedReference(
+  artboard: CandidateTargetLayer,
+  expected: CandidateBackfillTarget
+): boolean {
+  if (expected.referenceLayerId === undefined) return expected.referenceIssue === "missing";
+  return hasDirectLayerId(artboard, expected.referenceLayerId);
 }
 
 function hasDirectLayerId(artboard: CandidateTargetLayer, layerId: number): boolean {
@@ -650,17 +657,6 @@ function rectOverflow(inner: SmartObjectTransformBounds, outer: SmartObjectTrans
     right: Math.max(0, inner.right - outer.right),
     bottom: Math.max(0, inner.bottom - outer.bottom)
   };
-}
-
-function rectsNearlyEqual(
-  first: SmartObjectTransformBounds,
-  second: SmartObjectTransformBounds,
-  tolerance: number
-): boolean {
-  return Math.abs(first.left - second.left) <= tolerance
-    && Math.abs(first.top - second.top) <= tolerance
-    && Math.abs(first.right - second.right) <= tolerance
-    && Math.abs(first.bottom - second.bottom) <= tolerance;
 }
 
 function compactOverflow(overflow: ReturnType<typeof rectOverflow>) {

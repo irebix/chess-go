@@ -56,6 +56,7 @@ import {
   shouldConfirmPsdAiScopeShrink
 } from "../domain/psdAiScopeStability";
 import { AiGenerationPanel } from "./AiGenerationPanel";
+import { AiOutlinePanel } from "./AiOutlinePanel";
 import { SpectrumSelect } from "./SpectrumSelect";
 
 type UiPhase =
@@ -136,6 +137,7 @@ export function App(): React.ReactElement {
   const [showGenerator, setShowGenerator] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceDocument, setReferenceDocument] = useState<ReferenceDocumentState | null>(null);
+  const [activePhotoshopDocumentId, setActivePhotoshopDocumentId] = useState<number | null>(null);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [groupArtboardBusy, setGroupArtboardBusy] = useState(false);
   const [artboardBackgroundBusy, setArtboardBackgroundBusy] = useState<"color" | "visibility" | null>(null);
@@ -149,6 +151,7 @@ export function App(): React.ReactElement {
   const [collapsedItemGroupIds, setCollapsedItemGroupIds] = useState<string[]>([]);
   const [uiError, setUiError] = useState<UiError | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [outlineBusy, setOutlineBusy] = useState(false);
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
   );
@@ -165,7 +168,7 @@ export function App(): React.ReactElement {
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
     phase === "diagnosing" || phase === "generating";
-  const busy = nonAiBusy || aiBusy;
+  const busy = nonAiBusy || aiBusy || outlineBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -243,6 +246,13 @@ export function App(): React.ReactElement {
     [activeGroups, scopedItems]
   );
   const formattedLogs = useMemo(() => logs.map(formatLog).join("\n"), [logs]);
+  const handleOutlineStatus = useCallback((detail: string, level: "info" | "warn" | "error" = "info"): void => {
+    setMessage(detail);
+    if (level === "error") setShowDiagnostics(true);
+    const event = makeLog(level, "centerline.ai", detail);
+    setLogs((current) => [...current.slice(-199), event]);
+    console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
+  }, []);
 
   const commitReferenceDocument = useCallback((next: ReferenceDocumentState | null): void => {
     referenceScopeGate.current = {
@@ -291,7 +301,7 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(
-    () => watchActiveReferenceDocument(handleReferenceDocumentScan),
+    () => watchActiveReferenceDocument(handleReferenceDocumentScan, setActivePhotoshopDocumentId),
     [handleReferenceDocumentScan]
   );
 
@@ -913,7 +923,9 @@ export function App(): React.ReactElement {
           items={aiPsdItems}
           psdReferences={aiPsdReferences}
           thumbnails={thumbnails}
-          externalBusy={nonAiBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
+          externalBusy={
+            nonAiBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+          }
           requestThumbnail={requestThumbnail}
           onThumbnailError={handleThumbnailDecodeError}
           onStatus={(detail, level = "info") => {
@@ -925,6 +937,17 @@ export function App(): React.ReactElement {
           onPsdBackfillSettled={handlePsdBackfillSettled}
         />
       </div>
+
+      {activePhotoshopDocumentId !== null ? (
+        <AiOutlinePanel
+          key={activePhotoshopDocumentId}
+          externalBusy={
+            nonAiBusy || aiBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+          }
+          onBusyChange={setOutlineBusy}
+          onStatus={handleOutlineStatus}
+        />
+      ) : null}
 
       <section className={`panel-section generator-panel ${showGenerator ? "is-open" : ""}`}>
         <div

@@ -40,7 +40,8 @@ export interface EditableCanvasTarget {
 export interface PsdAiTargetNode {
   assetCode: string;
   artboardId: number;
-  referenceLayerId: number;
+  referenceLayerId?: number;
+  referenceIssue?: "missing" | "ambiguous";
   targetLayerId?: number;
   targetIssue?: "missing" | "ambiguous";
 }
@@ -136,14 +137,17 @@ export function listPsdAiTargetNodes(
       : editableLayers.length === 1 && legacyCandidates.length === 1
         ? legacyCandidates[0]
         : undefined;
-    return reference ? [{
+    if (!reference && !expectedIds?.has(artboard.id)) return [];
+    return [{
       assetCode: artboard.name.trim(),
       artboardId: artboard.id,
-      referenceLayerId: reference.id,
+      ...(reference
+        ? { referenceLayerId: reference.id }
+        : { referenceIssue: exactReferences.length > 1 ? "ambiguous" as const : "missing" as const }),
       ...(editableTargets.length === 1
         ? { targetLayerId: editableTargets[0]!.layer.id }
         : { targetIssue: editableTargets.length ? "ambiguous" as const : "missing" as const })
-    }] : [];
+    }];
   });
   const assetCodeCounts = new Map<string, number>();
   for (const node of discovered) {

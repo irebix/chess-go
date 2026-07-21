@@ -175,6 +175,29 @@ describe("Holopix pending submission persistence", () => {
     expect(loadHolopixPendingSubmissions(store)[0]).toMatchObject({ targetIssue: "missing" });
   });
 
+  it("persists and matches a paid submission for a layout member without a reference layer", () => {
+    const store = new MemoryStorage();
+    const missingReference = record({
+      referenceLayerId: undefined,
+      referenceIssue: "missing"
+    });
+    expect(saveHolopixPendingSubmission(missingReference, store)).toBe(true);
+    const loaded = loadHolopixPendingSubmissions(store)[0]!;
+    expect(loaded).toMatchObject({ referenceIssue: "missing" });
+    expect(holopixPendingSubmissionMatchesScope(loaded, {
+      documentIdentity: missingReference.documentIdentity,
+      assetCode: missingReference.assetCode,
+      artboardId: missingReference.artboardId,
+      referenceIssue: "missing"
+    })).toBe(true);
+    expect(holopixPendingSubmissionMatchesScope(loaded, {
+      documentIdentity: missingReference.documentIdentity,
+      assetCode: missingReference.assetCode,
+      artboardId: missingReference.artboardId,
+      referenceLayerId: 12
+    })).toBe(false);
+  });
+
   it("promotes exact recovery to durable output before a simulated reload", () => {
     const store = new MemoryStorage();
     const pending = record({ promptId: "prompt-42", outcome: "pending" });

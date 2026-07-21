@@ -19,6 +19,48 @@ function layer(
 }
 
 describe("AI candidate target discovery", () => {
+  it("keeps stored layout members in the AI matrix when their artboard has no reference image", () => {
+    const withReference = layer(1, "c_cleaning1", [
+      layer(11, "1024x1024_空白智能对象"),
+      layer(12, "参考图")
+    ]);
+    const withoutReference = layer(2, "c_cleaning2", [
+      layer(21, "1024x1024_空白智能对象")
+    ]);
+    const withoutReferenceOrTarget = layer(3, "c_cleaning3", []);
+    const document: CandidateTargetDocument = {
+      layers: [withReference, withoutReference, withoutReferenceOrTarget],
+      artboards: [withReference, withoutReference, withoutReferenceOrTarget]
+    };
+
+    expect(listPsdAiTargetNodes(document)).toEqual([{
+      assetCode: "c_cleaning1",
+      artboardId: 1,
+      referenceLayerId: 12,
+      targetLayerId: 11
+    }]);
+    expect(listPsdAiTargetNodes(document, "参考图", [1, 2, 3])).toEqual([
+      {
+        assetCode: "c_cleaning1",
+        artboardId: 1,
+        referenceLayerId: 12,
+        targetLayerId: 11
+      },
+      {
+        assetCode: "c_cleaning2",
+        artboardId: 2,
+        referenceIssue: "missing",
+        targetLayerId: 21
+      },
+      {
+        assetCode: "c_cleaning3",
+        artboardId: 3,
+        referenceIssue: "missing",
+        targetIssue: "missing"
+      }
+    ]);
+  });
+
   it("keeps reference artboards visible even when the editable smart object is missing", () => {
     const artboards = [
       layer(1, "c_cleaning1", [

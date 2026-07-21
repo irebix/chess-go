@@ -1,7 +1,8 @@
 export interface PsdAiScopeNodeIdentity {
   assetCode: string;
   artboardId: number;
-  referenceLayerId: number;
+  referenceLayerId?: number;
+  referenceIssue?: "missing" | "ambiguous";
   targetLayerId?: number;
   targetIssue?: "missing" | "ambiguous";
 }
@@ -20,7 +21,7 @@ export function psdAiScopeNodeKey(
     documentId,
     node.assetCode,
     node.artboardId,
-    node.referenceLayerId
+    node.referenceLayerId ?? node.referenceIssue ?? "missing-reference"
   ].join(":");
 }
 
@@ -101,7 +102,7 @@ function psdAiScopeIdentity(node: PsdAiScopeNodeIdentity): string {
   return [
     node.assetCode,
     node.artboardId,
-    node.referenceLayerId,
+    node.referenceLayerId ?? node.referenceIssue ?? "missing-reference",
     node.targetLayerId ?? node.targetIssue ?? "missing"
   ].join(":");
 }

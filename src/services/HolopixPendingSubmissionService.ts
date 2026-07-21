@@ -14,7 +14,8 @@ export interface HolopixPendingSubmissionRecord extends AiPendingSubmissionSnaps
   documentIdentity: string;
   assetCode: string;
   artboardId: number;
-  referenceLayerId: number;
+  referenceLayerId?: number;
+  referenceIssue?: "missing" | "ambiguous";
   targetLayerId?: number;
   targetIssue?: "missing" | "ambiguous";
   workflowVersion?: AiWorkflowVersion;
@@ -30,7 +31,8 @@ export interface HolopixPendingSubmissionScope {
   documentIdentity: string;
   assetCode: string;
   artboardId: number;
-  referenceLayerId: number;
+  referenceLayerId?: number;
+  referenceIssue?: "missing" | "ambiguous";
   workflowVersion?: AiWorkflowVersion;
 }
 
@@ -60,6 +62,7 @@ export function holopixPendingSubmissionMatchesScope(
     && pending.assetCode === scope.assetCode
     && pending.artboardId === scope.artboardId
     && pending.referenceLayerId === scope.referenceLayerId
+    && pending.referenceIssue === scope.referenceIssue
     && (scope.workflowVersion === undefined
       || effectiveWorkflowVersion(pending) === scope.workflowVersion);
 }
@@ -236,7 +239,9 @@ function isPendingSubmissionRecord(value: unknown): value is HolopixPendingSubmi
     && typeof record.assetCode === "string"
     && Boolean(record.assetCode.trim())
     && isFiniteInteger(record.artboardId)
-    && isFiniteInteger(record.referenceLayerId)
+    && (record.referenceLayerId === undefined || isFiniteInteger(record.referenceLayerId))
+    && (record.referenceIssue === undefined || record.referenceIssue === "missing" || record.referenceIssue === "ambiguous")
+    && (record.referenceLayerId !== undefined || record.referenceIssue !== undefined)
     && (record.targetLayerId === undefined || isFiniteInteger(record.targetLayerId))
     && (record.targetIssue === undefined || record.targetIssue === "missing" || record.targetIssue === "ambiguous")
     && (record.workflowVersion === undefined || record.workflowVersion === "flux" || record.workflowVersion === "gpt-image-2")

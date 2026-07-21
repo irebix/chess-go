@@ -6,6 +6,17 @@ export interface AiCandidatePlacement {
   targetCenterY: number;
 }
 
+export interface AiCandidateReplacementMeasurement {
+  source: "dom" | "transform";
+  bounds: Rect;
+}
+
+export interface AiCandidateReplacementGeometry {
+  artboardDescriptorBounds: Rect;
+  layerDomBounds?: Rect;
+  smartObjectTransformBounds?: Rect;
+}
+
 export function artboardBoundsFromDescriptor(descriptor: unknown): Rect {
   const root = asRecord(descriptor);
   const artboard = asRecord(root.artboard);
@@ -46,6 +57,24 @@ export function calculateAiCandidatePlacement(
     targetCenterX,
     targetCenterY
   };
+}
+
+export function chooseAiCandidateReplacementMeasurement(
+  geometry: AiCandidateReplacementGeometry
+): AiCandidateReplacementMeasurement {
+  if (geometry.layerDomBounds) {
+    return {
+      source: "dom",
+      bounds: geometry.artboardDescriptorBounds
+    };
+  }
+  if (geometry.smartObjectTransformBounds) {
+    return {
+      source: "transform",
+      bounds: geometry.artboardDescriptorBounds
+    };
+  }
+  throw new Error("Photoshop 没有返回候选智能对象的 DOM 或 transform 边界。");
 }
 
 export function rebaseTargetBoundsAfterArtboardShift(
