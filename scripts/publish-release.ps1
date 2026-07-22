@@ -12,6 +12,8 @@ $runtimeFiles = @(
   "Holopix.json",
   "GptImage2.json",
   "ImageEditor.json",
+  "ImageRefiner.json",
+  "ImageRefinerStyle.png",
   "index.html",
   "main.js",
   "main.js.LICENSE.txt",

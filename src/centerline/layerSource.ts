@@ -44,6 +44,11 @@ interface ReadActiveLayerPixelsOptions {
   missingLayerMessage?: string;
 }
 
+interface ReadLayerPixelsOptions {
+  commandName?: string;
+  includeAlpha?: boolean;
+}
+
 function activeSource(missingLayerMessage = "请先选中一个需要勾线的图层。"): CenterlineLayerSource {
   if (!app.documents?.length) throw new Error("请先打开 Photoshop 文档。");
   const document = app.activeDocument;
@@ -151,18 +156,22 @@ export async function readActiveLayerPixels(
   );
 }
 
-export async function readLayerPixels(source: CenterlineLayerSource): Promise<CenterlinePixelSource> {
+export async function readLayerPixels(
+  source: CenterlineLayerSource,
+  options: ReadLayerPixelsOptions = {}
+): Promise<CenterlinePixelSource> {
   if (!app.documents?.length) throw new Error("请先打开 Photoshop 文档。");
   if (app.activeDocument.id !== source.documentId) {
     throw new Error("最近描边结果属于其他 Photoshop 文档，无法复用。");
   }
-  return readLayerPixelsInternal(source, false);
+  return readLayerPixelsInternal(source, false, options.commandName, options.includeAlpha);
 }
 
 async function readLayerPixelsInternal(
   source: CenterlineLayerSource,
   requireActiveLayer: boolean,
-  commandName?: string
+  commandName?: string,
+  includeAlpha?: boolean
 ): Promise<CenterlinePixelSource> {
   const imagingApi = imaging ?? imaging_beta;
   if (!imagingApi) throw new Error("当前 Photoshop 不支持 Imaging API。");
@@ -184,6 +193,7 @@ async function readLayerPixelsInternal(
         layerID: source.layerId,
         colorSpace: "RGB",
         componentSize: 8,
+        ...(includeAlpha === undefined ? {} : { includeAlpha }),
         applyAlpha: false
       }) as unknown as PixelResult;
       try {

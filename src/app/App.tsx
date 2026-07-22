@@ -58,6 +58,7 @@ import {
 import { AiGenerationPanel } from "./AiGenerationPanel";
 import { AiEditPanel } from "./AiEditPanel";
 import { AiOutlinePanel } from "./AiOutlinePanel";
+import { AiRefinePanel } from "./AiRefinePanel";
 import { SpectrumSelect } from "./SpectrumSelect";
 
 type UiPhase =
@@ -154,6 +155,7 @@ export function App(): React.ReactElement {
   const [aiBusy, setAiBusy] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [outlineBusy, setOutlineBusy] = useState(false);
+  const [refineBusy, setRefineBusy] = useState(false);
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
   );
@@ -170,7 +172,7 @@ export function App(): React.ReactElement {
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
     phase === "diagnosing" || phase === "generating";
-  const busy = nonAiBusy || aiBusy || editBusy || outlineBusy;
+  const busy = nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -260,6 +262,14 @@ export function App(): React.ReactElement {
     setMessage(detail);
     if (level === "error") setShowDiagnostics(true);
     const event = makeLog(level, "image-editor.ai", detail);
+    setLogs((current) => [...current.slice(-199), event]);
+    console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
+  }, []);
+
+  const handleImageRefinerStatus = useCallback((detail: string, level: "info" | "warn" | "error" = "info"): void => {
+    setMessage(detail);
+    if (level === "error") setShowDiagnostics(true);
+    const event = makeLog(level, "image-refiner.ai", detail);
     setLogs((current) => [...current.slice(-199), event]);
     console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
   }, []);
@@ -934,7 +944,7 @@ export function App(): React.ReactElement {
           psdReferences={aiPsdReferences}
           thumbnails={thumbnails}
           externalBusy={
-            nonAiBusy || editBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || editBusy || outlineBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           requestThumbnail={requestThumbnail}
           onThumbnailError={handleThumbnailDecodeError}
@@ -948,27 +958,47 @@ export function App(): React.ReactElement {
         />
       </div>
 
-      {activePhotoshopDocumentId !== null ? (
+      <div
+        className="ai-panel-host"
+        style={{ display: activePhotoshopDocumentId !== null ? "block" : "none" }}
+        aria-hidden={activePhotoshopDocumentId === null}
+      >
         <AiEditPanel
-          key={`ai-edit-${activePhotoshopDocumentId}`}
           externalBusy={
-            nonAiBusy || aiBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || outlineBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setEditBusy}
           onStatus={handleImageEditorStatus}
         />
-      ) : null}
+      </div>
 
-      {activePhotoshopDocumentId !== null ? (
+      <div
+        className="ai-panel-host"
+        style={{ display: activePhotoshopDocumentId !== null ? "block" : "none" }}
+        aria-hidden={activePhotoshopDocumentId === null}
+      >
         <AiOutlinePanel
-          key={`ai-outline-${activePhotoshopDocumentId}`}
           externalBusy={
-            nonAiBusy || aiBusy || editBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || editBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setOutlineBusy}
           onStatus={handleOutlineStatus}
         />
-      ) : null}
+      </div>
+
+      <div
+        className="ai-panel-host"
+        style={{ display: activePhotoshopDocumentId !== null ? "block" : "none" }}
+        aria-hidden={activePhotoshopDocumentId === null}
+      >
+        <AiRefinePanel
+          externalBusy={
+            nonAiBusy || aiBusy || editBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+          }
+          onBusyChange={setRefineBusy}
+          onStatus={handleImageRefinerStatus}
+        />
+      </div>
 
       <section className={`panel-section generator-panel ${showGenerator ? "is-open" : ""}`}>
         <div

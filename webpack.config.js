@@ -48,6 +48,8 @@ module.exports = (_env, argv) => ({
         { from: "Holopix.json", to: "Holopix.json" },
         { from: "GptImage2.json", to: "GptImage2.json" },
         { from: "ImageEditor.json", to: "ImageEditor.json" },
+        { from: "ImageRefiner.json", to: "ImageRefiner.json" },
+        { from: "ImageRefinerStyle.png", to: "ImageRefinerStyle.png" },
         { from: "src/index.html", to: "index.html" },
         { from: "src/styles.css", to: "styles.css" }
       ]
