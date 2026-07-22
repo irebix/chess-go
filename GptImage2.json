@@ -31,7 +31,7 @@
       "aspect_ratio": "3:4",
       "batch_size": "1",
       "request_nonce": 1,
-      "confirm_cost": true,
+      "vip_channel": true,
       "timeout_seconds": 150,
       "prompt": [
         "2",
