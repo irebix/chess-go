@@ -75,7 +75,6 @@ export async function generateGptImage2Chain(
   const prepared = prepareGptImage2Workflow(baseWorkflow, {
     items: options.items,
     requestNonce,
-    confirmCost: true,
     outputSubfolder: `Holopix/ChessGo/GptImage2/${requestNonce}`
   });
   options.onStage?.(

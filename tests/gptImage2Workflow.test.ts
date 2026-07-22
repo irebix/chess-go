@@ -18,13 +18,15 @@ const items: GptImage2WorkflowItem[] = [
 describe("GPT Image 2 whole-chain workflow adapter", () => {
   it("accepts the bundled semantic-title workflow", () => {
     expect(() => assertGptImage2Workflow(bundledWorkflow)).not.toThrow();
+    const generate = titledNode(bundledWorkflow, GPT_IMAGE_2_NODE_TITLES.generate);
+    expect(generate.inputs.vip_channel).toBe(true);
+    expect(generate.inputs).not.toHaveProperty("confirm_cost");
   });
 
   it("injects an ordered item list while preserving the workflow-owned style reference", () => {
     const prepared = prepareGptImage2Workflow(bundledWorkflow, {
       items,
       requestNonce: 42,
-      confirmCost: true,
       outputSubfolder: "Holopix/ChessGo/GptImage2/42"
     });
     const reference = titledNode(prepared.workflow, GPT_IMAGE_2_NODE_TITLES.reference);
@@ -43,8 +45,9 @@ describe("GPT Image 2 whole-chain workflow adapter", () => {
       aspect_ratio: "4:3",
       batch_size: "1",
       request_nonce: 42,
-      confirm_cost: true
+      vip_channel: true
     });
+    expect(generate.inputs).not.toHaveProperty("confirm_cost");
     expect(crop.inputs.max_objects).toBe(2);
     expect(save.inputs).toMatchObject({
       subfolder: "Holopix/ChessGo/GptImage2/42",
@@ -57,7 +60,6 @@ describe("GPT Image 2 whole-chain workflow adapter", () => {
     const prepared = prepareGptImage2Workflow(remapped, {
       items: [items[0]!],
       requestNonce: 9,
-      confirmCost: true,
       outputSubfolder: "Holopix/ChessGo/GptImage2/9"
     });
     expect(prepared.saveNodeId).toBe("109");

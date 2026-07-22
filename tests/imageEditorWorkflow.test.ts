@@ -9,6 +9,15 @@ import {
 describe("AI image editor workflow", () => {
   it("keeps independent V2/V3 branches behind white 512 px square padding", () => {
     expect(() => assertImageEditorWorkflow(bundledWorkflow)).not.toThrow();
+    const generateNodes = Object.values(bundledWorkflow).filter((node) => (
+      node.class_type === "HolopixGenerateV2" || node.class_type === "HolopixGenerateV3"
+    ));
+    expect(generateNodes).toHaveLength(2);
+    for (const node of generateNodes) {
+      const inputs = node.inputs as Record<string, unknown>;
+      expect(inputs.vip_channel).toBe(true);
+      expect(inputs).not.toHaveProperty("confirm_cost");
+    }
     const paddingNodes = Object.values(bundledWorkflow).filter((node) => node.class_type === "ResizeAndPadImage");
     expect(paddingNodes).toHaveLength(2);
     for (const node of paddingNodes) {
@@ -42,9 +51,10 @@ describe("AI image editor workflow", () => {
       aspect_ratio: "1:1",
       batch_size: "2",
       request_nonce: 101,
-      confirm_cost: true,
+      vip_channel: true,
       images: ["5", 0]
     });
+    expect(prepared.workflow["1"]?.inputs).not.toHaveProperty("confirm_cost");
     expect(prepared.workflow["2"]?.inputs.image).toBe("chessgo_image_editor/run-1/selected.ppm");
     expect(prepared.workflow["3"]?.inputs.value).toBe("改成蓝色陶瓷材质");
   });
@@ -64,8 +74,10 @@ describe("AI image editor workflow", () => {
     expect(prepared.workflow["10"]?.inputs).toMatchObject({
       batch_size: "4",
       request_nonce: 202,
+      vip_channel: true,
       images: ["11", 0]
     });
+    expect(prepared.workflow["10"]?.inputs).not.toHaveProperty("confirm_cost");
   });
 
   it("rejects a square preprocessing edge that is not greater than 300 px", () => {

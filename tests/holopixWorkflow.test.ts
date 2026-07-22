@@ -61,6 +61,10 @@ const workflow: ComfyWorkflow = {
 describe("Holopix workflow adapter", () => {
   it("accepts the bundled QwenVL workflow template", () => {
     expect(() => assertHolopixWorkflow(bundledWorkflow)).not.toThrow();
+    const generate = Object.values(bundledWorkflow).find((node) => node.class_type === "HolopixGenerate");
+    const inputs = generate?.inputs as Record<string, unknown> | undefined;
+    expect(inputs?.confirm_cost).toBe(true);
+    expect(generate?.inputs).not.toHaveProperty("vip_channel");
     expect(describeHolopixPromptSource(bundledWorkflow)).toMatchObject({
       kind: "node",
       label: "提示词结果"

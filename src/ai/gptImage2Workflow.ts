@@ -20,7 +20,6 @@ export interface GptImage2WorkflowItem {
 export interface GptImage2WorkflowOverrides {
   items: GptImage2WorkflowItem[];
   requestNonce: number;
-  confirmCost: boolean;
   outputSubfolder: string;
 }
 
@@ -69,7 +68,8 @@ export function prepareGptImage2Workflow(
   generate.node.inputs.aspect_ratio = gptImage2AspectRatio(options.items.length);
   generate.node.inputs.batch_size = "1";
   generate.node.inputs.request_nonce = options.requestNonce;
-  generate.node.inputs.confirm_cost = options.confirmCost;
+  generate.node.inputs.vip_channel = true;
+  delete generate.node.inputs.confirm_cost;
   crop.node.inputs.max_objects = options.items.length;
   save.node.inputs.subfolder = options.outputSubfolder;
   save.node.inputs.collision_policy = "overwrite";

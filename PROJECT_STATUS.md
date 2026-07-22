@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-21
-当前发布版本：`0.6.0`
+当前发布版本：`0.6.1`
 
 ## 一句话摘要
 
@@ -11,17 +11,23 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.6.0`（本地待提交） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.6.0`（本地待提交） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.6.1`（本地待提交） |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.6.1`（本地待提交） |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.6.0`。
+- `manifest.json` 与 `package.json` 均为 `0.6.1`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及八个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 保存本地 `0.6.0` 运行文件，并与源码仓库 `dist` 哈希一致；当前改动尚未提交或推送。
-- `0.6.0` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 保存本地 `0.6.1` 运行文件，并与源码仓库 `dist` 哈希一致；当前改动尚未提交或推送。
+- `0.6.1` 已完成自动化验证；Photoshop 最终交互验收继续由用户执行。
+
+## `0.6.1` 发布内容
+
+- 同步新版 ComfyUI-Holopix 节点接口：`ImageEditor.json` 的 `HolopixGenerateV2 / HolopixGenerateV3` 以及 `GptImage2.json` 的整链 `HolopixGenerateV3` 删除旧 `confirm_cost`，改为 `vip_channel: true`；现有统一 `images` 批次入口、标题和其他连线保持不变。
+- 运行时适配器同步写入 `vip_channel = true` 并显式删除可能残留的 `confirm_cost`；GPT Image 2 内部不再暴露或传递已经失效的 `confirmCost` 参数。原始三模型 `HolopixGenerate` 模板、适配器和调用参数继续保留 `confirm_cost`。
+- 测试同时约束静态模板和动态准备结果的新旧字段边界。本机 `comfy-cli 1.12.0` 实时 schema 确认 V2/V3 使用 `vip_channel`、原始 Holopix 使用 `confirm_cost`；Holopix 与 GPT Image 2 静态工作流验证为 0 错误，ImageEditor 仅保留两个预期的运行时上传占位图错误。
 
 ## `0.6.0` 发布内容
 

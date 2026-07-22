@@ -4,7 +4,7 @@
       "aspect_ratio": "1:1",
       "batch_size": "1",
       "request_nonce": 0,
-      "confirm_cost": true,
+      "vip_channel": true,
       "timeout_seconds": 200,
       "prompt": ["3", 0],
       "images": ["5", 0]
@@ -53,7 +53,7 @@
       "aspect_ratio": "1:1",
       "batch_size": "1",
       "request_nonce": 0,
-      "confirm_cost": true,
+      "vip_channel": true,
       "timeout_seconds": 200,
       "prompt": ["9", 0],
       "images": ["11", 0]

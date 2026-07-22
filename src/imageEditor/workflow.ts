@@ -76,7 +76,8 @@ export function prepareImageEditorWorkflow(
   branch.generate.node.inputs.aspect_ratio = "1:1";
   branch.generate.node.inputs.batch_size = String(options.batchSize);
   branch.generate.node.inputs.request_nonce = options.requestNonce;
-  branch.generate.node.inputs.confirm_cost = true;
+  branch.generate.node.inputs.vip_channel = true;
+  delete branch.generate.node.inputs.confirm_cost;
   branch.padding.node.inputs.image = [branch.load.id, 0];
   branch.padding.node.inputs.target_width = 512;
   branch.padding.node.inputs.target_height = 512;
