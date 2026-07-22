@@ -230,6 +230,28 @@ label {
   font-size: 10px;
 }
 
+.image-refiner-source-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.image-refiner-source-icon {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--uxp-host-border-color, #666);
+  border-radius: 5px;
+  color: var(--uxp-host-text-color-secondary, #d0d0d0);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .image-editor-controls-card {
   gap: 7px;
 }
@@ -293,6 +315,13 @@ label {
 }
 
 .image-editor-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.image-refiner-actions {
   display: flex;
   flex-direction: column;
   gap: 6px;

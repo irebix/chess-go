@@ -1,0 +1,228 @@
+{
+  "1": {
+    "inputs": {
+      "input_subfolder": "Object Sheet Input",
+      "file_names": "[]",
+      "recursive": false,
+      "max_images": 64
+    },
+    "class_type": "LoadObjectImageFolder",
+    "_meta": {
+      "title": "① 读取 X 张图片（文件夹或指定顺序）"
+    }
+  },
+  "2": {
+    "inputs": {
+      "layout_mode": "auto_1:1_or_3:4",
+      "cell_size": 512,
+      "content_percent": 85.4,
+      "alpha_threshold": 8,
+      "filter_small_islands": true,
+      "min_island_pixels": 16,
+      "min_island_percent": 0.1,
+      "crop_margin": 1,
+      "max_images": 64,
+      "images": [
+        "1",
+        0
+      ],
+      "names": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "DynamicObjectSheetPack",
+    "_meta": {
+      "title": "② 按脚本规则动态拼图 + 自动比例"
+    }
+  },
+  "3": {
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "拼图预览（先检查布局）"
+    }
+  },
+  "4": {
+    "inputs": {
+      "value": "使用图2这种2.5d无描边休闲游戏卡通风格，提高图1的完成度"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "V3 编辑提示词"
+    }
+  },
+  "5": {
+    "inputs": {
+      "aspect_ratio": [
+        "2",
+        2
+      ],
+      "batch_size": "1",
+      "request_nonce": 0,
+      "vip_channel": true,
+      "timeout_seconds": 150,
+      "images": [
+        "15",
+        0
+      ],
+      "prompt": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "HolopixGenerateV3",
+    "_meta": {
+      "title": "③ Holopix V3（比例自动接入）"
+    }
+  },
+  "6": {
+    "inputs": {
+      "output_size": 512,
+      "returned_sheet": [
+        "5",
+        0
+      ],
+      "layout": [
+        "2",
+        1
+      ]
+    },
+    "class_type": "DynamicObjectSheetUnpack",
+    "_meta": {
+      "title": "④ 按原槽位与顺序切回"
+    }
+  },
+  "7": {
+    "inputs": {
+      "images": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "透明抠图批次预览"
+    }
+  },
+  "8": {
+    "inputs": {
+      "names": [
+        "6",
+        1
+      ],
+      "subfolder": "Object Sheet V3 Restored",
+      "collision_policy": "increment",
+      "png_compress_level": 4,
+      "images": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "SaveNamedImageBatch",
+    "_meta": {
+      "title": "⑧ 按原文件名保存透明图片"
+    }
+  },
+  "9": {
+    "inputs": {
+      "images": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "V3 返回整图预览"
+    }
+  },
+  "10": {
+    "inputs": {
+      "source": [
+        "6",
+        2
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "切回数量、尺寸与警告"
+    }
+  },
+  "11": {
+    "inputs": {
+      "model": "BiRefNet_toonout",
+      "mask_blur": 1,
+      "mask_offset": 1,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#000000",
+      "image": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "BiRefNetRMBG",
+    "_meta": {
+      "title": "⑤ 切回批次批量抠图"
+    }
+  },
+  "12": {
+    "inputs": {
+      "mask": [
+        "11",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "⑥ 前景转 Alpha"
+    }
+  },
+  "13": {
+    "inputs": {
+      "image": [
+        "11",
+        0
+      ],
+      "alpha": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "JoinImageWithAlpha",
+    "_meta": {
+      "title": "⑦ 写入透明通道"
+    }
+  },
+  "14": {
+    "inputs": {
+      "image": "chessgo_image_refiner/style/blob"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "固定风格参考图（图2）"
+    }
+  },
+  "15": {
+    "inputs": {
+      "image1": [
+        "2",
+        0
+      ],
+      "image2": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "ImageBatch",
+    "_meta": {
+      "title": "图1 Photoshop 拼图 + 图2 风格参考"
+    }
+  }
+}
