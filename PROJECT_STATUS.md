@@ -28,8 +28,8 @@
 - 根据其他环境安装后的实际目录 ZIP，确认弹窗显示 `0.8.0` 安装成功时，目标目录只有 `manifest.json`、`Holopix.json`、`GptImage2.json`、`index.html`、`main.js`、许可证和样式七项；缺少 `ImageEditor.json`、`ImageRefiner.json` 与 `ImageRefinerStyle.png`，因此 AI编辑和 AI细化会在读取插件资源时立即阻断。
 - 根因是安装器在 `0.5.4` 后先后扩充运行文件清单，却一直保留 `CHESSGO_INSTALLER_REVISION=1`。旧七文件安装器下载到新 `0.8.0` 发布目录后仍只复制自身认识的七项；自更新又因远端安装器同为 revision 1 而跳过，所以“安装成功”只代表旧清单成功。
 - 安装器 revision 提升为 `2`，让所有 revision 1 安装器在正式安装前强制换成最新完整清单；新版同时在 revision 相同但安装器内容变化时也执行刷新，避免未来忘记提升 revision 再次冻结旧复制逻辑。新增回归测试约束 revision、十项运行文件和同 revision 内容刷新分支，插件版本提升为 `0.8.1`。
-- 安装器基础设施继续升级到 revision `3`：发布脚本不再维护硬编码运行文件数组，而是递归收集 `dist` 全部文件并生成 `release-manifest.json`（相对路径、字节数、SHA-256）；安装器按清单递归复制、校验并原子替换目标目录。以后新增顶层资源或子目录文件只需正常进入构建输出，无需再次修改安装器。
-- 自动化验证为 61 个测试文件、293 项测试、TypeScript strict 与生产构建全部通过；Webpack 仅有既有 `main.js` 与固定参考图体积建议。
+- 安装器基础设施继续升级到 revision `3`：发布脚本不再维护硬编码运行文件数组，而是递归收集 `dist` 全部文件并生成 `release-manifest.json`（相对路径、字节数、SHA-256）；发布仓库固定使用 `* -text` 保留构建产物原始字节，确保 Git 克隆与 Codeload ZIP 的哈希一致。安装器按清单递归复制、校验并原子替换目标目录。以后新增顶层资源或子目录文件只需正常进入构建输出，无需再次修改安装器。
+- 自动化验证为 61 个测试文件、294 项测试、TypeScript strict 与生产构建全部通过；Webpack 仅有既有 `main.js` 与固定参考图体积建议。
 
 ## `0.8.0` 发布内容
 

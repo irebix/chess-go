@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $distFolder = Join-Path $projectRoot "dist"
 $releaseManifestName = "release-manifest.json"
+$releaseAttributesName = ".gitattributes"
 $requiredRuntimeFiles = @("manifest.json", "index.html", "main.js", "styles.css")
 
 if (-not $SkipBuild) {
@@ -25,6 +26,9 @@ if (-not $SkipBuild) {
 if (-not (Test-Path -LiteralPath $ReleaseRepo)) {
   New-Item -ItemType Directory -Path $ReleaseRepo | Out-Null
 }
+
+$releaseAttributesPath = Join-Path $ReleaseRepo $releaseAttributesName
+[IO.File]::WriteAllText($releaseAttributesPath, "* -text`r`n", [Text.Encoding]::ASCII)
 
 if (-not (Test-Path -LiteralPath $distFolder -PathType Container)) {
   throw "Missing build output folder: $distFolder"
