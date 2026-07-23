@@ -58,11 +58,15 @@ describe("AI image refiner integration", () => {
   });
 
   it("ships the refiner workflow and fixed style reference through every runtime path", () => {
-    for (const path of ["webpack.config.js", "scripts/publish-release.ps1", "installer/install.cmd"]) {
-      const source = readFileSync(resolve(path), "utf8");
-      expect(source).toContain("ImageRefiner.json");
-      expect(source).toContain("ImageRefinerStyle.png");
-    }
+    const webpackSource = readFileSync(resolve("webpack.config.js"), "utf8");
+    expect(webpackSource).toContain("ImageRefiner.json");
+    expect(webpackSource).toContain("ImageRefinerStyle.png");
+    const publisher = readFileSync(resolve("scripts/publish-release.ps1"), "utf8");
+    const installer = readFileSync(resolve("installer/install.cmd"), "utf8");
+    expect(publisher).toContain("Get-ChildItem -LiteralPath $distFolder -File -Recurse");
+    expect(publisher).toContain('releaseManifestName = "release-manifest.json"');
+    expect(installer).toContain("function Get-ChessGoReleasePayload");
+    expect(installer).toContain('releaseManifestName = "release-manifest.json"');
     const styleReference = readFileSync(resolve("ImageRefinerStyle.png"));
     expect(Array.from(styleReference.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(styleReference.readUInt32BE(16)).toBe(880);

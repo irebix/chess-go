@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=2"
+set "CHESSGO_INSTALLER_REVISION=3"
 set "CHESSGO_INSTALLER=%~f0"
 set "CHESSGO_PWSH="
 where pwsh.exe >nul 2>nul
@@ -161,7 +161,8 @@ $installerPath = [IO.Path]::GetFullPath($env:CHESSGO_INSTALLER)
 $sourceDir = Split-Path -Parent $installerPath
 $pluginId = "com.linkdesks.chess-archive-psd-generator"
 $pluginFolderName = "ChessGo"
-$requiredFiles = @("manifest.json", "Holopix.json", "GptImage2.json", "ImageEditor.json", "ImageRefiner.json", "ImageRefinerStyle.png", "index.html", "main.js", "main.js.LICENSE.txt", "styles.css")
+$releaseManifestName = "release-manifest.json"
+$releaseManifestSchemaVersion = 1
 $repositoryUrl = "https://github.com/irebix/chess-go.git"
 $releaseBranch = "release"
 $releaseApiUrl = "https://api.github.com/repos/irebix/chess-go/commits/$releaseBranch"
@@ -226,23 +227,6 @@ function Enable-UxpDeveloperMode([string]$settingsPath) {
   [IO.File]::WriteAllText($settingsPath, $json, [Text.UTF8Encoding]::new($false))
 }
 
-function Test-ChessGoRelease([string]$folder) {
-  if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
-    return $false
-  }
-  foreach ($fileName in $requiredFiles) {
-    if (-not (Test-Path -LiteralPath (Join-Path $folder $fileName) -PathType Leaf)) {
-      return $false
-    }
-  }
-  try {
-    $candidateManifest = Get-Content -LiteralPath (Join-Path $folder "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    return $candidateManifest.id -eq $pluginId
-  } catch {
-    return $false
-  }
-}
-
 function Assert-PathInside([string]$path, [string]$root, [string]$label) {
   $fullPath = [IO.Path]::GetFullPath($path).TrimEnd("\")
   $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd("\")
@@ -251,6 +235,104 @@ function Assert-PathInside([string]$path, [string]$root, [string]$label) {
     throw "$label is outside the expected folder: $fullPath"
   }
   return $fullPath
+}
+
+function Get-ChessGoReleasePayload([string]$folder) {
+  if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+    throw "The release folder does not exist: $folder"
+  }
+
+  $releaseRoot = [IO.Path]::GetFullPath($folder)
+  $releaseManifestPath = Join-Path $releaseRoot $releaseManifestName
+  if (-not (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf)) {
+    throw "The release manifest is missing: $releaseManifestName"
+  }
+
+  try {
+    $releaseManifest = Get-Content -LiteralPath $releaseManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  } catch {
+    throw "The release manifest is invalid: $($_.Exception.Message)"
+  }
+  if ([int]$releaseManifest.schemaVersion -ne $releaseManifestSchemaVersion) {
+    throw "The release manifest schema is not supported."
+  }
+  if ([string]$releaseManifest.pluginId -ne $pluginId) {
+    throw "The release manifest belongs to an unexpected plugin."
+  }
+
+  $entries = @($releaseManifest.files)
+  if ($entries.Count -eq 0) {
+    throw "The release manifest does not contain any plugin files."
+  }
+
+  $seenPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  $payload = @()
+  foreach ($entry in $entries) {
+    $relativePath = [string]$entry.path
+    $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
+    if (
+      [string]::IsNullOrWhiteSpace($relativePath) -or
+      [IO.Path]::IsPathRooted($relativePath) -or
+      $relativePath.Contains("\") -or
+      $relativePath.Contains(":")
+    ) {
+      throw "The release manifest contains an unsafe path: $relativePath"
+    }
+    $segments = @($relativePath.Split("/"))
+    if ($segments.Count -eq 0 -or @($segments | Where-Object { $_ -eq "" -or $_ -eq "." -or $_ -eq ".." }).Count -gt 0) {
+      throw "The release manifest contains an unsafe path: $relativePath"
+    }
+    if (-not $seenPaths.Add($relativePath)) {
+      throw "The release manifest contains a duplicate path: $relativePath"
+    }
+    if ($expectedHash -notmatch "^[0-9a-f]{64}$") {
+      throw "The release manifest contains an invalid SHA-256 value for: $relativePath"
+    }
+    if ($null -eq $entry.size -or [int64]$entry.size -lt 0) {
+      throw "The release manifest contains an invalid size for: $relativePath"
+    }
+
+    $sourcePath = Join-Path $releaseRoot ($relativePath.Replace("/", "\"))
+    $safeSourcePath = Assert-PathInside $sourcePath $releaseRoot "Release payload path"
+    if (-not (Test-Path -LiteralPath $safeSourcePath -PathType Leaf)) {
+      throw "The release payload is missing: $relativePath"
+    }
+    $sourceItem = Get-Item -LiteralPath $safeSourcePath
+    if ([int64]$sourceItem.Length -ne [int64]$entry.size) {
+      throw "The release payload size does not match its manifest: $relativePath"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $safeSourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $expectedHash) {
+      throw "The release payload hash does not match its manifest: $relativePath"
+    }
+
+    $payload += [pscustomobject]@{
+      Path = $relativePath
+      SourcePath = $safeSourcePath
+      Sha256 = $expectedHash
+      Size = [int64]$entry.size
+    }
+  }
+
+  if (-not $seenPaths.Contains("manifest.json")) {
+    throw "The release payload does not contain manifest.json."
+  }
+  $pluginManifest = Get-Content -LiteralPath (Join-Path $releaseRoot "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+  if (
+    [string]$pluginManifest.id -ne $pluginId -or
+    [string]$pluginManifest.version -ne [string]$releaseManifest.pluginVersion
+  ) {
+    throw "The plugin manifest does not match the release manifest."
+  }
+  return $payload
+}
+
+function Test-ChessGoRelease([string]$folder) {
+  try {
+    return @(Get-ChessGoReleasePayload $folder).Count -gt 0
+  } catch {
+    return $false
+  }
 }
 
 function Remove-SafeDirectory([string]$path, [string]$root) {
@@ -537,6 +619,7 @@ function Install-RegisteredUxpPlugin(
   if ([string]::IsNullOrWhiteSpace($minimumHostVersion)) {
     throw "The plugin manifest does not declare a Photoshop minimum version."
   }
+  $payloadFiles = @(Get-ChessGoReleasePayload $releaseFolder)
 
   $uxpRoot = Join-Path $env:APPDATA "Adobe\UXP"
   $externalRoot = Join-Path $uxpRoot "Plugins\External"
@@ -574,14 +657,17 @@ function Install-RegisteredUxpPlugin(
   $registryTemp = Join-Path $registryDir ("PS.json.chessgo-" + [Guid]::NewGuid().ToString("N") + ".tmp")
   try {
     New-Item -ItemType Directory -Path $safeStaging -Force | Out-Null
-    foreach ($fileName in $requiredFiles) {
-      $sourceFile = Join-Path $releaseFolder $fileName
-      $stagedFile = Join-Path $safeStaging $fileName
-      Copy-Item -LiteralPath $sourceFile -Destination $stagedFile -Force
-      $sourceHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+    foreach ($payloadFile in $payloadFiles) {
+      $relativeWindowsPath = $payloadFile.Path.Replace("/", "\")
+      $stagedFile = Assert-PathInside (Join-Path $safeStaging $relativeWindowsPath) $safeStaging "Staged plugin path"
+      $stagedParent = Split-Path -Parent $stagedFile
+      if (-not (Test-Path -LiteralPath $stagedParent -PathType Container)) {
+        New-Item -ItemType Directory -Path $stagedParent -Force | Out-Null
+      }
+      Copy-Item -LiteralPath $payloadFile.SourcePath -Destination $stagedFile -Force
       $stagedHash = (Get-FileHash -LiteralPath $stagedFile -Algorithm SHA256).Hash
-      if ($sourceHash -ne $stagedHash) {
-        throw "Plugin file verification failed: $fileName"
+      if ($payloadFile.Sha256 -ne $stagedHash.ToLowerInvariant()) {
+        throw "Plugin file verification failed: $($payloadFile.Path)"
       }
     }
 
