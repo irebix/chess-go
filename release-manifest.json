@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pluginId": "com.linkdesks.chess-archive-psd-generator",
-  "pluginVersion": "0.8.2",
+  "pluginVersion": "0.8.3",
   "files": [
     {
       "path": "GPlusF.json",
@@ -40,8 +40,8 @@
     },
     {
       "path": "main.js",
-      "size": 669028,
-      "sha256": "bc955c26c9f738dcf360a964dbc4693db1035b82d459830686855189395b26ee"
+      "size": 671601,
+      "sha256": "45e9beef3f7eb8aab47f1328086a60ccc866cc7f5e1e1e182c1aea3464bb8545"
     },
     {
       "path": "main.js.LICENSE.txt",
@@ -51,12 +51,17 @@
     {
       "path": "manifest.json",
       "size": 967,
-      "sha256": "f95862a201c772934fef6c8069f2fd8fd7fcea1fe057bb55a72d389b916dccaa"
+      "sha256": "f83a52ae8cda0318028c8c4ebfc826b5b16ca46fae0e2c75116c76eb964ee85a"
+    },
+    {
+      "path": "StandardGridBackground.png",
+      "size": 35871,
+      "sha256": "80f9811e7f3fcaadcb3427def263c249bc8fbe81d2fe0eac4b3d885617266698"
     },
     {
       "path": "styles.css",
-      "size": 33629,
-      "sha256": "e0e4813bc54751d1c54ea784d65bca2d50358c9db6966b2a0d72c05dd78ca23a"
+      "size": 33761,
+      "sha256": "4cb052b0df0fe419a225262ae3bc29a92552dbde9d8a2d0963f41a3fdc33e6bd"
     }
   ]
 }
