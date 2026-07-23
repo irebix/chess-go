@@ -28,7 +28,7 @@ if (-not (Test-Path -LiteralPath $ReleaseRepo)) {
 }
 
 $releaseAttributesPath = Join-Path $ReleaseRepo $releaseAttributesName
-[IO.File]::WriteAllText($releaseAttributesPath, "* -text`r`n", [Text.Encoding]::ASCII)
+[IO.File]::WriteAllText($releaseAttributesPath, "* binary`r`n", [Text.Encoding]::ASCII)
 
 if (-not (Test-Path -LiteralPath $distFolder -PathType Container)) {
   throw "Missing build output folder: $distFolder"

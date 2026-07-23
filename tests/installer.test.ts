@@ -21,7 +21,7 @@ describe("Windows installer", () => {
   it("publishes every dist file recursively without maintaining an asset allowlist", () => {
     expect(publisher).toContain("Get-ChildItem -LiteralPath $distFolder -File -Recurse");
     expect(publisher).toContain('$releaseManifestName = "release-manifest.json"');
-    expect(publisher).toContain('[IO.File]::WriteAllText($releaseAttributesPath, "* -text`r`n"');
+    expect(publisher).toContain('[IO.File]::WriteAllText($releaseAttributesPath, "* binary`r`n"');
     expect(publisher).toContain("sha256 = $_.Sha256");
     expect(publisher).not.toContain('"ImageRefiner.json"');
     expect(publisher).not.toContain('"GPlusF.json"');
