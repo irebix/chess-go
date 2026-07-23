@@ -51,6 +51,7 @@ module.exports = (_env, argv) => ({
         { from: "ImageEditor.json", to: "ImageEditor.json" },
         { from: "ImageRefiner.json", to: "ImageRefiner.json" },
         { from: "ImageRefinerStyle.png", to: "ImageRefinerStyle.png" },
+        { from: "StandardGridBackground.png", to: "StandardGridBackground.png" },
         { from: "src/index.html", to: "index.html" },
         { from: "src/styles.css", to: "styles.css" }
       ]

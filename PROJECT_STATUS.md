@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-23
-当前发布版本：`0.8.2`
+当前发布版本：`0.8.3`
 
 ## 一句话摘要
 
@@ -11,17 +11,24 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.2` |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.2` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.3` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.3` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.2`。
-- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十一个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.2` 完整运行包和 revision 3 安装器；新增 `GPlusF.json` 后共十一个运行文件，均与源码仓库 `dist` SHA-256 一致。
-- `0.8.2` 已完成 65 个测试文件、311 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `manifest.json` 与 `package.json` 均为 `0.8.3`。
+- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十二个运行文件，不直接编辑构建产物。
+- `ChessGo-Release` 已同步 `0.8.3` 完整运行包和 revision 3 安装器；新增 `StandardGridBackground.png` 后共十二个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.3` 已完成 66 个测试文件、314 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.3` 发布内容
+
+- 在“生成 PSD”正下方增加常驻单击入口“生成网格画布”，不依赖 Excel、当前文档或标准网格初始化入口。用户只需选择保存位置，插件便创建 `1780 × 1188 px`、300 ppi、RGB、非画板 PSD。
+- 将用户提供的 `D:\Downloads\bg.png` 原样随插件发布为 `StandardGridBackground.png`（`1780 × 1188 px`，SHA-256 `80F9811E7F3FCAADCB3427DEF263C249BC8FBE81D2FE0EAC4B3D885617266698`）；创建时作为名为 `__BACKGROUND__` 的嵌入式智能对象精确铺满画布，不参与 96 格占用计算。
+- 新文档复用现有 v1 隐藏数据存储，创建并折叠“棋子go｜标准网格画布数据”组与配置文本层，保存前同时校验背景、元数据和 `STANDARD_GRID` 识别结果；生成后可立即用于 AI初稿整排/单个回填。
+- 自动化验证为 66 个测试文件、314 项测试、TypeScript strict 与生产构建全部通过；发布清单覆盖十二个运行文件并与 `dist` 的字节数、SHA-256 一致。
 
 ## `0.8.2` 发布内容
 
@@ -343,6 +350,7 @@
 
 ## 仍需人工验证
 
+- 点击“生成 PSD”正下方的“生成网格画布”，确认只弹出一次 PSD 保存位置选择；生成文件应为 `1780 × 1188 px` 非画板文档，`__BACKGROUND__` 智能对象完整铺满且可见，底部“棋子go｜标准网格画布数据”组默认隐藏并折叠。保存、关闭、重开后面板应直接识别为 `12 × 8` 标准网格、显示 `0 / 96` 占用，并可让 AI初稿选择首条空行完成整排或单个回填。
 - 在 Photoshop 中对一组图片执行 AI细化，确认 Comfy 历史链路为 `HolopixGenerateV3 → Image Filter Adjustments → DynamicObjectSheetUnpack`，调色节点显示 `brightness=0.01`、`saturation=0.95`，整图预览为调色后的结果；切回数量、原槽位、后续 BiRefNet 抠图和 Photoshop 回插位置均不得改变。
 - 在 Photoshop 中重载 `0.8.2`，确认 AI初稿版本列表出现 `G+F · GPT 整图裁切 + Holopix 逐图 0.2 细化`。选择 2–3 个棋子运行一轮：日志应先显示内置 `ImageRefinerStyle.png` 已上传，再完成 GPT raw sheet 与裁切数量校验，然后逐张显示参考图上传和 `0.2` 权重 Holopix 细化；第 N+1 张不得在第 N 张生成完成前上传。Comfy 历史中的每个 `HolopixGenerate.reference` 都必须连接对应的单张 `HolopixUploadReference`，不能直接连接 GPT 整图或只经过图片转提示词。最终候选应按 `assetCode` 回到正确行、带透明 Alpha，并可在画板 PSD 与标准网格中沿用现有整排/单个回填；切换到 Flux 或 GPT Image 2 后候选、待确认状态与历史恢复不得串线。
 - 在 Photoshop 中重载 `0.7.8`。确认 AI细化上传的图2为新版 `Flux2_00045_.png` 内容，图1仍为 Photoshop 来源拼图；输入框初始为空并显示“补充要求（可选）”，留空时仍可运行。分别选择单个智能对象、单个栅格图层，以及同时含智能对象、栅格图层、嵌套子组和文字/调整层的图层组：单图层应只上传一张并在来源正上方插入“`原图层名 细化`”；图层组应只统计并上传可读图片层，非图片层显示为跳过，并在来源组正上方创建同级“`原组名 细化`”组。分别在“插入为智能对象”未勾选和勾选时验证输出为栅格图层和智能对象；每张切回图片都应经过 BiRefNet 批量抠图并带透明 Alpha、保持来源顺序和画布位置。任务中途切换文档时结果不得写入错误文档，切回来源文档后“插入就绪细化图片”应可直接回插且不会重新提交 Holopix。重点验证横图、竖图、透明物件、重复图层名、嵌套组和 64 张上限；确认超过 240 秒的任务会继续等待且可在 600 秒内正常回插；取消任务应停止等待并向已提交的 ComfyUI prompt 发送取消请求。

@@ -134,6 +134,15 @@ label {
   outline-offset: -1px;
 }
 
+.grid-canvas-generator-action {
+  font: inherit;
+}
+
+.grid-canvas-generator-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .panel-disclosure {
   display: flex;
   width: 14px;

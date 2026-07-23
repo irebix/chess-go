@@ -35,11 +35,12 @@ export const STANDARD_GRID_TEMPLATE: GridTemplate = Object.freeze({
 
 export const GRID_METADATA_GROUP_NAME = "棋子go｜标准网格画布数据";
 export const GRID_METADATA_LAYER_NAME = "棋子go｜网格配置（请勿删除）";
+export const GRID_BACKGROUND_LAYER_NAME = "__BACKGROUND__";
 
 export const GRID_AUXILIARY_TOP_LEVEL_NAMES = Object.freeze([
   GRID_METADATA_GROUP_NAME,
   "__GRID__",
-  "__BACKGROUND__",
+  GRID_BACKGROUND_LAYER_NAME,
   "__NOTES__",
   "__REFERENCES__",
   "__ARCHIVE__"

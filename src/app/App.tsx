@@ -63,6 +63,7 @@ import { AiRefinePanel } from "./AiRefinePanel";
 import { SpectrumSelect } from "./SpectrumSelect";
 import { StandardGridPanel } from "./StandardGridPanel";
 import type { PlacementMode } from "../photoshop/placementMode";
+import { generateStandardGridPsd } from "../photoshop/StandardGridDocumentGenerator";
 
 type UiPhase =
   | "idle"
@@ -73,6 +74,7 @@ type UiPhase =
   | "exporting"
   | "diagnosing"
   | "generating"
+  | "generatingGrid"
   | "done"
   | "error";
 
@@ -177,7 +179,7 @@ export function App(): React.ReactElement {
 
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
-    phase === "diagnosing" || phase === "generating";
+    phase === "diagnosing" || phase === "generating" || phase === "generatingGrid";
   const busy = nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy || gridBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
@@ -772,6 +774,24 @@ export function App(): React.ReactElement {
       appendLog(makeLog("info", "batch.generation.completed", `${results.length} volumes`));
     } catch (error) {
       handleError(error, "批量生成失败");
+    }
+  }
+
+  async function handleGenerateStandardGrid(): Promise<void> {
+    if (busy) return;
+    setUiError(null);
+    setPhase("generatingGrid");
+    setMessage("请选择标准网格 PSD 的保存位置……");
+    appendLog(makeLog("info", "standard-grid.generation.started"));
+    try {
+      const result = await generateStandardGridPsd();
+      setPhase("done");
+      setActivePhotoshopDocumentId(result.documentId);
+      setPlacementMode("STANDARD_GRID");
+      setMessage(`标准网格画布已生成：${result.fileName}`);
+      appendLog(makeLog("info", "standard-grid.generation.completed", result.fileName));
+    } catch (error) {
+      handleError(error, "生成标准网格画布失败");
     }
   }
 
@@ -1440,6 +1460,17 @@ export function App(): React.ReactElement {
 
           </div>
         ) : null}
+      </section>
+
+      <section className="panel-section grid-canvas-generator-panel">
+        <button
+          type="button"
+          className="panel-section-toggle grid-canvas-generator-action"
+          disabled={busy}
+          onClick={() => void handleGenerateStandardGrid()}
+        >
+          <span>{phase === "generatingGrid" ? "正在生成网格画布……" : "生成网格画布"}</span>
+        </button>
       </section>
 
       <section className={`panel-section diagnostics-panel ${showDiagnostics ? "is-open" : ""}`}>
