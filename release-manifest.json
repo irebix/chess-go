@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "com.linkdesks.chess-archive-psd-generator",
+  "pluginVersion": "0.8.1",
+  "files": [
+    {
+      "path": "GptImage2.json",
+      "size": 3049,
+      "sha256": "862f331f556573f3858141836ada56e7c38943a680376821b1cf906d46181349"
+    },
+    {
+      "path": "Holopix.json",
+      "size": 3507,
+      "sha256": "64803efb833ce38192305188142fbea6af36ff9714efe1900c6d226b8e123a9e"
+    },
+    {
+      "path": "ImageEditor.json",
+      "size": 2930,
+      "sha256": "e2ca4d9db5dcc56f51c656bfebe93461f2f177179611dfa1db7d61bc70e35b49"
+    },
+    {
+      "path": "ImageRefiner.json",
+      "size": 4362,
+      "sha256": "5ef33a268780ee3af906e1c14c6243b105f76362086cd7f15a00cb67d39de96b"
+    },
+    {
+      "path": "ImageRefinerStyle.png",
+      "size": 1157723,
+      "sha256": "845cfb2161fddbd04501d99519eb8e5668bff8321f2f94ba5a052b1eb2d0ea6d"
+    },
+    {
+      "path": "index.html",
+      "size": 341,
+      "sha256": "06eef6a17619be052319aab9bf032182168c6c80f839a18d5aea547fd5fda080"
+    },
+    {
+      "path": "main.js",
+      "size": 641518,
+      "sha256": "f69b0a8524d91590f0de87b0b441dbe3aa32d9982c047e216dbecba8c4d6410e"
+    },
+    {
+      "path": "main.js.LICENSE.txt",
+      "size": 1355,
+      "sha256": "b99b4e83d29bb90e1e278674d0065865cd8b6d6ad975af8791861c4dfde19d97"
+    },
+    {
+      "path": "manifest.json",
+      "size": 1019,
+      "sha256": "9cc3bb1ec69b5ef5c7d41d3a41642c081ad353f5b0c0b9125303818b0e32f0a1"
+    },
+    {
+      "path": "styles.css",
+      "size": 35529,
+      "sha256": "8e1a923d25a781bab71e9694ef0365a6160d45ea308596d22229539c955ca70c"
+    }
+  ]
+}
