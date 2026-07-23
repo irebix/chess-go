@@ -64,6 +64,7 @@ import { SpectrumSelect } from "./SpectrumSelect";
 import { StandardGridPanel } from "./StandardGridPanel";
 import type { PlacementMode } from "../photoshop/placementMode";
 import { generateStandardGridPsd } from "../photoshop/StandardGridDocumentGenerator";
+import { shouldShowAiDraftPanel } from "../domain/aiDraftVisibility";
 
 type UiPhase =
   | "idle"
@@ -246,8 +247,7 @@ export function App(): React.ReactElement {
     }
     return Array.from(groupsById.values());
   }, [aiPsdReferences]);
-  const aiDraftPanelVisible = activePhotoshopDocumentId !== null
-    && (placementMode === "STANDARD_GRID" || aiPsdReferences.length > 0);
+  const aiDraftPanelVisible = shouldShowAiDraftPanel(activePhotoshopDocumentId, placementMode);
   const selectedCount = scopedItems.filter((item) => item.selected).length;
   const blockedItemCount = scopedItems.filter((item) => hasErrors(item)).length;
   const selectedErrorCount = scopedItems

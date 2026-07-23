@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-23
-当前发布版本：`0.8.4`
+当前发布版本：`0.8.5`
 
 ## 一句话摘要
 
@@ -11,17 +11,23 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.4` |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.4` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.5` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.5` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.4`。
+- `manifest.json` 与 `package.json` 均为 `0.8.5`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十二个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.4` 完整运行包和 revision 3 安装器；共十二个运行文件，均与源码仓库 `dist` SHA-256 一致。
-- `0.8.4` 已完成 66 个测试文件、314 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 已同步 `0.8.5` 完整运行包和 revision 3 安装器；共十二个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.5` 已完成 67 个测试文件、315 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.5` 发布内容
+
+- 收紧 `AI初稿` 一级栏的可见性：只有当前活动文档为 Photoshop 画板或已初始化 `STANDARD_GRID` 时显示；当前文档既不是画板也不是标准网格时，即使内存中仍保留其他打开 PSD 的 AI 来源与候选，也立即隐藏该栏。
+- 隐藏只影响界面，不清空候选、来源链或继续生成状态；切回合法标准网格后仍按原逻辑扫描并恢复已打开的来源画板 PSD。
+- 自动化验证为 67 个测试文件、315 项测试、TypeScript strict 与生产构建全部通过；发布清单覆盖十二个运行文件并与 `dist` 的字节数、SHA-256 一致。
 
 ## `0.8.4` 发布内容
 
@@ -355,6 +361,7 @@
 
 ## 仍需人工验证
 
+- 分别切换四种状态验证 `AI初稿`：无文档时隐藏；普通非画板文档隐藏；未初始化但尺寸为 `1780 × 1188 px` 的普通文档仍隐藏；画板 PSD 与已初始化标准网格显示。先在画板 PSD 生成候选，再切到普通文档时栏位应隐藏但结果不丢失，切回标准网格后应恢复来源链和候选。
 - 展开“生成 PSD”，确认“生成网格画布”位于导入表格区域之后，并与“选择 XLSX”使用相同的蓝色全宽主按钮样式，不再出现独立灰色一级栏。点击后应只弹出一次 PSD 保存位置选择；生成文件应为 `1780 × 1188 px` 非画板文档，`__BACKGROUND__` 智能对象完整铺满且可见，底部“棋子go｜标准网格画布数据”组默认隐藏并折叠。保存、关闭、重开后面板应直接识别为 `12 × 8` 标准网格、显示 `0 / 96` 占用，并可让 AI初稿选择首条空行完成整排或单个回填。
 - 在 Photoshop 中对一组图片执行 AI细化，确认 Comfy 历史链路为 `HolopixGenerateV3 → Image Filter Adjustments → DynamicObjectSheetUnpack`，调色节点显示 `brightness=0.01`、`saturation=0.95`，整图预览为调色后的结果；切回数量、原槽位、后续 BiRefNet 抠图和 Photoshop 回插位置均不得改变。
 - 在 Photoshop 中重载 `0.8.2`，确认 AI初稿版本列表出现 `G+F · GPT 整图裁切 + Holopix 逐图 0.2 细化`。选择 2–3 个棋子运行一轮：日志应先显示内置 `ImageRefinerStyle.png` 已上传，再完成 GPT raw sheet 与裁切数量校验，然后逐张显示参考图上传和 `0.2` 权重 Holopix 细化；第 N+1 张不得在第 N 张生成完成前上传。Comfy 历史中的每个 `HolopixGenerate.reference` 都必须连接对应的单张 `HolopixUploadReference`，不能直接连接 GPT 整图或只经过图片转提示词。最终候选应按 `assetCode` 回到正确行、带透明 Alpha，并可在画板 PSD 与标准网格中沿用现有整排/单个回填；切换到 Flux 或 GPT Image 2 后候选、待确认状态与历史恢复不得串线。

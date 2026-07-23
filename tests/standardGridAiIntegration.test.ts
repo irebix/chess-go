@@ -46,11 +46,12 @@ describe("standard grid AI integration", () => {
     expect(controller).toContain("app.documents.find((document) => document.id === documentId)");
   });
 
-  it("keeps AI draft visible and rediscovers an open source PSD after reload on a grid canvas", () => {
+  it("shows AI draft only on artboards or standard grids and rediscovers an open grid source", () => {
     const app = readFileSync(resolve("src/app/App.tsx"), "utf8");
     const panel = readFileSync(resolve("src/app/AiGenerationPanel.tsx"), "utf8");
     const controller = readFileSync(resolve("src/photoshop/referenceViewController.ts"), "utf8");
-    expect(app).toContain('placementMode === "STANDARD_GRID" || aiPsdReferences.length > 0');
+    expect(app).toContain("shouldShowAiDraftPanel(activePhotoshopDocumentId, placementMode)");
+    expect(app).not.toContain('placementMode === "STANDARD_GRID" || aiPsdReferences.length > 0');
     expect(app).toContain("inspectOpenReferenceDocuments(activePhotoshopDocumentId)");
     expect(app).toContain("if (source) setRetainedAiSourceDocument(source)");
     expect(controller).toContain("export async function inspectOpenReferenceDocuments(");
