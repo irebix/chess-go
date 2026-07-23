@@ -85,7 +85,7 @@
     "inputs": {
       "output_size": 512,
       "returned_sheet": [
-        "5",
+        "16",
         0
       ],
       "layout": [
@@ -95,7 +95,7 @@
     },
     "class_type": "DynamicObjectSheetUnpack",
     "_meta": {
-      "title": "④ 按原槽位与顺序切回"
+      "title": "⑤ 按原槽位与顺序切回"
     }
   },
   "7": {
@@ -126,19 +126,19 @@
     },
     "class_type": "SaveNamedImageBatch",
     "_meta": {
-      "title": "⑧ 按原文件名保存透明图片"
+      "title": "⑨ 按原文件名保存透明图片"
     }
   },
   "9": {
     "inputs": {
       "images": [
-        "5",
+        "16",
         0
       ]
     },
     "class_type": "PreviewImage",
     "_meta": {
-      "title": "V3 返回整图预览"
+      "title": "V3 返回整图调色预览"
     }
   },
   "10": {
@@ -169,7 +169,7 @@
     },
     "class_type": "BiRefNetRMBG",
     "_meta": {
-      "title": "⑤ 切回批次批量抠图"
+      "title": "⑥ 切回批次批量抠图"
     }
   },
   "12": {
@@ -181,7 +181,7 @@
     },
     "class_type": "InvertMask",
     "_meta": {
-      "title": "⑥ 前景转 Alpha"
+      "title": "⑦ 前景转 Alpha"
     }
   },
   "13": {
@@ -197,7 +197,7 @@
     },
     "class_type": "JoinImageWithAlpha",
     "_meta": {
-      "title": "⑦ 写入透明通道"
+      "title": "⑧ 写入透明通道"
     }
   },
   "14": {
@@ -223,6 +223,26 @@
     "class_type": "ImageBatch",
     "_meta": {
       "title": "图1 Photoshop 拼图 + 图2 风格参考"
+    }
+  },
+  "16": {
+    "inputs": {
+      "brightness": 0.01,
+      "contrast": 1,
+      "saturation": 0.95,
+      "sharpness": 1,
+      "blur": 0,
+      "gaussian_blur": 0,
+      "edge_enhance": 0,
+      "detail_enhance": "false",
+      "image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "Image Filter Adjustments",
+    "_meta": {
+      "title": "④ 整图调色（饱和度 -5 / 亮度 +1）"
     }
   }
 }
