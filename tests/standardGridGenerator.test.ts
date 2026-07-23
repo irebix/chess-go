@@ -32,15 +32,21 @@ describe("standard grid PSD generator", () => {
     expect(savePsd).toBeGreaterThan(verifyMode);
   });
 
-  it("places the one-click action directly below Generate PSD and above diagnostics", () => {
+  it("uses the shared primary button inside Generate PSD instead of a standalone panel", () => {
     const app = readFileSync(resolve("src/app/App.tsx"), "utf8");
     const generatePsd = app.indexOf("<span>生成 PSD</span>");
-    const generateGrid = app.indexOf('"生成网格画布"');
+    const generatorContent = app.indexOf('className="panel-section-content generator-content"', generatePsd);
+    const generateGrid = app.indexOf("onClick={() => void handleGenerateStandardGrid()}", generatorContent);
+    const sharedPrimary = app.lastIndexOf('className="primary"', generateGrid);
     const diagnostics = app.indexOf("<span>运行与诊断</span>");
     expect(generatePsd).toBeGreaterThan(-1);
-    expect(generateGrid).toBeGreaterThan(generatePsd);
+    expect(generatorContent).toBeGreaterThan(generatePsd);
+    expect(generateGrid).toBeGreaterThan(generatorContent);
+    expect(sharedPrimary).toBeGreaterThan(generatorContent);
+    expect(generateGrid - sharedPrimary).toBeLessThan(160);
     expect(diagnostics).toBeGreaterThan(generateGrid);
-    expect(app).toContain("onClick={() => void handleGenerateStandardGrid()}");
+    expect(app).not.toContain("grid-canvas-generator-panel");
+    expect(app).not.toContain("grid-canvas-generator-action");
 
     const webpack = readFileSync(resolve("webpack.config.js"), "utf8");
     expect(webpack).toContain('{ from: "StandardGridBackground.png", to: "StandardGridBackground.png" }');

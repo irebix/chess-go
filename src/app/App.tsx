@@ -1146,6 +1146,15 @@ export function App(): React.ReactElement {
         </section>
       )}
 
+      <button
+        type="button"
+        className="primary"
+        disabled={busy}
+        onClick={() => void handleGenerateStandardGrid()}
+      >
+        {phase === "generatingGrid" ? "正在生成网格画布……" : "生成网格画布"}
+      </button>
+
       {workbook ? (
         items.length && !showScopeDetails ? (
           <section
@@ -1460,17 +1469,6 @@ export function App(): React.ReactElement {
 
           </div>
         ) : null}
-      </section>
-
-      <section className="panel-section grid-canvas-generator-panel">
-        <button
-          type="button"
-          className="panel-section-toggle grid-canvas-generator-action"
-          disabled={busy}
-          onClick={() => void handleGenerateStandardGrid()}
-        >
-          <span>{phase === "generatingGrid" ? "正在生成网格画布……" : "生成网格画布"}</span>
-        </button>
       </section>
 
       <section className={`panel-section diagnostics-panel ${showDiagnostics ? "is-open" : ""}`}>
