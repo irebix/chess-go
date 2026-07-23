@@ -3,16 +3,21 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("AI image editor nested layer placement", () => {
-  it("explicitly moves a generated layer above its exact source before fitting bounds", () => {
-    const source = readFileSync(resolve("src/photoshop/imageEditorInsert.ts"), "utf8");
-    const moveAbove = source.indexOf(
-      "placedLayer.move(sourceLayer as never, constants.ElementPlacement.PLACEBEFORE)"
-    );
-    const reacquire = source.indexOf("const positionedLayer = findLayerById", moveAbove);
-    const fit = source.indexOf("await fitLayerInsideBounds(positionedLayer", reacquire);
+  it("routes source placement through the shared aligner after mode and source validation", () => {
+    const insertSource = readFileSync(resolve("src/photoshop/imageEditorInsert.ts"), "utf8");
+    const geometrySource = readFileSync(resolve("src/photoshop/layerPlacementGeometry.ts"), "utf8");
+    const modeCheck = insertSource.indexOf('resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS"');
+    const sourceCheck = insertSource.indexOf("const sourceLayer = findLayerById(", modeCheck);
+    const align = insertSource.indexOf("await alignResultToSource(", sourceCheck);
 
-    expect(moveAbove).toBeGreaterThan(-1);
-    expect(reacquire).toBeGreaterThan(moveAbove);
-    expect(fit).toBeGreaterThan(reacquire);
+    expect(modeCheck).toBeGreaterThan(-1);
+    expect(sourceCheck).toBeGreaterThan(-1);
+    expect(align).toBeGreaterThan(sourceCheck);
+    expect(insertSource).toContain("ready.source.layerId");
+    expect(insertSource).toContain("ready.sourceBounds");
+    expect(insertSource).toContain('moveAbove: options.insertPosition === "above"');
+    expect(geometrySource.indexOf("await resultLayer.move(sourceLayer", geometrySource.indexOf("alignResultToSource")))
+      .toBeGreaterThan(-1);
+    expect(geometrySource).toContain("return fitLayerInsideBounds(");
   });
 });

@@ -34,6 +34,7 @@ interface ImageRefinerBundledResources {
 }
 
 const IMAGE_REFINER_STYLE_ASSET = "ImageRefinerStyle.png";
+const IMAGE_REFINER_RESULT_TIMEOUT_SECONDS = 600;
 
 let bundledResourcesPromise: Promise<ImageRefinerBundledResources> | null = null;
 let lastRequestNonce = 0;
@@ -115,7 +116,7 @@ export class ImageRefinerComfyClient {
         queued.promptId,
         prepared.saveNodeId,
         layerCount,
-        prepared.timeoutSeconds + 90,
+        Math.max(IMAGE_REFINER_RESULT_TIMEOUT_SECONDS, prepared.timeoutSeconds + 90),
         options.signal,
         options.onStage
       );

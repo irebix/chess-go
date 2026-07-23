@@ -1,6 +1,8 @@
 import { storage } from "uxp";
 import { UserCancelledError } from "../../utils/errors";
 
+let temporaryImageSequence = 0;
+
 export interface SelectedXlsx {
   file: storage.File;
   name: string;
@@ -141,4 +143,39 @@ export async function deleteTemporaryFile(file: storage.File): Promise<void> {
   } catch (error) {
     console.warn("清理 UXP 临时图片失败", error);
   }
+}
+
+export async function downloadTemporaryImage(
+  imageUrl: string,
+  options: { prefix: string; fileName?: string }
+): Promise<storage.File> {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error(`下载图片失败：HTTP ${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength) throw new Error("下载的图片文件为空。");
+  const extension = imageExtension(response.headers.get("content-type"), options.fileName);
+  const folder = await storage.localFileSystem.getTemporaryFolder();
+  const safePrefix = safeTemporaryName(options.prefix);
+  const safeName = safeTemporaryName(options.fileName ?? "image").replace(/\.[a-z0-9]{2,5}$/i, "");
+  temporaryImageSequence = (temporaryImageSequence + 1) % 1_000_000;
+  const sequence = String(temporaryImageSequence).padStart(6, "0");
+  const file = await folder.createFile(`${safePrefix}-${Date.now()}-${sequence}-${safeName}.${extension}`, {
+    overwrite: true
+  });
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  await file.write(copy, { format: storage.formats.binary });
+  return file;
+}
+
+function imageExtension(contentType: string | null, fileName?: string): string {
+  const normalized = contentType?.toLowerCase() ?? "";
+  if (normalized.includes("jpeg")) return "jpg";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("png")) return "png";
+  return /\.([a-z0-9]{2,5})$/i.exec(fileName ?? "")?.[1]?.toLowerCase() ?? "png";
+}
+
+function safeTemporaryName(value: string): string {
+  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(-80) || "image";
 }

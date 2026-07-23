@@ -7,7 +7,10 @@ import {
   rebaseTargetBoundsAfterArtboardShift
 } from "../domain/aiCandidatePlacement";
 import { DEFAULT_EDITABLE_CANVAS_SIZE } from "../domain/generationSettings";
-import { deleteTemporaryFile } from "../infrastructure/filesystem/uxpFiles";
+import {
+  deleteTemporaryFile,
+  downloadTemporaryImage
+} from "../infrastructure/filesystem/uxpFiles";
 import {
   getArtboardDescriptor,
   placeEmbeddedDescriptor,
@@ -70,18 +73,10 @@ export async function backfillAiCandidate(
   } else {
     onAudit?.(formatMissingTargetAudit("target.initial-missing", document, initialScope.artboard));
   }
-  const response = await fetch(imageUrl);
-  if (!response.ok) throw new Error(`下载 AI 候选图失败：HTTP ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const extension = extensionFromContentType(response.headers.get("content-type"));
-  const folder = await storage.localFileSystem.getTemporaryFolder();
-  const temporary = await folder.createFile(
-    `chess-go-ai-${safeFileName(assetCode)}-${Date.now()}.${extension}`,
-    { overwrite: true }
-  );
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  await temporary.write(copy, { format: storage.formats.binary });
+  const temporary = await downloadTemporaryImage(imageUrl, {
+    prefix: "chess-go-ai",
+    fileName: assetCode
+  });
 
   try {
     const token = storage.localFileSystem.createSessionToken(temporary);
@@ -673,14 +668,4 @@ function activeDocument(): CandidateTargetDocument | null {
   } catch {
     return null;
   }
-}
-
-function extensionFromContentType(contentType: string | null): string {
-  if (/jpe?g/i.test(contentType ?? "")) return "jpg";
-  if (/webp/i.test(contentType ?? "")) return "webp";
-  return "png";
-}
-
-function safeFileName(value: string): string {
-  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 80) || "candidate";
 }

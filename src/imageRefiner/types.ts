@@ -7,23 +7,25 @@ export const IMAGE_REFINER_BASE_PROMPT =
   "使用图2这种2.5d无描边休闲游戏卡通风格，提高图1的完成度";
 
 export type ImageRefinerLayerKind = "pixel" | "smartObject";
+export type ImageRefinerSelectionKind = "layer" | "group";
 
 export interface ImageRefinerLayerSource extends CenterlineLayerSource {
   kind: ImageRefinerLayerKind;
   bounds: ImageEditorSourceBounds;
 }
 
-export interface ImageRefinerGroupSource {
+export interface ImageRefinerSource {
   documentId: number;
   documentName: string;
-  groupId: number;
-  groupName: string;
+  selectionKind: ImageRefinerSelectionKind;
+  sourceId: number;
+  sourceName: string;
   layers: ImageRefinerLayerSource[];
   skippedLayerCount: number;
 }
 
 export interface ImageRefinerGenerationOptions {
-  source: ImageRefinerGroupSource;
+  source: ImageRefinerSource;
   promptSupplement: string;
   signal?: AbortSignal;
   onPromptId?: (promptId: string) => void;
@@ -33,9 +35,13 @@ export interface ImageRefinerGenerationOptions {
 
 export interface ImageRefinerReadyResult {
   images: ImageEditorGeneratedImage[];
-  source: ImageRefinerGroupSource;
+  source: ImageRefinerSource;
 }
 
 export function imageRefinerOutputGroupName(sourceGroupName: string): string {
   return `${sourceGroupName} 细化`;
+}
+
+export function imageRefinerOutputLayerName(sourceLayerName: string): string {
+  return `${sourceLayerName} 细化`;
 }

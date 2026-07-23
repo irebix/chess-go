@@ -41,6 +41,7 @@ export function prepareHolopixWorkflow(
   const qwenVl = findOnlyNode(workflow, "AILab_QwenVL");
   const generate = findOnlyNode(workflow, "HolopixGenerate");
   const square = findOnlyNode(workflow, "ImageScale");
+  const removeBackground = findOnlyNode(workflow, "BiRefNetRMBG");
   const save = findOnlyNode(workflow, "SaveImage");
   const promptCapture = findOnlyTitledNode(workflow, "提示词结果", "PreviewAny");
 
@@ -74,8 +75,11 @@ export function prepareHolopixWorkflow(
   square.node.inputs.width = 1024;
   square.node.inputs.height = 1024;
   square.node.inputs.crop = "center";
+  removeBackground.node.inputs.image = [square.id, 0];
+  removeBackground.node.inputs.model = "BiRefNet_toonout";
+  removeBackground.node.inputs.background = "Alpha";
   save.node.inputs.filename_prefix = options.filenamePrefix;
-  save.node.inputs.images = [square.id, 0];
+  save.node.inputs.images = [removeBackground.id, 0];
 
   const timeoutInput = Number(generate.node.inputs.timeout_seconds);
   const timeoutSeconds = Number.isFinite(timeoutInput)
@@ -135,6 +139,7 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
     "AILab_QwenVL",
     "HolopixGenerate",
     "ImageScale",
+    "BiRefNetRMBG",
     "SaveImage",
     "PreviewAny"
   ]) {
@@ -146,6 +151,9 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
   const promptFormat = findOnlyNode(workflow, "StringFormat");
   const qwenVl = findOnlyNode(workflow, "AILab_QwenVL");
   const generate = findOnlyNode(workflow, "HolopixGenerate");
+  const square = findOnlyNode(workflow, "ImageScale");
+  const removeBackground = findOnlyNode(workflow, "BiRefNetRMBG");
+  const save = findOnlyNode(workflow, "SaveImage");
   const promptCapture = findOnlyTitledNode(workflow, "提示词结果", "PreviewAny");
   assertConnection(
     promptFormat.node.inputs["values.a"],
@@ -175,6 +183,22 @@ export function assertHolopixWorkflow(value: unknown): asserts value is ComfyWor
   if ("reference" in generate.node.inputs) {
     throw new Error("HolopixGenerate 不能连接 reference；参考图只能用于前置 QwenVL 提示词节点。");
   }
+  assertConnection(
+    removeBackground.node.inputs.image,
+    square.id,
+    "BiRefNetRMBG.image 必须连接强制 1:1 的 ImageScale。"
+  );
+  if (removeBackground.node.inputs.model !== "BiRefNet_toonout") {
+    throw new Error("BiRefNetRMBG.model 必须使用 BiRefNet_toonout。");
+  }
+  if (removeBackground.node.inputs.background !== "Alpha") {
+    throw new Error("BiRefNetRMBG.background 必须使用 Alpha 透明背景。");
+  }
+  assertConnection(
+    save.node.inputs.images,
+    removeBackground.id,
+    "SaveImage.images 必须连接 BiRefNetRMBG 的透明抠图输出。"
+  );
 }
 
 function assertConnection(value: unknown, expectedNodeId: string, message: string): void {

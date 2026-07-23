@@ -25,6 +25,8 @@ import type {
   CenterlineReport
 } from "../centerline/types";
 import { toErrorMessage } from "../utils/errors";
+import { resolvePlacementMode } from "../photoshop/placementMode";
+import { app } from "photoshop";
 
 interface AiOutlinePanelProps {
   externalBusy: boolean;
@@ -174,6 +176,9 @@ export function AiOutlinePanel({
       setReusablePath(nextReusablePath);
       setReusableSourceAvailable(isLayerAvailable(nextReusablePath.source));
       assertActiveLayerSource(pixels);
+      if (resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS") {
+        throw new Error("当前不是棋子go标准网格画布，无法自动插入。描边已保留为就绪结果。");
+      }
 
       setProgress(98);
       setProgressStage("写入 Photoshop 描边");
@@ -190,7 +195,12 @@ export function AiOutlinePanel({
       let shapeWarning: string | null = null;
       let shapeCreated = false;
       try {
-        await convertSelectedPathToShapeLayer(normalizedStrokeWidth, outputName, pixels.documentId);
+        await convertSelectedPathToShapeLayer(
+          normalizedStrokeWidth,
+          outputName,
+          pixels.documentId,
+          pixels.layerId
+        );
         shapeCreated = true;
         await removeEditableWorkPath(createdPath, pixels.documentId);
         try { await deselectEditableWorkPath(pixels.documentId); } catch { /* Shape is already usable. */ }
@@ -252,6 +262,9 @@ export function AiOutlinePanel({
     try {
       const pathJson = validatePathJson(activeReusablePath.pathJson);
       const pixels = await readLayerPixels(activeReusablePath.source);
+      if (resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS") {
+        throw new Error("当前不是棋子go标准网格画布，无法自动插入。描边仍保留为就绪结果。");
+      }
       sourceDocumentId = pixels.documentId;
       const transform = createCenterlinePathTransform(pathJson, pixels);
       setProgress(55);
@@ -260,7 +273,12 @@ export function AiOutlinePanel({
         keepSelected: true,
         documentId: pixels.documentId
       });
-      await convertSelectedPathToShapeLayer(normalizedStrokeWidth, outputName, pixels.documentId);
+      await convertSelectedPathToShapeLayer(
+        normalizedStrokeWidth,
+        outputName,
+        pixels.documentId,
+        pixels.layerId
+      );
       let cleanupWarning: string | null = null;
       try {
         await removeEditableWorkPath(createdPath, pixels.documentId);
@@ -342,6 +360,9 @@ export function AiOutlinePanel({
             </button>
           ) : null}
         </div>
+        {activeReusablePath ? (
+          <small className="centerline-source-label">来源：{activeReusablePath.source.layerName}</small>
+        ) : null}
         <CenterlineRange
           label="描边宽度"
           value={strokeWidth}

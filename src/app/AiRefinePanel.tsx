@@ -4,13 +4,13 @@ import type { CenterlineLayerIdentity } from "../centerline/types";
 import { ImageRefinerComfyClient } from "../imageRefiner/client";
 import {
   IMAGE_REFINER_MAX_LAYERS,
-  type ImageRefinerGroupSource,
-  type ImageRefinerReadyResult
+  type ImageRefinerReadyResult,
+  type ImageRefinerSource
 } from "../imageRefiner/types";
 import { insertImageRefinerResults } from "../photoshop/imageRefinerInsert";
 import {
-  inspectActiveImageRefinerGroup,
-  isImageRefinerGroupAvailable
+  inspectActiveImageRefinerSource,
+  isImageRefinerSourceAvailable
 } from "../photoshop/imageRefinerSource";
 import { toErrorMessage } from "../utils/errors";
 
@@ -31,13 +31,15 @@ export function AiRefinePanel({
   onStatus
 }: AiRefinePanelProps): React.ReactElement {
   const [open, setOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [busy, setBusy] = useState(false);
+  const [keepSmartObject, setKeepSmartObject] = useState(false);
   const [activeIdentity, setActiveIdentity] = useState<CenterlineLayerIdentity | null>(
     inspectActiveLayerIdentity
   );
-  const [sourceGroup, setSourceGroup] = useState<ImageRefinerGroupSource | null>(
-    inspectActiveImageRefinerGroup
+  const [sourceSelection, setSourceSelection] = useState<ImageRefinerSource | null>(
+    inspectActiveImageRefinerSource
   );
   const [promptText, setPromptText] = useState("");
   const [promptEditorHeight, setPromptEditorHeight] = useState(150);
@@ -86,7 +88,7 @@ export function AiRefinePanel({
 
   useEffect(() => watchActiveLayerIdentity((identity) => {
     setActiveIdentity(identity);
-    setSourceGroup(inspectActiveImageRefinerGroup());
+    setSourceSelection(inspectActiveImageRefinerSource());
     setReadyResult(sessionReadyResult);
   }), []);
 
@@ -151,7 +153,7 @@ export function AiRefinePanel({
     setProgress(88);
     setProgressStage("正在新建细化图层组");
     try {
-      await insertImageRefinerResults(result, (completed, total) => {
+      await insertImageRefinerResults(result, { keepSmartObject }, (completed, total) => {
         setProgress(88 + Math.round((completed / total) * 12));
         setProgressStage(`正在对应回插图层 · ${completed}/${total}`);
       });
@@ -159,24 +161,28 @@ export function AiRefinePanel({
       setReadyResult(null);
       setProgress(100);
       setProgressStage("完成");
-      onStatus(`AI细化完成：已新建“${result.source.groupName} 细化”并回插 ${result.images.length} 个图层。`);
+      onStatus(
+        result.source.selectionKind === "group"
+          ? `AI细化完成：已新建“${result.source.sourceName} 细化”并回插 ${result.images.length} 个图层。`
+          : `AI细化完成：已在“${result.source.sourceName}”上方插入细化图层。`
+      );
     } catch (error) {
       setProgressStage("结果已就绪，等待插入");
       onStatus(`AI细化结果已就绪：${toErrorMessage(error)}`, "warn");
     } finally {
       commitBusy(false);
     }
-  }, [busy, commitBusy, externalBusy, onStatus, readyResult]);
+  }, [busy, commitBusy, externalBusy, keepSmartObject, onStatus, readyResult]);
 
   const runRefinement = useCallback(async (): Promise<void> => {
     if (busy || externalBusy || connection !== "ready") return;
-    const source = inspectActiveImageRefinerGroup();
+    const source = inspectActiveImageRefinerSource();
     if (!source) {
-      onStatus("AI细化失败：请先选中一个图层组。", "error");
+      onStatus("AI细化失败：请先选中一个可读取图层或图层组。", "error");
       return;
     }
     if (!source.layers.length) {
-      onStatus("AI细化失败：所选图层组中没有可读取的智能对象或栅格图层。", "error");
+      onStatus("AI细化失败：所选内容中没有可读取的智能对象或栅格图层。", "error");
       return;
     }
     if (source.layers.length > IMAGE_REFINER_MAX_LAYERS) {
@@ -189,8 +195,8 @@ export function AiRefinePanel({
     lastReportedStageRef.current = "";
     commitBusy(true);
     setProgress(3);
-    setProgressStage("准备读取图层组");
-    onStatus(`AI细化开始：${source.groupName} · ${source.layers.length} 个图层`);
+    setProgressStage(source.selectionKind === "group" ? "准备读取图层组" : "准备读取选中图层");
+    onStatus(`AI细化开始：${source.sourceName} · ${source.layers.length} 个图层`);
     try {
       const images = await client.generate({
         source,
@@ -215,7 +221,7 @@ export function AiRefinePanel({
       setReadyResult(result);
       setProgress(86);
       setProgressStage("结果已就绪，正在回插");
-      await insertImageRefinerResults(result, (completed, total) => {
+      await insertImageRefinerResults(result, { keepSmartObject }, (completed, total) => {
         setProgress(88 + Math.round((completed / total) * 12));
         setProgressStage(`正在对应回插图层 · ${completed}/${total}`);
       });
@@ -223,7 +229,11 @@ export function AiRefinePanel({
       setReadyResult(null);
       setProgress(100);
       setProgressStage("完成");
-      onStatus(`AI细化完成：已批量处理并回插 ${images.length} 个图层到“${source.groupName} 细化”。`);
+      onStatus(
+        source.selectionKind === "group"
+          ? `AI细化完成：已批量处理并回插 ${images.length} 个图层到“${source.sourceName} 细化”。`
+          : `AI细化完成：已在“${source.sourceName}”上方插入细化图层。`
+      );
     } catch (error) {
       const resultReady = Boolean(sessionReadyResult?.images.length);
       const detail = toErrorMessage(error);
@@ -240,7 +250,7 @@ export function AiRefinePanel({
       currentPromptIdRef.current = null;
       commitBusy(false);
     }
-  }, [busy, commitBusy, connection, externalBusy, onStatus, promptText, reportStage]);
+  }, [busy, commitBusy, connection, externalBusy, keepSmartObject, onStatus, promptText, reportStage]);
 
   const cancelCurrentJob = useCallback(async (): Promise<void> => {
     abortControllerRef.current?.abort();
@@ -255,11 +265,11 @@ export function AiRefinePanel({
   }, [onStatus]);
 
   const controlsDisabled = busy || externalBusy || connection !== "ready";
-  const validSourceCount = sourceGroup?.layers.length ?? 0;
+  const validSourceCount = sourceSelection?.layers.length ?? 0;
   const readyForCurrentDocument = Boolean(
     readyResult
     && activeIdentity?.documentId === readyResult.source.documentId
-    && isImageRefinerGroupAvailable(readyResult.source)
+    && isImageRefinerSourceAvailable(readyResult.source)
   );
 
   return (
@@ -285,13 +295,17 @@ export function AiRefinePanel({
         <div className="panel-section-content ai-refine-panel-content">
           <div className="image-editor-page">
             <section className="card image-refiner-source-card">
-              <div className="image-refiner-source-icon" aria-hidden="true">组</div>
+              <div className="image-refiner-source-icon" aria-hidden="true">
+                {sourceSelection?.selectionKind === "layer" ? "层" : "组"}
+              </div>
               <div className="image-editor-source-info">
-                <strong>{sourceGroup?.groupName ?? "未选择图层组"}</strong>
+                <strong>{sourceSelection?.sourceName ?? "未选择可细化内容"}</strong>
                 <small>
-                  {sourceGroup
-                    ? `${validSourceCount} 个可细化图层${sourceGroup.skippedLayerCount ? ` · 跳过 ${sourceGroup.skippedLayerCount} 个非图片图层` : ""}`
-                    : "请选择包含智能对象或栅格图层的图层组"}
+                  {sourceSelection
+                    ? sourceSelection.selectionKind === "layer"
+                      ? `单个${sourceSelection.layers[0]?.kind === "smartObject" ? "智能对象" : "栅格图层"}`
+                      : `${validSourceCount} 个可细化图层${sourceSelection.skippedLayerCount ? ` · 跳过 ${sourceSelection.skippedLayerCount} 个非图片图层` : ""}`
+                    : "请选择智能对象、栅格图层或包含这些图层的图层组"}
                 </small>
               </div>
             </section>
@@ -323,18 +337,53 @@ export function AiRefinePanel({
                   />
                 </div>
               </div>
+              <div className={`centerline-advanced-shell ${advancedOpen ? "is-open" : ""}`}>
+                <div
+                  className={`centerline-advanced-toggle ${busy || externalBusy ? "is-disabled" : ""}`}
+                  role="button"
+                  tabIndex={busy || externalBusy ? -1 : 0}
+                  aria-expanded={advancedOpen}
+                  aria-disabled={busy || externalBusy}
+                  onClick={() => {
+                    if (!busy && !externalBusy) setAdvancedOpen((value) => !value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (busy || externalBusy || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    setAdvancedOpen((value) => !value);
+                  }}
+                >
+                  <span className="centerline-advanced-label">高级选项</span>
+                  <span className={`panel-disclosure ${advancedOpen ? "is-open" : ""}`} aria-hidden="true">
+                    {advancedOpen ? "⌄" : ">"}
+                  </span>
+                </div>
+                {advancedOpen ? (
+                  <div className="centerline-advanced-content">
+                    <label className="centerline-advanced-row image-editor-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={keepSmartObject}
+                        disabled={busy || externalBusy}
+                        onChange={(event) => setKeepSmartObject(event.currentTarget.checked)}
+                      />
+                      <span>插入为智能对象</span>
+                    </label>
+                  </div>
+                ) : null}
+              </div>
               <div className="image-refiner-actions">
                 <button
                   className="primary"
                   disabled={
                     controlsDisabled
-                    || !sourceGroup
+                    || !sourceSelection
                     || !validSourceCount
                     || validSourceCount > IMAGE_REFINER_MAX_LAYERS
                   }
                   onClick={() => void runRefinement()}
                 >
-                  批量细化选中图层组
+                  {sourceSelection?.selectionKind === "layer" ? "细化选中图层" : "批量细化选中图层组"}
                 </button>
                 {readyForCurrentDocument ? (
                   <button

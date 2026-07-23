@@ -130,6 +130,32 @@ export async function inspectActiveReferenceDocument(): Promise<ReferenceDocumen
   return inspectDocument(document);
 }
 
+export async function inspectOpenReferenceDocument(
+  documentId: number
+): Promise<ReferenceDocumentState | null> {
+  const document = openDocument(documentId);
+  return document ? inspectDocument(document) : null;
+}
+
+export async function inspectOpenReferenceDocuments(
+  excludedDocumentId?: number
+): Promise<ReferenceDocumentState[]> {
+  const states: ReferenceDocumentState[] = [];
+  const documents = app.documents as unknown as { length: number; [index: number]: DocumentLike };
+  for (let index = 0; index < documents.length; index += 1) {
+    const document = documents[index];
+    if (!document || document.id === excludedDocumentId) continue;
+    try {
+      const state = inspectDocument(document);
+      if (state?.aiNodes.length) states.push(state);
+    } catch {
+      // One malformed or temporarily unavailable document must not hide a
+      // usable AI draft source from another open Photoshop tab.
+    }
+  }
+  return states;
+}
+
 export async function toggleActiveReferenceView(): Promise<ReferenceDocumentState | null> {
   const document = activeDocument();
   if (!document) throw new Error("当前没有打开的 PSD 文档。");
@@ -297,6 +323,15 @@ function activeDocument(): DocumentLike | null {
   try {
     if (!app.documents.length) return null;
     return app.activeDocument as unknown as DocumentLike;
+  } catch {
+    return null;
+  }
+}
+
+function openDocument(documentId: number): DocumentLike | null {
+  try {
+    return app.documents.find((document) => document.id === documentId) as unknown as DocumentLike | undefined
+      ?? null;
   } catch {
     return null;
   }

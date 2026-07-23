@@ -12,9 +12,14 @@ import {
 } from "../domain/groupLayoutMetadata";
 import {
   makeArtboardBackgroundBatchDescriptors,
-  makeArtboardDescriptor,
-  setLayerGroupExpandedDescriptor
+  makeArtboardDescriptor
 } from "./actionDescriptors";
+import {
+  collapseHiddenTextMetadataGroup,
+  createHiddenTextMetadataLayer,
+  findHiddenTextMetadataEntry,
+  updateHiddenTextMetadataLayer
+} from "./hiddenTextMetadata";
 
 const GROUP_ARTBOARD_DATA_CONTAINER_NAME = "棋子归档｜分组画板数据";
 const GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME = "棋子go｜布局数据（请勿删除）";
@@ -229,22 +234,13 @@ async function createSingleMetadataLayer(
   spacing: number,
   background: GroupLayoutBackground
 ): Promise<LayerLike> {
-  if (typeof document.createTextLayer !== "function") {
-    throw new Error("当前 Photoshop 版本不支持单层布局数据。");
-  }
   const contents = serializeGroupLayoutMetadata(groups, spacing, background);
-  const dataLayer = await document.createTextLayer({
-    name: GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME,
-    contents,
-    fontSize: 1,
-    opacity: 0,
-    position: { x: 0, y: 0 }
-  });
-  if (!dataLayer) throw new Error("Photoshop 未能创建布局数据层。");
-  dataLayer.visible = false;
-  if (dataLayer.parent?.id !== container.id) {
-    dataLayer.move(container, constants.ElementPlacement.PLACEINSIDE);
-  }
+  const dataLayer = await createHiddenTextMetadataLayer(
+    document,
+    container,
+    groupLayoutMetadataSpec(),
+    contents
+  ) as LayerLike;
   writeSingleMetadataLayer(dataLayer, groups, spacing, background);
   return dataLayer;
 }
@@ -255,15 +251,11 @@ function writeSingleMetadataLayer(
   spacing: number,
   background: GroupLayoutBackground
 ): void {
-  if (!dataLayer.textItem) throw new Error("布局数据层不是可写文本图层。");
   const contents = serializeGroupLayoutMetadata(groups, spacing, background);
   if (!parseGroupLayoutMetadata(contents)) {
     throw new Error("棋子go 未能生成有效的布局数据。");
   }
-  dataLayer.textItem.contents = contents;
-  // Photoshop may rename a newly-created text layer to its contents.
-  dataLayer.name = GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME;
-  dataLayer.visible = false;
+  updateHiddenTextMetadataLayer(dataLayer, groupLayoutMetadataSpec(), contents);
 }
 
 function metadataGroupsFromCreated(
@@ -400,35 +392,23 @@ function currentLayoutSpacing(layout: LayoutResult): number {
   return firstRow && secondRow ? Math.max(0, Math.round(secondRow.rect.top - firstRow.rect.bottom)) : 0;
 }
 
-function findDataContainer(document: DocumentLike): LayerLike | undefined {
-  return collectionValues(document.layers).find((layer) => layer.name === GROUP_ARTBOARD_DATA_CONTAINER_NAME);
-}
-
 async function collapseDataContainer(containerId: number): Promise<void> {
-  const [result] = await action.batchPlay(
-    [setLayerGroupExpandedDescriptor(containerId, false)],
-    {}
-  ) as Array<{ _obj?: string; result?: number; message?: string }>;
-  if (result?._obj?.toLowerCase() !== "error" || result.result === 0) return;
-  throw new Error(`Photoshop 未能折叠文档数据组：${result.message || `错误 ${result.result ?? "未知"}`}`);
+  await collapseHiddenTextMetadataGroup(containerId);
 }
 
 function readSingleMetadataEntry(document: DocumentLike): SingleMetadataEntry | undefined {
-  const container = findDataContainer(document);
-  if (!container) return undefined;
-  for (const layer of collectionValues(container.layers)) {
-    if (!layer.textItem) continue;
-    const contents = layer.textItem.contents;
-    if (
-      layer.name !== GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME &&
-      !contents.startsWith(GROUP_LAYOUT_METADATA_TEXT_PREFIX)
-    ) {
-      continue;
-    }
-    const metadata = parseGroupLayoutMetadata(contents);
-    if (metadata) return { dataLayer: layer, metadata };
-  }
-  return undefined;
+  const entry = findHiddenTextMetadataEntry(document, groupLayoutMetadataSpec());
+  if (!entry) return undefined;
+  const metadata = parseGroupLayoutMetadata(entry.contents);
+  return metadata ? { dataLayer: entry.layer as LayerLike, metadata } : undefined;
+}
+
+function groupLayoutMetadataSpec() {
+  return {
+    groupName: GROUP_ARTBOARD_DATA_CONTAINER_NAME,
+    layerName: GROUP_ARTBOARD_SINGLE_DATA_LAYER_NAME,
+    contentPrefix: GROUP_LAYOUT_METADATA_TEXT_PREFIX
+  } as const;
 }
 
 function findGroupArtboards(

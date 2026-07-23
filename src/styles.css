@@ -1845,3 +1845,56 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
 }
+.standard-grid-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.standard-grid-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.standard-grid-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  color: #c7c7c7;
+}
+
+.ai-grid-placement-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ai-grid-placement-card.is-warning {
+  color: #e6c36a;
+}
+
+.ai-grid-placement-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.ai-grid-placement-actions button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ai-candidate-cell.is-grid-selected {
+  outline: 2px solid #5aa7ff;
+  outline-offset: -2px;
+}
+
+.ai-candidate-cell.is-grid-current {
+  outline: 3px solid #f0b84b;
+  outline-offset: -3px;
+}

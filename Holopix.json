@@ -1,18 +1,18 @@
 {
   "3": {
     "inputs": {
-      "model_id": 6768,
-      "strength": 0.8
+      "model_id": 858,
+      "strength": 0.6
     },
     "class_type": "HolopixModelStack",
     "_meta": {
-      "title": "模型 1：油光水滑图标"
+      "title": "模型 1：日韩风格等距道具模型 | HOLO-V1"
     }
   },
-  "4": {
+  "5": {
     "inputs": {
-      "model_id": 7088,
-      "strength": 0.7,
+      "model_id": 6768,
+      "strength": 0.8,
       "previous_models": [
         "3",
         0
@@ -20,21 +20,7 @@
     },
     "class_type": "HolopixModelStack",
     "_meta": {
-      "title": "模型 2：欧卡场景——LSY"
-    }
-  },
-  "5": {
-    "inputs": {
-      "model_id": 858,
-      "strength": 0.6,
-      "previous_models": [
-        "4",
-        0
-      ]
-    },
-    "class_type": "HolopixModelStack",
-    "_meta": {
-      "title": "模型 3：日韩风格等距道具模型 | HOLO-V1"
+      "title": "模型 2：油光水滑图标"
     }
   },
   "7": {
@@ -55,7 +41,7 @@
     },
     "class_type": "HolopixGenerate",
     "_meta": {
-      "title": "三模型文生图（不接参考图）"
+      "title": "双模型文生图（不接参考图）"
     }
   },
   "8": {
@@ -74,11 +60,29 @@
       "title": "强制 1:1 方图输出"
     }
   },
+  "19": {
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "model": "BiRefNet_toonout",
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": false,
+      "background": "Alpha"
+    },
+    "class_type": "BiRefNetRMBG",
+    "_meta": {
+      "title": "RMBG · BiRefNet_toonout 抠图"
+    }
+  },
   "9": {
     "inputs": {
       "filename_prefix": "Holopix/ChessGo/Holopix",
       "images": [
-        "8",
+        "19",
         0
       ]
     },

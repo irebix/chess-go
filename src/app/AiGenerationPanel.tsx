@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { app } from "photoshop";
 import type { AssetCandidate, SheetGroup } from "../domain/models";
 import {
   abandonAiCandidateUnknowns,
@@ -34,6 +35,7 @@ import {
 import { aiPromptDraftKey, resolveAiPromptDraft } from "../domain/aiPromptDrafts";
 import { filterItemsByGroups } from "../domain/sheetGroups";
 import { buildGptImage2GenerationRounds } from "../domain/gptImage2Generation";
+import { STANDARD_GRID_TEMPLATE } from "../grid/GridTemplate";
 import type { ImportedWorkbook } from "../services/WorkbookService";
 import {
   generateHolopixImages,
@@ -58,7 +60,17 @@ import {
 import type { HolopixPromptSource } from "../ai/holopixWorkflow";
 import { SpectrumSelect } from "./SpectrumSelect";
 import { backfillAiCandidate } from "../photoshop/aiCandidateBackfill";
-import { inspectActiveReferenceDocument } from "../photoshop/referenceViewController";
+import {
+  GridTargetOccupiedError,
+  inspectGridDraftBinding,
+  planEmptyGridRow,
+  upsertGridDraftImages
+} from "../photoshop/StandardGridCanvasService";
+import { resolvePlacementMode, type PlacementMode } from "../photoshop/placementMode";
+import {
+  inspectActiveReferenceDocument,
+  inspectOpenReferenceDocument
+} from "../photoshop/referenceViewController";
 import {
   readPsdAiReferencePreview,
   readPsdAiReferenceJpeg,
@@ -90,6 +102,8 @@ interface AiGenerationPanelProps {
   activeGroups: SheetGroup[];
   items: AssetCandidate[];
   psdReferences: PsdAiReference[];
+  placementMode: PlacementMode;
+  activeDocumentId: number | null;
   thumbnails: Record<string, ThumbnailRecord>;
   externalBusy: boolean;
   requestThumbnail: (entry: string) => void;
@@ -103,12 +117,38 @@ interface AiGenerationPanelProps {
 type CandidatePreviewState = "ready" | "error";
 const AI_CANDIDATE_PREVIEW_SIZE = 64;
 
+interface GridCandidateSelection {
+  itemKey: string;
+  candidateId: string;
+  slotIndex: number;
+}
+
+interface GridPlacementEntry {
+  chainIndex: number;
+  item: AssetCandidate;
+  candidate: AiCandidateSlot & { image: AiGeneratedImage };
+}
+
+interface GridPlacementBatch {
+  chainLength: number;
+  entries: GridPlacementEntry[];
+}
+
+interface GridPlacementPlan {
+  documentId: number;
+  workflowVersion: AiWorkflowVersion;
+  slotIds: string[];
+  requiredEmptySlotIds: string[];
+  bound: boolean;
+}
+
 interface QueuedFluxGenerationJob {
   workflowVersion: "flux";
   workbook: ImportedWorkbook | null;
   item: AssetCandidate;
   slotIndexes: number[];
   psdReference?: GeneratablePsdReference;
+  allowInactivePsdSource: boolean;
   promptText?: string;
   successMessage?: string;
   failurePrefix: string;
@@ -129,6 +169,7 @@ interface QueuedGptImage2Entry {
 interface QueuedGptImage2GenerationJob {
   workflowVersion: "gpt-image-2";
   entries: QueuedGptImage2Entry[];
+  allowInactivePsdSource: boolean;
   successMessage?: string;
   failurePrefix: string;
   onSettled?: (result: {
@@ -150,6 +191,8 @@ export function AiGenerationPanel({
   activeGroups,
   items,
   psdReferences,
+  placementMode,
+  activeDocumentId,
   thumbnails,
   externalBusy,
   requestThumbnail,
@@ -178,6 +221,8 @@ export function AiGenerationPanel({
   const [psdThumbnails, setPsdThumbnails] = useState<Record<string, ThumbnailRecord>>({});
   const [scrollMatrixToTail, setScrollMatrixToTail] = useState(false);
   const [previewHydrationRetryTick, setPreviewHydrationRetryTick] = useState(0);
+  const [gridSelection, setGridSelection] = useState<GridCandidateSelection | null>(null);
+  const [gridPlan, setGridPlan] = useState<GridPlacementPlan | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const statesRef = useRef<Record<string, AiItemState>>({});
   const workflowStatesRef = useRef<Record<AiWorkflowVersion, Record<string, AiItemState>>>(
@@ -312,6 +357,12 @@ export function AiGenerationPanel({
     && selectedDeletableCount === deletableCandidates.length;
   const selectedItem = groupItems.find((item) => item.key === selectedItemKey) ?? groupItems[0];
   const currentPsdIdentity = psdReferences[0]?.documentIdentity ?? "";
+  const artboardGenerationActive = placementMode === "ARTBOARD"
+    && activeDocumentId !== null
+    && activeDocumentId === psdReferences[0]?.documentId;
+  const gridGenerationActive = placementMode === "STANDARD_GRID"
+    && activeDocumentId !== null;
+  const generationContextActive = artboardGenerationActive || gridGenerationActive;
   const selectedPsdReference = selectedItem
     ? psdReferencesByAssetCode.get(selectedItem.assetCode)
     : undefined;
@@ -335,11 +386,13 @@ export function AiGenerationPanel({
   }, [selectedItem, states, workflowVersion]);
   const candidateEditingLocked = externalBusy || running || recovering || Boolean(syncingCandidateId);
   const controlsDisabled = candidateEditingLocked || editingCandidates;
-  const countControlsDisabled = externalBusy || recovering || Boolean(syncingCandidateId) || editingCandidates;
+  const countControlsDisabled = externalBusy || recovering || Boolean(syncingCandidateId)
+    || editingCandidates || !generationContextActive;
   const backfillDisabled = externalBusy || recovering || Boolean(syncingCandidateId) || editingCandidates;
   const bulkGenerationDisabled = externalBusy || recovering
     || Boolean(syncingCandidateId)
-    || editingCandidates;
+    || editingCandidates
+    || !generationContextActive;
   const generationItemStates = generationItems.flatMap(
     (item) => states[item.key] ? [states[item.key]!] : []
   );
@@ -359,6 +412,9 @@ export function AiGenerationPanel({
     : recovering
       ? "正在恢复已有候选"
       : "候选图片进度";
+  const gridSelectedBatch = gridSelection ? gridPlacementBatch(gridSelection) : undefined;
+  const gridSelectedEntryCount = gridSelectedBatch?.entries.length ?? 0;
+  const gridSelectedChainLength = gridSelectedBatch?.chainLength ?? 0;
 
   useEffect(() => {
     if (!activeGroups.length) {
@@ -369,6 +425,11 @@ export function AiGenerationPanel({
       setSelectedGroupId(activeGroups[0]!.id);
     }
   }, [activeGroups, selectedGroupId]);
+
+  useEffect(() => {
+    setGridSelection(null);
+    setGridPlan(null);
+  }, [activeDocumentId]);
 
   useEffect(() => {
     if (running || recovering) return;
@@ -522,6 +583,11 @@ export function AiGenerationPanel({
     setEditingCandidates(false);
     setSelectedCandidateIds(new Set());
   }, [currentPsdIdentity, selectedGroup?.id, workflowVersion]);
+
+  useEffect(() => {
+    setGridSelection(null);
+    setGridPlan(null);
+  }, [selectedGroup?.id, workflowVersion]);
 
   useEffect(() => {
     setSelectedCandidateIds((current) => {
@@ -1092,7 +1158,9 @@ export function AiGenerationPanel({
               ) {
                 throw new Error("当前 PSD 或节点范围已经切换；后续 Holopix 批次未提交。");
               }
-              if (job.psdReference) await assertActivePsdGenerationScope(job.psdReference);
+              if (job.psdReference) {
+                await assertPsdGenerationScope(job.psdReference, job.allowInactivePsdSource);
+              }
             },
             (event) => recordSubmissionLifecycle(job, event)
           );
@@ -1223,7 +1291,7 @@ export function AiGenerationPanel({
             if (!currentPsdScopeKeysRef.current.has(psdGenerationScopeKey(entry.psdReference))) {
               throw new Error("当前 PSD 或节点范围已经切换；GPT Image 2 整链未提交。");
             }
-            await assertActivePsdGenerationScope(entry.psdReference);
+            await assertPsdGenerationScope(entry.psdReference, job.allowInactivePsdSource);
           }
         },
         onSubmissionLifecycle: (event) => recordGptImage2SubmissionLifecycle(job, event),
@@ -1380,6 +1448,7 @@ export function AiGenerationPanel({
         slotIndexes: job.slotIndexes,
         promptText: job.promptText,
         psdReference: generatablePsdReferencesByAssetCode.get(job.item.assetCode),
+        allowInactivePsdSource: placementMode === "STANDARD_GRID",
         failurePrefix: `Holopix ${job.item.assetCode} 生成失败`,
         onSettled: (result) => {
           unknownCandidates += result.unknownCandidates;
@@ -1442,6 +1511,7 @@ export function AiGenerationPanel({
       enqueueGeneration({
         workflowVersion: "gpt-image-2",
         entries: job.entries,
+        allowInactivePsdSource: placementMode === "STANDARD_GRID",
         failurePrefix: "GPT Image 2 整链生成失败",
         onSettled: (result) => {
           unknownCandidates += result.unknownCandidates;
@@ -1491,6 +1561,7 @@ export function AiGenerationPanel({
       slotIndexes: [slotIndex],
       promptText: retryPromptText,
       psdReference,
+      allowInactivePsdSource: placementMode === "STANDARD_GRID",
       successMessage: `Holopix 单格重生成完成：${item.assetCode}。`,
       failurePrefix: `Holopix ${item.assetCode} 单格生成失败`
     });
@@ -1498,6 +1569,53 @@ export function AiGenerationPanel({
 
   async function handleAccept(item: AssetCandidate, candidate: AiCandidateSlot): Promise<void> {
     if (!candidate.image || backfillDisabled) return;
+    const document = activePhotoshopDocument();
+    const currentMode = document ? resolvePlacementMode(document) : "UNSUPPORTED_CANVAS";
+    if (currentMode === "STANDARD_GRID" && document) {
+      const state = statesRef.current[item.key];
+      const slotIndex = state?.candidates.findIndex((slot) => slot.id === candidate.id) ?? -1;
+      if (slotIndex < 0) return;
+      const selection = { itemKey: item.key, candidateId: candidate.id, slotIndex };
+      const batch = gridPlacementBatch(selection);
+      if (!batch) {
+        onStatus(
+          workflowVersion === "gpt-image-2"
+            ? "本候选列没有可插入的图片。"
+            : "当前候选图片已不可用。",
+          "warn"
+        );
+        return;
+      }
+      if (batch.chainLength > STANDARD_GRID_TEMPLATE.grid.columns) {
+        onStatus(`当前物品链有 ${batch.chainLength} 个位置，超过标准网格每行 12 格，无法按单行插入。`, "warn");
+        return;
+      }
+      let plan: GridPlacementPlan | undefined;
+      try {
+        plan = planGridPlacement(document, batch);
+      } catch (error) {
+        onStatus(`读取 AI初稿链行绑定失败：${toErrorMessage(error)}`, "warn");
+        return;
+      }
+      setSelectedItemKey(item.key);
+      setGridSelection(selection);
+      setGridPlan(plan ?? null);
+      const missingCount = batch.chainLength - batch.entries.length;
+      onStatus(plan
+        ? `已选择本候选列：链位 ${batch.chainLength} 个，可写入 ${batch.entries.length} 个`
+          + `${missingCount
+            ? plan.bound
+              ? `，${missingCount} 个无本列候选的链位保持原状`
+              : `，缺失 ${missingCount} 个位置将保留空格`
+            : ""}；`
+          + `${plan.bound ? "已绑定" : "建议使用"}行 ${formatGridSlotRange(plan.slotIds)}。`
+        : "标准网格画布没有任何完整空行，候选已保留。", plan ? "info" : "warn");
+      return;
+    }
+    if (currentMode === "UNSUPPORTED_CANVAS") {
+      onStatus("当前不是棋子go标准网格画布，无法自动定位。AI 结果已保留。", "warn");
+      return;
+    }
     const psdReference = generatablePsdReferencesByAssetCode.get(item.assetCode);
     if (!psdReference) {
       onStatus(`无法回填 ${item.assetCode}：当前 PSD 中没有可唯一定位的对应节点。`, "warn");
@@ -1547,6 +1665,149 @@ export function AiGenerationPanel({
     }
   }
 
+  function gridPlacementBatch(selection: GridCandidateSelection): GridPlacementBatch | undefined {
+    const entries = groupItems.flatMap((currentItem, chainIndex) => {
+      const candidate = statesRef.current[currentItem.key]?.candidates[selection.slotIndex];
+      return candidate?.image
+        ? [{ chainIndex, item: currentItem, candidate: candidate as AiCandidateSlot & { image: AiGeneratedImage } }]
+        : [];
+    });
+    return entries.length ? { chainLength: groupItems.length, entries } : undefined;
+  }
+
+  function planGridPlacement(
+    document: { id: number } & Record<string, unknown>,
+    batch: GridPlacementBatch
+  ): GridPlacementPlan | undefined {
+    if (batch.chainLength > STANDARD_GRID_TEMPLATE.grid.columns) return undefined;
+    if (!selectedGroup) return undefined;
+    const chainItems = groupItems.map((item, chainIndex) => ({ chainIndex, assetCode: item.assetCode }));
+    const binding = inspectGridDraftBinding(document, selectedGroup.id, chainItems);
+    if (binding.status === "invalid") throw new Error(binding.reason);
+    const rowSlotIds = binding.status === "valid"
+      ? binding.rowSlotIds
+      : planEmptyGridRow(document);
+    return rowSlotIds ? {
+      documentId: document.id,
+      workflowVersion,
+      slotIds: rowSlotIds.slice(0, batch.chainLength),
+      requiredEmptySlotIds: rowSlotIds,
+      bound: binding.status === "valid"
+    } : undefined;
+  }
+
+  async function commitGridPlacement(scope: "row" | "single"): Promise<void> {
+    if (!gridSelection || syncingCandidateId || externalBusy) return;
+    const document = activePhotoshopDocument();
+    if (!document || resolvePlacementMode(document) !== "STANDARD_GRID") {
+      onStatus("当前不是棋子go标准网格画布，无法自动定位。AI 结果已保留。", "warn");
+      return;
+    }
+    const batch = gridPlacementBatch(gridSelection);
+    if (!batch) {
+      onStatus("所选候选已变化，请重新选择要放入网格的候选。", "warn");
+      setGridSelection(null);
+      setGridPlan(null);
+      return;
+    }
+    if (batch.chainLength > STANDARD_GRID_TEMPLATE.grid.columns) {
+      onStatus(`当前物品链有 ${batch.chainLength} 个位置，超过标准网格每行 12 格，无法按单行插入。`, "warn");
+      return;
+    }
+    if (!selectedGroup) {
+      onStatus("当前没有可绑定到标准网格的物品链。", "warn");
+      return;
+    }
+    let plan: GridPlacementPlan | undefined;
+    try {
+      plan = planGridPlacement(document, batch);
+    } catch (error) {
+      onStatus(`读取 AI初稿链行绑定失败：${toErrorMessage(error)}`, "warn");
+      return;
+    }
+    if (!plan) {
+      onStatus(
+        "标准网格画布没有任何完整空行，候选已保留。",
+        "warn"
+      );
+      setGridPlan(null);
+      return;
+    }
+    setGridPlan(plan);
+    const entries = scope === "row"
+      ? batch.entries
+      : batch.entries.filter((entry) => entry.item.key === gridSelection.itemKey);
+    if (!entries.length) {
+      onStatus("当前棋子的候选已变化，请重新选择。", "warn");
+      return;
+    }
+    const chainItems = groupItems.map((item, chainIndex) => ({ chainIndex, assetCode: item.assetCode }));
+
+    setSyncingCandidateId(`grid:${gridSelection.candidateId}`);
+    try {
+      const report = await upsertGridDraftImages(
+        document,
+        selectedGroup.id,
+        selectedGroup.label,
+        chainItems,
+        entries.map((entry) => ({
+          chainIndex: entry.chainIndex,
+          assetCode: entry.item.assetCode,
+          url: entry.candidate.image.url,
+          fileName: entry.candidate.image.filename
+        })),
+        plan.requiredEmptySlotIds
+      );
+      updateStates((current) => {
+        let next = current;
+        for (const entry of entries) {
+          const state = next[entry.item.key];
+          if (state) next = { ...next, [entry.item.key]: acceptAiCandidate(state, entry.candidate.id) };
+        }
+        return next;
+      });
+      const actionLabel = plan.bound ? "更新" : "插入";
+      const missingCount = scope === "row" ? batch.chainLength - entries.length : 0;
+      onStatus(
+        `AI初稿已${actionLabel}${scope === "row" ? "整排" : "当前棋子"}：`
+          + `${report.completed} 个结果写入 ${formatGridSlotRange(plan.slotIds)}`
+          + `${missingCount
+            ? plan.bound
+              ? `；${missingCount} 个无本列候选的链位保持原状`
+              : `；${missingCount} 个缺失链位继续保留空格`
+            : ""}。`
+      );
+      setGridSelection(null);
+      setGridPlan(null);
+    } catch (error) {
+      if (error instanceof GridTargetOccupiedError) {
+        if (plan.bound) {
+          setGridPlan(plan);
+          onStatus(
+            `该物品链已绑定 ${formatGridSlotRange(plan.slotIds)}；目标格 ${error.slotIds.join("、")}`
+              + " 存在其他内容，已停止覆盖且不会另开第二排。",
+            "warn"
+          );
+        } else {
+          let nextPlan: GridPlacementPlan | undefined;
+          try { nextPlan = planGridPlacement(document, batch); } catch { nextPlan = undefined; }
+          setGridPlan(nextPlan ?? null);
+          onStatus(
+            `目标空行 ${error.slotIds.join("、")} 已被手工内容占用，本次插入已取消。`
+              + (nextPlan
+                ? `新的建议位置：${formatGridSlotRange(nextPlan.slotIds)}。`
+                : "标准网格画布已没有任何完整空行；候选已保留。"),
+            "warn"
+          );
+        }
+      } else {
+        onStatus(`网格插入失败，候选已保留：${toErrorMessage(error)}`, "error");
+      }
+    } finally {
+      setSyncingCandidateId(null);
+    }
+  }
+
   return (
     <section className={`panel-section ai-panel ${open ? "is-open" : ""}`}>
       <div
@@ -1565,7 +1826,7 @@ export function AiGenerationPanel({
         <span className={`panel-disclosure ${open ? "is-open" : ""}`} aria-hidden="true">
           {open ? "⌄" : ">"}
         </span>
-        <span>AI 生成</span>
+        <span>AI初稿</span>
       </div>
       {open ? (
         <div className="panel-section-content ai-panel-content">
@@ -1576,7 +1837,7 @@ export function AiGenerationPanel({
                 <div className="ai-setting-control">
                   <SpectrumSelect
                     id="ai-workflow-version"
-                    ariaLabel="AI 生成版本"
+                    ariaLabel="AI初稿版本"
                     value={workflowVersion}
                     disabled={controlsDisabled}
                     options={[
@@ -1769,8 +2030,12 @@ export function AiGenerationPanel({
                             editMode={editingCandidates}
                             selectedCandidateIds={selectedCandidateIds}
                             individualGenerationEnabled={workflowVersion === "flux"}
-                            generationDisabled={controlsDisabled}
+                            generationDisabled={controlsDisabled || !generationContextActive}
                             backfillDisabled={backfillDisabled}
+                            gridSelectedSlotIndex={gridSelection?.slotIndex}
+                            gridCurrentSlotIndex={gridSelection?.itemKey === item.key
+                              ? gridSelection.slotIndex
+                              : undefined}
                             noReferenceLabel={
                               workflowVersion === "flux"
                                 ? "无参考图，无法运行 QwenVL"
@@ -1786,7 +2051,11 @@ export function AiGenerationPanel({
                     );
                   })}
                   {!groupItems.length ? (
-                    <div className="ai-empty">当前 PSD 未识别到带参考图的物品画板。</div>
+                    <div className="ai-empty">
+                      {placementMode === "STANDARD_GRID"
+                        ? "尚未找到 AI初稿来源；请保持来源画板 PSD 打开，或先切到来源 PSD 一次。"
+                        : "当前 PSD 未识别到带参考图的物品画板。"}
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -1796,6 +2065,48 @@ export function AiGenerationPanel({
             </div>
           </div>
 
+          {placementMode === "STANDARD_GRID" ? (
+            <div className="card ai-grid-placement-card">
+              {gridSelection ? (
+                <>
+                  <strong>
+                    本链：{gridSelectedChainLength} 个位置 · 可写入 {gridSelectedEntryCount} 个
+                  </strong>
+                  <span>
+                    {gridPlan?.bound ? "已绑定行" : "建议空行"}：{gridPlan
+                      ? formatGridSlotRange(gridPlan.slotIds)
+                      : "没有完整空行"}
+                  </span>
+                  <div className="ai-grid-placement-actions">
+                    <button
+                      className="primary"
+                      disabled={externalBusy || Boolean(syncingCandidateId) || !gridPlan || !gridSelectedEntryCount}
+                      onClick={() => void commitGridPlacement("row")}
+                    >
+                      {syncingCandidateId?.startsWith("grid:")
+                        ? "正在写入……"
+                        : gridPlan?.bound ? "更新整排" : "插入整排"}
+                    </button>
+                    <button
+                      disabled={externalBusy || Boolean(syncingCandidateId) || !gridPlan || !gridSelectedEntryCount}
+                      onClick={() => void commitGridPlacement("single")}
+                    >
+                      {gridPlan?.bound ? "更新当前" : "插入当前"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <span>
+                  选择候选后可插入整排或当前棋子；首次写入会绑定完整空行，后续选择只更新该排。
+                </span>
+              )}
+            </div>
+          ) : placementMode === "UNSUPPORTED_CANVAS" ? (
+            <div className="card ai-grid-placement-card is-warning">
+              当前不是棋子go标准网格画布，无法自动定位。AI 结果已保留。
+            </div>
+          ) : null}
+
           {selectedItem ? (
             <div className="ai-prompt-editor ai-prompt-editor-bottom">
               <div className="ai-prompt-textarea-shell">
@@ -1804,7 +2115,7 @@ export function AiGenerationPanel({
                   value={promptDraft}
                   style={{ height: `${promptEditorHeight}px` }}
                   placeholder={promptSource?.detail ?? "生成或恢复候选后，可在这里修改当前物品描述。"}
-                  aria-label={`${selectedItem.name || selectedItem.assetCode} 的可编辑 AI 生成描述`}
+                  aria-label={`${selectedItem.name || selectedItem.assetCode} 的可编辑 AI初稿描述`}
                 />
                 <span
                   className="ai-prompt-resize-handle"
@@ -1849,6 +2160,8 @@ function CandidateStrip({
   individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
+  gridSelectedSlotIndex,
+  gridCurrentSlotIndex,
   noReferenceLabel,
   onPreviewState,
   onAccept,
@@ -1861,6 +2174,8 @@ function CandidateStrip({
   individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
+  gridSelectedSlotIndex?: number;
+  gridCurrentSlotIndex?: number;
   noReferenceLabel: string;
   onPreviewState: (state: CandidatePreviewState, detail?: string) => void;
   onAccept: (candidate: AiCandidateSlot) => void;
@@ -1887,6 +2202,8 @@ function CandidateStrip({
             individualGenerationEnabled={individualGenerationEnabled}
             generationDisabled={generationDisabled}
             backfillDisabled={backfillDisabled}
+            selectedForGridPlacement={slotIndex === gridSelectedSlotIndex}
+            currentForGridPlacement={slotIndex === gridCurrentSlotIndex}
             onAccept={() => onAccept(candidate)}
             onRegenerate={() => onRegenerate(slotIndex)}
             onToggleDeletion={() => onToggleDeletion(candidate.id)}
@@ -1905,6 +2222,8 @@ function CandidateCell({
   individualGenerationEnabled,
   generationDisabled,
   backfillDisabled,
+  selectedForGridPlacement,
+  currentForGridPlacement,
   onAccept,
   onRegenerate,
   onToggleDeletion
@@ -1915,6 +2234,8 @@ function CandidateCell({
   individualGenerationEnabled: boolean;
   generationDisabled: boolean;
   backfillDisabled: boolean;
+  selectedForGridPlacement: boolean;
+  currentForGridPlacement: boolean;
   onAccept: () => void;
   onRegenerate: () => void;
   onToggleDeletion: () => void;
@@ -1940,9 +2261,10 @@ function CandidateCell({
   };
   return (
     <button
-      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""} ${editMode ? "is-delete-mode" : ""} ${selectedForDeletion ? "is-delete-selected" : ""}`}
+      className={`ai-candidate-cell is-${candidate.status} ${actionable ? "is-actionable" : ""} ${editMode ? "is-delete-mode" : ""} ${selectedForDeletion ? "is-delete-selected" : ""} ${selectedForGridPlacement ? "is-grid-selected" : ""} ${currentForGridPlacement ? "is-grid-current" : ""}`}
       disabled={actionDisabled}
       aria-pressed={editMode && deleteEligible ? selectedForDeletion : undefined}
+      aria-current={currentForGridPlacement ? true : undefined}
       aria-label={editMode && deleteEligible
         ? `${selectedForDeletion ? "取消选择" : "选择"}删除候选 ${candidate.label}`
         : candidate.status === "accepted"
@@ -2277,11 +2599,16 @@ function psdGenerationScopeKey(reference: Pick<
   ].join(":");
 }
 
-async function assertActivePsdGenerationScope(reference: GeneratablePsdReference): Promise<void> {
+async function assertPsdGenerationScope(
+  reference: GeneratablePsdReference,
+  allowInactiveSource: boolean
+): Promise<void> {
   if (!isStablePsdDocumentIdentity(reference.documentIdentity)) {
     throw new Error("当前 PSD 尚未保存或无法取得稳定文件路径；为避免重复付费，请先保存 PSD 再生成。");
   }
-  const current = await inspectActiveReferenceDocument();
+  const current = allowInactiveSource
+    ? await inspectOpenReferenceDocument(reference.documentId)
+    : await inspectActiveReferenceDocument();
   const expectedKey = psdGenerationScopeKey(reference);
   if (
     current?.documentId !== reference.documentId
@@ -2292,7 +2619,11 @@ async function assertActivePsdGenerationScope(reference: GeneratablePsdReference
         documentIdentity: current.documentIdentity
       }) === expectedKey)
   ) {
-    throw new Error("当前 PSD 或节点结构已经变化；Holopix 批次未提交。");
+    throw new Error(
+      allowInactiveSource
+        ? "AI初稿来源 PSD 已关闭或节点结构已经变化；Holopix 批次未提交。"
+        : "当前 PSD 或节点结构已经变化；Holopix 批次未提交。"
+    );
   }
 }
 
@@ -2319,6 +2650,21 @@ function hasPsdReferenceLayer<T extends {
 
 function safeFilePart(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
+}
+
+function activePhotoshopDocument(): ({ id: number } & Record<string, unknown>) | null {
+  try {
+    return app.documents?.length
+      ? app.activeDocument as unknown as ({ id: number } & Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatGridSlotRange(slotIds: readonly string[]): string {
+  if (!slotIds.length) return "无";
+  return slotIds.length === 1 ? slotIds[0]! : `${slotIds[0]}–${slotIds[slotIds.length - 1]}`;
 }
 
 function markSlots(

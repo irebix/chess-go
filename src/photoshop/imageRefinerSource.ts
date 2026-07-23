@@ -1,9 +1,9 @@
 import { app } from "photoshop";
 import type { ImageEditorSourceBounds } from "../imageEditor/types";
 import type {
-  ImageRefinerGroupSource,
   ImageRefinerLayerKind,
-  ImageRefinerLayerSource
+  ImageRefinerLayerSource,
+  ImageRefinerSource
 } from "../imageRefiner/types";
 
 interface LayerCollectionLike {
@@ -20,28 +20,41 @@ interface LayerLike {
   layers?: LayerCollectionLike;
 }
 
-export function inspectActiveImageRefinerGroup(): ImageRefinerGroupSource | null {
+export function inspectActiveImageRefinerSource(): ImageRefinerSource | null {
   try {
     if (!app.documents?.length) return null;
     const document = app.activeDocument;
     const activeLayer = document.activeLayers?.[0] as unknown as LayerLike | undefined;
-    if (!activeLayer || activeLayer.kind !== "group") return null;
+    if (!activeLayer) return null;
+    const documentIdentity = {
+      documentId: document.id,
+      documentName: document.title
+    };
+    if (activeLayer.kind !== "group") {
+      const layer = eligibleLayerSource(activeLayer, documentIdentity);
+      if (!layer) return null;
+      return {
+        ...documentIdentity,
+        selectionKind: "layer",
+        sourceId: activeLayer.id,
+        sourceName: activeLayer.name,
+        layers: [layer],
+        skippedLayerCount: 0
+      };
+    }
     const layers: ImageRefinerLayerSource[] = [];
     const skipped = { count: 0 };
     collectEligibleLayers(
       activeLayer.layers,
-      {
-        documentId: document.id,
-        documentName: document.title
-      },
+      documentIdentity,
       layers,
       skipped
     );
     return {
-      documentId: document.id,
-      documentName: document.title,
-      groupId: activeLayer.id,
-      groupName: activeLayer.name,
+      ...documentIdentity,
+      selectionKind: "group",
+      sourceId: activeLayer.id,
+      sourceName: activeLayer.name,
       layers,
       skippedLayerCount: skipped.count
     };
@@ -50,16 +63,23 @@ export function inspectActiveImageRefinerGroup(): ImageRefinerGroupSource | null
   }
 }
 
-export function isImageRefinerGroupAvailable(source: ImageRefinerGroupSource): boolean {
+export function isImageRefinerSourceAvailable(source: ImageRefinerSource): boolean {
   try {
     const document = app.documents?.find((candidate) => candidate.id === source.documentId);
     if (!document) return false;
-    const group = findLayerById(
+    const selected = findLayerById(
       document.layers as unknown as LayerCollectionLike,
-      source.groupId
+      source.sourceId
     );
-    if (!group || group.kind !== "group") return false;
-    return source.layers.every((layer) => Boolean(findLayerById(group.layers, layer.layerId)));
+    if (!selected) return false;
+    if (source.selectionKind === "layer") {
+      return selected.kind !== "group"
+        && source.layers.length === 1
+        && source.layers[0]?.layerId === selected.id
+        && Boolean(eligibleKind(selected.kind));
+    }
+    if (selected.kind !== "group") return false;
+    return source.layers.every((layer) => Boolean(findLayerById(selected.layers, layer.layerId)));
   } catch {
     return false;
   }
@@ -79,20 +99,29 @@ function collectEligibleLayers(
       collectEligibleLayers(layer.layers, document, output, skipped);
       continue;
     }
-    const kind = eligibleKind(layer.kind);
-    const bounds = readBounds(layer);
-    if (!kind || !bounds) {
+    const source = eligibleLayerSource(layer, document);
+    if (!source) {
       skipped.count += 1;
       continue;
     }
-    output.push({
-      ...document,
-      layerId: layer.id,
-      layerName: layer.name,
-      kind,
-      bounds
-    });
+    output.push(source);
   }
+}
+
+function eligibleLayerSource(
+  layer: LayerLike,
+  document: { documentId: number; documentName: string }
+): ImageRefinerLayerSource | null {
+  const kind = eligibleKind(layer.kind);
+  const bounds = readBounds(layer);
+  if (!kind || !bounds) return null;
+  return {
+    ...document,
+    layerId: layer.id,
+    layerName: layer.name,
+    kind,
+    bounds
+  };
 }
 
 function eligibleKind(kind: string | undefined): ImageRefinerLayerKind | null {

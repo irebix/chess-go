@@ -39,6 +39,7 @@ import type { RecentWorkbookRecord } from "../domain/recentWorkbook";
 import {
   changeActiveArtboardBackgroundColor,
   inspectActiveReferenceDocument,
+  inspectOpenReferenceDocuments,
   toggleActiveArtboardBackgrounds,
   toggleActiveGroupArtboards,
   toggleActiveReferenceView,
@@ -60,6 +61,8 @@ import { AiEditPanel } from "./AiEditPanel";
 import { AiOutlinePanel } from "./AiOutlinePanel";
 import { AiRefinePanel } from "./AiRefinePanel";
 import { SpectrumSelect } from "./SpectrumSelect";
+import { StandardGridPanel } from "./StandardGridPanel";
+import type { PlacementMode } from "../photoshop/placementMode";
 
 type UiPhase =
   | "idle"
@@ -156,6 +159,9 @@ export function App(): React.ReactElement {
   const [editBusy, setEditBusy] = useState(false);
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [refineBusy, setRefineBusy] = useState(false);
+  const [gridBusy, setGridBusy] = useState(false);
+  const [placementMode, setPlacementMode] = useState<PlacementMode>("UNSUPPORTED_CANVAS");
+  const [retainedAiSourceDocument, setRetainedAiSourceDocument] = useState<ReferenceDocumentState | null>(null);
   const [recentWorkbook, setRecentWorkbook] = useState<RecentWorkbookRecord | null>(
     () => loadRecentWorkbookRecord()
   );
@@ -172,7 +178,7 @@ export function App(): React.ReactElement {
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
     phase === "diagnosing" || phase === "generating";
-  const busy = nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy;
+  const busy = nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy || gridBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
     () => groups.filter((group) => selectedGroupIds.includes(group.id)),
@@ -183,18 +189,19 @@ export function App(): React.ReactElement {
     () => applyScopedTaskValidation(filterItemsByGroups(items, activeGroups)),
     [items, activeGroups]
   );
+  const aiSourceDocument = referenceDocument ?? retainedAiSourceDocument;
   const aiPsdReferences = useMemo<PsdAiReference[]>(
-    () => referenceDocument?.aiNodes.map((node) => ({
+    () => aiSourceDocument?.aiNodes.map((node) => ({
       ...node,
-      documentId: referenceDocument.documentId,
-      documentName: referenceDocument.documentName,
-      documentIdentity: referenceDocument.documentIdentity
+      documentId: aiSourceDocument.documentId,
+      documentName: aiSourceDocument.documentName,
+      documentIdentity: aiSourceDocument.documentIdentity
     })) ?? [],
     [
-      referenceDocument?.aiNodes,
-      referenceDocument?.documentId,
-      referenceDocument?.documentIdentity,
-      referenceDocument?.documentName
+      aiSourceDocument?.aiNodes,
+      aiSourceDocument?.documentId,
+      aiSourceDocument?.documentIdentity,
+      aiSourceDocument?.documentName
     ]
   );
   const aiPsdItems = useMemo(() => aiPsdReferences.map((reference, index) => {
@@ -237,6 +244,8 @@ export function App(): React.ReactElement {
     }
     return Array.from(groupsById.values());
   }, [aiPsdReferences]);
+  const aiDraftPanelVisible = activePhotoshopDocumentId !== null
+    && (placementMode === "STANDARD_GRID" || aiPsdReferences.length > 0);
   const selectedCount = scopedItems.filter((item) => item.selected).length;
   const blockedItemCount = scopedItems.filter((item) => hasErrors(item)).length;
   const selectedErrorCount = scopedItems
@@ -342,6 +351,25 @@ export function App(): React.ReactElement {
     setShowCurrentPsd(true);
     setShowGenerator(false);
   }, [referenceDocument]);
+
+  useEffect(() => {
+    if (referenceDocument?.aiNodes.length) setRetainedAiSourceDocument(referenceDocument);
+  }, [referenceDocument]);
+
+  useEffect(() => {
+    if (
+      placementMode !== "STANDARD_GRID"
+      || activePhotoshopDocumentId === null
+      || aiSourceDocument?.aiNodes.length
+    ) return;
+    let disposed = false;
+    void inspectOpenReferenceDocuments(activePhotoshopDocumentId).then((sources) => {
+      if (disposed) return;
+      const source = sources.find((candidate) => candidate.aiNodes.length > 0);
+      if (source) setRetainedAiSourceDocument(source);
+    });
+    return () => { disposed = true; };
+  }, [activePhotoshopDocumentId, aiSourceDocument?.documentId, placementMode]);
 
   const pruneInactiveThumbnails = useCallback((
     current: Record<string, ThumbnailRecord>,
@@ -932,19 +960,32 @@ export function App(): React.ReactElement {
         </section>
       ) : null}
 
+      <StandardGridPanel
+        activeDocumentId={activePhotoshopDocumentId}
+        externalBusy={nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)}
+        onBusyChange={setGridBusy}
+        onModeChange={setPlacementMode}
+        onStatus={(detail, level = "info") => {
+          setMessage(detail);
+          appendLog(makeLog(level, "standard-grid", detail));
+        }}
+      />
+
       <div
         className="ai-panel-host"
-        style={{ display: referenceDocument ? "block" : "none" }}
-        aria-hidden={!referenceDocument}
+        style={{ display: aiDraftPanelVisible ? "block" : "none" }}
+        aria-hidden={!aiDraftPanelVisible}
       >
         <AiGenerationPanel
           workbook={workbook}
           activeGroups={aiPsdGroups}
           items={aiPsdItems}
           psdReferences={aiPsdReferences}
+          placementMode={placementMode}
+          activeDocumentId={activePhotoshopDocumentId}
           thumbnails={thumbnails}
           externalBusy={
-            nonAiBusy || editBusy || outlineBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || editBusy || outlineBusy || refineBusy || gridBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           requestThumbnail={requestThumbnail}
           onThumbnailError={handleThumbnailDecodeError}
@@ -965,7 +1006,7 @@ export function App(): React.ReactElement {
       >
         <AiEditPanel
           externalBusy={
-            nonAiBusy || aiBusy || outlineBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || outlineBusy || refineBusy || gridBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setEditBusy}
           onStatus={handleImageEditorStatus}
@@ -979,7 +1020,7 @@ export function App(): React.ReactElement {
       >
         <AiOutlinePanel
           externalBusy={
-            nonAiBusy || aiBusy || editBusy || refineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || editBusy || refineBusy || gridBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setOutlineBusy}
           onStatus={handleOutlineStatus}
@@ -993,7 +1034,7 @@ export function App(): React.ReactElement {
       >
         <AiRefinePanel
           externalBusy={
-            nonAiBusy || aiBusy || editBusy || outlineBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
+            nonAiBusy || aiBusy || editBusy || outlineBusy || gridBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }
           onBusyChange={setRefineBusy}
           onStatus={handleImageRefinerStatus}

@@ -26,7 +26,19 @@ const workflow: ComfyWorkflow = {
     class_type: "ImageScale",
     inputs: { image: ["7", 0], upscale_method: "nearest-exact", width: 768, height: 512, crop: "disabled" }
   },
-  "9": { class_type: "SaveImage", inputs: { filename_prefix: "old", images: ["8", 0] } },
+  "19": {
+    class_type: "BiRefNetRMBG",
+    inputs: {
+      image: ["8", 0],
+      model: "BiRefNet_toonout",
+      mask_blur: 0,
+      mask_offset: 0,
+      invert_output: false,
+      refine_foreground: false,
+      background: "Alpha"
+    }
+  },
+  "9": { class_type: "SaveImage", inputs: { filename_prefix: "old", images: ["19", 0] } },
   "12": {
     class_type: "AILab_QwenVL",
     inputs: {
@@ -65,10 +77,31 @@ describe("Holopix workflow adapter", () => {
     const inputs = generate?.inputs as Record<string, unknown> | undefined;
     expect(inputs?.confirm_cost).toBe(true);
     expect(generate?.inputs).not.toHaveProperty("vip_channel");
+    expect((bundledWorkflow as ComfyWorkflow)["19"]?.inputs).toMatchObject({
+      image: ["8", 0],
+      model: "BiRefNet_toonout",
+      background: "Alpha"
+    });
+    expect((bundledWorkflow as ComfyWorkflow)["9"]?.inputs.images).toEqual(["19", 0]);
     expect(describeHolopixPromptSource(bundledWorkflow)).toMatchObject({
       kind: "node",
       label: "提示词结果"
     });
+  });
+
+  it("uses the requested two-model stack in order", () => {
+    const bundled = bundledWorkflow as ComfyWorkflow;
+    const modelNodes = Object.values(bundled).filter((node) => node.class_type === "HolopixModelStack");
+    expect(modelNodes).toHaveLength(2);
+    expect(bundled["3"]?.inputs).toMatchObject({ model_id: 858, strength: 0.6 });
+    expect(bundled["3"]?.inputs).not.toHaveProperty("previous_models");
+    expect(bundled["5"]?.inputs).toMatchObject({
+      model_id: 6768,
+      strength: 0.8,
+      previous_models: ["3", 0]
+    });
+    expect(bundled["4"]).toBeUndefined();
+    expect(bundled["7"]?.inputs.models).toEqual(["5", 0]);
   });
 
   it("injects the item name and reference into QwenVL while keeping generation prompt-only", () => {
@@ -103,7 +136,13 @@ describe("Holopix workflow adapter", () => {
       height: 1024,
       crop: "center"
     });
+    expect(prepared.workflow["19"]!.inputs).toMatchObject({
+      image: ["8", 0],
+      model: "BiRefNet_toonout",
+      background: "Alpha"
+    });
     expect(prepared.workflow["9"]!.inputs.filename_prefix).toBe("Holopix/ChessGo/c_cleaning1");
+    expect(prepared.workflow["9"]!.inputs.images).toEqual(["19", 0]);
     expect(prepared.workflow["18"]!.inputs.source).toEqual(["12", 0]);
     expect(prepared.promptCaptureNodeId).toBe("18");
     expect(workflow["13"]!.inputs.value).toBe("old name");

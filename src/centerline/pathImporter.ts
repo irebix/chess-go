@@ -7,6 +7,7 @@ import type {
   CenterlinePathJson,
   CenterlinePixelTransform
 } from "./types";
+import { alignResultToSource } from "../photoshop/layerPlacementGeometry";
 
 interface PhotoshopPathPointInfo {
   anchor: CenterlineCoordinate;
@@ -193,8 +194,9 @@ export async function deselectEditableWorkPath(documentId: number): Promise<void
 export async function convertSelectedPathToShapeLayer(
   strokeWidth: number,
   layerName: string,
-  documentId: number
-): Promise<void> {
+  documentId: number,
+  sourceLayerId?: number
+): Promise<PhotoshopPathItem> {
   const descriptor = {
     _obj: "make",
     _target: [{ _ref: "contentLayer" }],
@@ -238,12 +240,26 @@ export async function convertSelectedPathToShapeLayer(
     },
     _options: { dialogOptions: "dontDisplay" }
   };
+  let createdLayer: PhotoshopPathItem | null = null;
   await core.executeAsModal(async () => {
     assertDocument(documentId);
     await action.batchPlay([descriptor], {});
     const layer = app.activeDocument.activeLayers?.[0];
-    if (layer) layer.name = layerName;
+    if (!layer) throw new Error("Photoshop 创建描边 Shape 后没有返回图层。");
+    layer.name = layerName;
+    if (sourceLayerId !== undefined) {
+      await alignResultToSource(
+        app.activeDocument as unknown as Parameters<typeof alignResultToSource>[0],
+        layer.id,
+        sourceLayerId,
+        undefined,
+        { fit: "preserve", moveAbove: true }
+      );
+    }
+    createdLayer = { id: layer.id, name: layer.name };
   }, { commandName: "AI勾线 · 创建描边 Shape 层" });
+  if (!createdLayer) throw new Error("Photoshop 未返回描边 Shape 图层。");
+  return createdLayer;
 }
 
 export type { PhotoshopPathItem };
