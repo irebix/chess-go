@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=3"
+set "CHESSGO_INSTALLER_REVISION=4"
 set "CHESSGO_INSTALLER=%~f0"
 set "CHESSGO_PWSH="
 where pwsh.exe >nul 2>nul
@@ -515,7 +515,21 @@ function Resolve-GitBackedRelease(
 
   Write-Host $updateMessage
   if (Invoke-GitPull $folder $gitPath) {
-    return $folder
+    if (Test-ChessGoRelease $folder) {
+      return $folder
+    }
+    $validationError = "unknown validation error"
+    try {
+      $null = @(Get-ChessGoReleasePayload $folder)
+    } catch {
+      $validationError = $_.Exception.Message
+    }
+    if ($remoteSha) {
+      Write-Warning "Git update completed but the local release folder is invalid: $validationError"
+      Write-Warning "Switching to the verified GitHub release archive."
+      return Install-ReleaseArchive $archiveReleaseDir $remoteSha $gitPath
+    }
+    throw "Git update completed but the local release folder is invalid: $validationError"
   }
   if ($remoteSha) {
     Write-Warning "Git update is unavailable. Switching to the GitHub release archive."
@@ -823,8 +837,10 @@ try {
   $sourceDir = Resolve-ChessGoRelease $sourceDir $gitPath $remoteReleaseSha
   Write-Host ""
 
-  if (-not (Test-ChessGoRelease $sourceDir)) {
-    throw "The ChessGo release folder is incomplete or invalid: $sourceDir"
+  try {
+    $null = @(Get-ChessGoReleasePayload $sourceDir)
+  } catch {
+    throw "The ChessGo release folder is incomplete or invalid: $sourceDir. $($_.Exception.Message)"
   }
 
   $manifestPath = Join-Path $sourceDir "manifest.json"
