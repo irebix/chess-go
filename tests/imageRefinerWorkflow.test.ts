@@ -8,7 +8,7 @@ import {
 } from "../src/imageRefiner/workflow";
 
 describe("AI image refiner workflow", () => {
-  it("keeps the V3 pack/unpack graph, current VIP interface and GPT-style matting tail", () => {
+  it("adjusts the returned full sheet before unpacking and keeps the GPT-style matting tail", () => {
     expect(() => assertImageRefinerWorkflow(bundledWorkflow)).not.toThrow();
     expect(bundledWorkflow["5"]?.inputs).toMatchObject({
       batch_size: "1",
@@ -17,11 +17,23 @@ describe("AI image refiner workflow", () => {
       prompt: ["4", 0]
     });
     expect(bundledWorkflow["5"]?.inputs).not.toHaveProperty("confirm_cost");
+    expect(bundledWorkflow["16"]?.inputs).toMatchObject({
+      brightness: 0.01,
+      contrast: 1,
+      saturation: 0.95,
+      sharpness: 1,
+      blur: 0,
+      gaussian_blur: 0,
+      edge_enhance: 0,
+      detail_enhance: "false",
+      image: ["5", 0]
+    });
     expect(bundledWorkflow["6"]?.inputs).toMatchObject({
       output_size: 512,
-      returned_sheet: ["5", 0],
+      returned_sheet: ["16", 0],
       layout: ["2", 1]
     });
+    expect(bundledWorkflow["9"]?.inputs.images).toEqual(["16", 0]);
     expect(bundledWorkflow["11"]?.inputs).toMatchObject({
       model: "BiRefNet_toonout",
       image: ["6", 0],
@@ -72,6 +84,18 @@ describe("AI image refiner workflow", () => {
       aspect_ratio: ["2", 2]
     });
     expect(prepared.workflow["5"]?.inputs).not.toHaveProperty("confirm_cost");
+    expect(prepared.workflow["16"]?.inputs).toMatchObject({
+      brightness: 0.01,
+      contrast: 1,
+      saturation: 0.95,
+      sharpness: 1,
+      blur: 0,
+      gaussian_blur: 0,
+      edge_enhance: 0,
+      detail_enhance: "false",
+      image: ["5", 0]
+    });
+    expect(prepared.workflow["6"]?.inputs.returned_sheet).toEqual(["16", 0]);
     expect(prepared.workflow["8"]?.inputs).toMatchObject({
       subfolder: "Holopix/ChessGo/ImageRefiner/101",
       collision_policy: "overwrite",
@@ -119,5 +143,10 @@ describe("AI image refiner workflow", () => {
     const invalidMatting = JSON.parse(JSON.stringify(bundledWorkflow)) as ComfyWorkflow;
     invalidMatting["13"]!.inputs.alpha = ["11", 1];
     expect(() => assertImageRefinerWorkflow(invalidMatting)).toThrow(/JoinImageWithAlpha\.alpha/);
+
+    const invalidAdjustment = JSON.parse(JSON.stringify(bundledWorkflow)) as ComfyWorkflow;
+    invalidAdjustment["16"]!.inputs.image = ["2", 0];
+    expect(() => assertImageRefinerWorkflow(invalidAdjustment))
+      .toThrow(/Image Filter Adjustments\.image/);
   });
 });

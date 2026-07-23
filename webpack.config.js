@@ -47,6 +47,7 @@ module.exports = (_env, argv) => ({
         { from: "manifest.json", to: "manifest.json" },
         { from: "Holopix.json", to: "Holopix.json" },
         { from: "GptImage2.json", to: "GptImage2.json" },
+        { from: "GPlusF.json", to: "GPlusF.json" },
         { from: "ImageEditor.json", to: "ImageEditor.json" },
         { from: "ImageRefiner.json", to: "ImageRefiner.json" },
         { from: "ImageRefinerStyle.png", to: "ImageRefinerStyle.png" },

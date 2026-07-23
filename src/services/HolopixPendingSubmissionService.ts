@@ -244,7 +244,12 @@ function isPendingSubmissionRecord(value: unknown): value is HolopixPendingSubmi
     && (record.referenceLayerId !== undefined || record.referenceIssue !== undefined)
     && (record.targetLayerId === undefined || isFiniteInteger(record.targetLayerId))
     && (record.targetIssue === undefined || record.targetIssue === "missing" || record.targetIssue === "ambiguous")
-    && (record.workflowVersion === undefined || record.workflowVersion === "flux" || record.workflowVersion === "gpt-image-2")
+    && (
+      record.workflowVersion === undefined
+      || record.workflowVersion === "flux"
+      || record.workflowVersion === "gpt-image-2"
+      || record.workflowVersion === "g-plus-f"
+    )
     && isFiniteInteger(record.slotCount)
     && record.slotCount! >= 1
     && record.slotCount! <= 4
@@ -283,7 +288,11 @@ function isDeletedCandidateRecord(value: unknown): value is HolopixDeletedCandid
     && Boolean(record.documentIdentity.trim())
     && typeof record.assetCode === "string"
     && Boolean(record.assetCode.trim())
-    && (record.workflowVersion === "flux" || record.workflowVersion === "gpt-image-2")
+    && (
+      record.workflowVersion === "flux"
+      || record.workflowVersion === "gpt-image-2"
+      || record.workflowVersion === "g-plus-f"
+    )
     && typeof record.imageKey === "string"
     && Boolean(record.imageKey)
     && typeof record.deletedAt === "number"
@@ -325,5 +334,8 @@ export function effectivePendingWorkflowVersion(
 function effectiveWorkflowVersion(
   record: Pick<HolopixPendingSubmissionRecord, "workflowVersion">
 ): AiWorkflowVersion {
-  return record.workflowVersion === "gpt-image-2" ? "gpt-image-2" : "flux";
+  if (record.workflowVersion === "gpt-image-2" || record.workflowVersion === "g-plus-f") {
+    return record.workflowVersion;
+  }
+  return "flux";
 }

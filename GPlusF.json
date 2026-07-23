@@ -1,0 +1,253 @@
+{
+  "1": {
+    "inputs": {
+      "image": "ImageRefinerStyle.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "G+F｜风格参考图"
+    }
+  },
+  "2": {
+    "inputs": {
+      "value": "参考图并学习，画风与参考图保持一致。注意是卡通风格，物件透视要和参考图一致；不要写实，使用柔和且光滑的渐变，不要出现水彩质感。色彩鲜艳明快，左侧有轻微投影，点缀物数量要少而大，细节克制。除整体外轮廓外不要添加内部描边。不要复制参考图中的具体物件或文字。\n\n{{CHESS_GO_ITEMS}}"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "G+F｜GPT Image 2 整链提示词"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": "[]"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "G+F｜输出名称"
+    }
+  },
+  "4": {
+    "inputs": {
+      "aspect_ratio": "3:4",
+      "batch_size": "1",
+      "request_nonce": 1,
+      "vip_channel": true,
+      "timeout_seconds": 150,
+      "prompt": [
+        "2",
+        0
+      ],
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "HolopixGenerateV3",
+    "_meta": {
+      "title": "G+F｜GPT Image 2 初稿"
+    }
+  },
+  "5": {
+    "inputs": {
+      "canvas_size": 512,
+      "padding": 4,
+      "background_threshold": 12,
+      "min_object_height_percent": 5,
+      "min_box_area_percent": 0.3,
+      "max_objects": 12,
+      "image": [
+        "4",
+        0
+      ],
+      "labels": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "AutoObjectSheetCrop",
+    "_meta": {
+      "title": "G+F｜GPT 初稿按顺序裁切"
+    }
+  },
+  "6": {
+    "inputs": {
+      "model": "BiRefNet_toonout",
+      "mask_blur": 1,
+      "mask_offset": 1,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#000000",
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "BiRefNetRMBG",
+    "_meta": {
+      "title": "G+F｜批量抠图"
+    }
+  },
+  "7": {
+    "inputs": {
+      "mask": [
+        "6",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "G+F｜前景转 Alpha"
+    }
+  },
+  "8": {
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "alpha": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "JoinImageWithAlpha",
+    "_meta": {
+      "title": "G+F｜写入透明通道"
+    }
+  },
+  "9": {
+    "inputs": {
+      "names": [
+        "5",
+        1
+      ],
+      "subfolder": "Holopix/ChessGo/GPlusF/template",
+      "collision_policy": "overwrite",
+      "png_compress_level": 4,
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveNamedImageBatch",
+    "_meta": {
+      "title": "G+F｜保存逐图细化候选"
+    }
+  },
+  "10": {
+    "inputs": {
+      "filename_prefix": "Holopix/ChessGo/GPlusF/template/checkpoints/gpt_raw",
+      "images": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "G+F｜保存 GPT Raw Sheet"
+    }
+  },
+  "11": {
+    "inputs": {
+      "batch_index": 0,
+      "length": 1,
+      "image": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "G+F｜单图裁切"
+    }
+  },
+  "12": {
+    "inputs": {
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "HolopixUploadReference",
+    "_meta": {
+      "title": "G+F｜单图参考上传"
+    }
+  },
+  "13": {
+    "inputs": {
+      "value": "以接入的单张 GPT 裁切图为唯一主体参考，只细化这一件物品。严格保持主体类别、数量、轮廓、朝向、构图和主要配色；只改善造型准确度、材质层次、柔和渐变、光影与边缘完整性。保持纯白背景，主体完整居中且四周留白。不要新增、删除、复制或替换物件；不要出现文字、编号、标签、水印或界面元素。\n\n{{CHESS_GO_ITEM}}"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "G+F｜单图细化提示词"
+    }
+  },
+  "14": {
+    "inputs": {
+      "model_id": 858,
+      "strength": 0.6
+    },
+    "class_type": "HolopixModelStack",
+    "_meta": {
+      "title": "G+F｜Holopix 模型 1"
+    }
+  },
+  "15": {
+    "inputs": {
+      "model_id": 6768,
+      "strength": 0.8,
+      "previous_models": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "HolopixModelStack",
+    "_meta": {
+      "title": "G+F｜Holopix 模型 2"
+    }
+  },
+  "16": {
+    "inputs": {
+      "aspect_ratio": "1:1",
+      "batch_size": "1",
+      "request_nonce": 2,
+      "confirm_cost": true,
+      "timeout_seconds": 150,
+      "reference_weight": 0.2,
+      "prompt": [
+        "13",
+        0
+      ],
+      "models": [
+        "15",
+        0
+      ],
+      "reference": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "HolopixGenerate",
+    "_meta": {
+      "title": "G+F｜Holopix 单图细化"
+    }
+  },
+  "17": {
+    "inputs": {
+      "expected_count": 12,
+      "image": [
+        "5",
+        0
+      ],
+      "crop_info": [
+        "5",
+        2
+      ]
+    },
+    "class_type": "AssertImageBatchCount",
+    "_meta": {
+      "title": "G+F｜裁切数量严格校验"
+    }
+  }
+}

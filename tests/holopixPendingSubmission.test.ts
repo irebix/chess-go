@@ -145,7 +145,7 @@ describe("Holopix pending submission persistence", () => {
     expect(holopixPendingSubmissionMatchesScope(record({ referenceLayerId: 13 }), scope)).toBe(false);
   });
 
-  it("keeps Flux and GPT Image 2 safety records isolated for the same PSD node", () => {
+  it("keeps Flux, GPT Image 2 and G+F safety records isolated for the same PSD node", () => {
     const scope = {
       documentIdentity: "file:d:/work/cleaning.psd",
       assetCode: "c_cleaning1",
@@ -163,6 +163,14 @@ describe("Holopix pending submission persistence", () => {
     expect(holopixPendingSubmissionMatchesScope(record({ workflowVersion: "gpt-image-2" }), {
       ...scope,
       workflowVersion: "gpt-image-2"
+    })).toBe(true);
+    expect(holopixPendingSubmissionMatchesScope(record({ workflowVersion: "g-plus-f" }), {
+      ...scope,
+      workflowVersion: "gpt-image-2"
+    })).toBe(false);
+    expect(holopixPendingSubmissionMatchesScope(record({ workflowVersion: "g-plus-f" }), {
+      ...scope,
+      workflowVersion: "g-plus-f"
     })).toBe(true);
   });
 

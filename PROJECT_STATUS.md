@@ -1,27 +1,37 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-23
-当前发布版本：`0.8.1`
+当前发布版本：`0.8.2`
 
 ## 一句话摘要
 
-“棋子go”是一个 Photoshop 2023 24.2+ 的本地 UXP 面板：读取腾讯文档导出的 `.xlsx`，按 A 列棋子链分组和图片候选生成归档 PSD；“AI初稿”可把 Excel 内嵌参考图提交到局域网 ComfyUI 的 Holopix 工作流，生成、筛选候选并回填画板智能对象，也可执行单图 AI编辑、AI勾线，以及把所选图层组中的图片图层批量提交到 V3 动态拼接工作流并按原位置回插的 AI细化。
+“棋子go”是一个 Photoshop 2023 24.2+ 的本地 UXP 面板：读取腾讯文档导出的 `.xlsx`，按 A 列棋子链分组和图片候选生成归档 PSD；“AI初稿”支持 Flux、GPT Image 2，以及先裁切 GPT 整链、再把每张单件裁切图以 `0.2` 参考权重逐图交给 Holopix 细化的 G+F 工作流，生成结果可筛选并回填画板智能对象；面板也可执行单图 AI编辑、AI勾线，以及把所选图层组中的图片图层批量提交到 V3 动态拼接工作流并按原位置回插的 AI细化。
 
 ## 仓库与发布
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.1` |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.1` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.2` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.2` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.1`。
-- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.1` 完整运行包和 revision 2 安装器；十个运行文件与源码仓库 `dist` SHA-256 一致。
-- `0.8.1` 已完成 61 个测试文件、293 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `manifest.json` 与 `package.json` 均为 `0.8.2`。
+- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十一个运行文件，不直接编辑构建产物。
+- `ChessGo-Release` 已同步 `0.8.2` 完整运行包和 revision 3 安装器；新增 `GPlusF.json` 后共十一个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.2` 已完成 65 个测试文件、311 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.2` 发布内容
+
+- 在 Holopix 官网实际上传整链参考图，将界面参考权重改为 `0.20` 并只提交一次生成；结果成功保持参考图的对象数量与 3×4 布局。结合官网当前前端行为、既有 HAR 与本地客户端源码，原始多模型生成仍走 `wss://holopix.cn/pino_service_api/websocket/{clientId}` 的 `module=1` 加密帧；参考图上传前置调用 OSS token 与 `localUpload`，生成 payload 使用 `layoutRefer`、`layoutReferId`、`layoutReferMode`、`sketchType`，并以顶层 `layoutReferWeight: 0.2` 表示本次权重。
+- 本机 `ComfyUI-Holopix` 的 `HolopixGenerate` 新增兼容旧工作流的可选 `reference_weight`，默认 `0.2`、范围 `0–1`。客户端仅在真实参考图存在时显式写入 `layoutReferWeight`，把权重加入请求去重材料，并返回不含凭据、URL 与唯一 ID 的安全请求元数据；7 项离线测试与 `py_compile` 通过，重启后 `/object_info` 已确认新 schema。
+- 新增 `GPlusF.json` 与语义适配器：`HolopixGenerateV3` 先输出 GPT 整链并保存 raw checkpoint，`AutoObjectSheetCrop` 随后按阅读顺序裁成单件批次；`AssertImageBatchCount` 同时检查最终批次数量和 `max_objects` 截断前的检测数量，任何不一致都会在 Holopix 上传与生成前失败。适配器按物品数动态创建 `ImageFromBatch → HolopixUploadReference → HolopixGenerate` 单件分支，每张真实裁切图固定 `0.2` 参考权重、`1:1`、`batch=1` 与独立 nonce，并以数据依赖严格串行；结果按原顺序合批后再进行 BiRefNet 抠图、写入 Alpha 和稳定 `assetCode` 保存。
+- “AI初稿”增加 `G+F · GPT 整图裁切 + Holopix 逐图 0.2 细化` 版本；运行时加载 `GPlusF.json`、`Holopix.json` 与 `ImageRefinerStyle.png`，先把内置风格图覆盖上传到 Comfy input，再提交一次 GPT sheet 与 N 次逐图 Holopix。界面显示 `35 + 3 × N` 积分估算，并为每张串行参考图上传单独预留等待时间；候选状态、历史恢复、待确认保护、删除记录和标准网格回填均按 `g-plus-f` 与 Flux / GPT Image 2 隔离。
+- AI细化的 V3 整张返回图在按槽位切回前新增 `Image Filter Adjustments`：固定以 `saturation=0.95` 表示饱和度 `-5%`，以 `brightness=0.01` 表示亮度 `+1%`，其余对比度、锐度、模糊和增强项保持中性值。工作流适配器和 Comfy 节点健康检查同步要求该节点，并在每次提交前重写参数与 `HolopixGenerateV3 → 整图调色 → DynamicObjectSheetUnpack` 连线，避免模板被误改后绕过调色。
+- 本地 Comfy 端到端只提交一次两物品 G+F 冒烟任务，预计 `35 + 3 × 2 = 41` 点且没有自动重试；总耗时约 148 秒。历史核验为 `GPT sheet → AutoObjectSheetCrop → 数量与截断前检测 guard → 两个独立 ImageFromBatch → 两次独立参考上传 → 两次串行 HolopixGenerate`，两个生成节点均为 `reference_weight=0.2`、`1:1`、`batch=1` 和独立 nonce，最后按原顺序合批。输出包含 1 张 `2048×1536 RGB` raw sheet 与 2 张 `1024×1024 RGBA` 候选，Alpha 范围均为 `0–255`。
+- 自动化验证为 65 个测试文件、311 项测试、TypeScript strict 与生产构建全部通过；`comfy validate` 对静态与运行时注入后的 G+F API 工作流均为 0 错误、0 警告。
 
 ## `0.8.1` 发布内容
 
@@ -333,6 +343,8 @@
 
 ## 仍需人工验证
 
+- 在 Photoshop 中对一组图片执行 AI细化，确认 Comfy 历史链路为 `HolopixGenerateV3 → Image Filter Adjustments → DynamicObjectSheetUnpack`，调色节点显示 `brightness=0.01`、`saturation=0.95`，整图预览为调色后的结果；切回数量、原槽位、后续 BiRefNet 抠图和 Photoshop 回插位置均不得改变。
+- 在 Photoshop 中重载 `0.8.2`，确认 AI初稿版本列表出现 `G+F · GPT 整图裁切 + Holopix 逐图 0.2 细化`。选择 2–3 个棋子运行一轮：日志应先显示内置 `ImageRefinerStyle.png` 已上传，再完成 GPT raw sheet 与裁切数量校验，然后逐张显示参考图上传和 `0.2` 权重 Holopix 细化；第 N+1 张不得在第 N 张生成完成前上传。Comfy 历史中的每个 `HolopixGenerate.reference` 都必须连接对应的单张 `HolopixUploadReference`，不能直接连接 GPT 整图或只经过图片转提示词。最终候选应按 `assetCode` 回到正确行、带透明 Alpha，并可在画板 PSD 与标准网格中沿用现有整排/单个回填；切换到 Flux 或 GPT Image 2 后候选、待确认状态与历史恢复不得串线。
 - 在 Photoshop 中重载 `0.7.8`。确认 AI细化上传的图2为新版 `Flux2_00045_.png` 内容，图1仍为 Photoshop 来源拼图；输入框初始为空并显示“补充要求（可选）”，留空时仍可运行。分别选择单个智能对象、单个栅格图层，以及同时含智能对象、栅格图层、嵌套子组和文字/调整层的图层组：单图层应只上传一张并在来源正上方插入“`原图层名 细化`”；图层组应只统计并上传可读图片层，非图片层显示为跳过，并在来源组正上方创建同级“`原组名 细化`”组。分别在“插入为智能对象”未勾选和勾选时验证输出为栅格图层和智能对象；每张切回图片都应经过 BiRefNet 批量抠图并带透明 Alpha、保持来源顺序和画布位置。任务中途切换文档时结果不得写入错误文档，切回来源文档后“插入就绪细化图片”应可直接回插且不会重新提交 Holopix。重点验证横图、竖图、透明物件、重复图层名、嵌套组和 64 张上限；确认超过 240 秒的任务会继续等待且可在 600 秒内正常回插；取消任务应停止等待并向已提交的 ComfyUI prompt 发送取消请求。
 - 在 Photoshop 中热重载当前 `dist`：没有打开文档时确认“AI编辑”“AI勾线”“AI细化”整栏都不出现；分别打开不含 ChessGo 结构的普通文档和 ChessGo PSD，确认三者都显示并默认收起。ChessGo PSD 中一级折叠栏顺序严格为“当前 PSD → AI初稿 → AI编辑 → AI勾线 → AI细化 → 生成 PSD → 运行与诊断”。先展开三栏、填写输入并调整选项，再切到需要隐藏这些页签的文档；确认页签隐藏，切回后原折叠状态、输入与选项仍完整保留。标题高度、分隔线、箭头和背景风格与其他模块一致，不出现旧 Centerline Forge 紫色皮肤。
 - 展开 AI勾线，确认不再显示“Photoshop 输出”标题、“保留工作路径”、“生成工作路径”和路径名称输入；“生成描边”位于内容区最上方，没有当前会话且与活动文档匹配、来源图层仍存在的已绑定 Path JSON 时不显示“插入就绪描边”。生成成功后按钮应出现；保持新建的 `Autoline` 或选择同一文档内其他图层时按钮仍显示且可直接插入，无需切回来源图层。切到其他文档时隐藏，切回来源文档时恢复；删除来源图层后按钮应自动隐藏，插件重载后保持隐藏。描边宽度常驻；“高级选项”标题和箭头紧邻并作为一组靠左显示，标题和展开后的精细度、折角敏感度、平滑度共用同一个外框，内部没有参数分割线。四个数值框位于各自滑杆的右侧，可直接输入、与拖动值双向同步，并按各自上下限约束。确认描边宽度标题保持横排，生成的路径与 Shape 图层统一命名为 `Autoline`。在不同面板宽度下滑杆、输入框与按钮不溢出。

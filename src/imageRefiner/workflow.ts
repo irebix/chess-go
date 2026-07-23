@@ -8,6 +8,7 @@ export const IMAGE_REFINER_REQUIRED_NODE_TYPES = [
   "DynamicObjectSheetPack",
   "PrimitiveStringMultiline",
   "HolopixGenerateV3",
+  "Image Filter Adjustments",
   "DynamicObjectSheetUnpack",
   "BiRefNetRMBG",
   "InvertMask",
@@ -40,6 +41,7 @@ interface ImageRefinerNodes {
   pack: NodeMatch;
   prompt: NodeMatch;
   generate: NodeMatch;
+  adjustReturnedSheet: NodeMatch;
   unpack: NodeMatch;
   removeBackground: NodeMatch;
   invertMask: NodeMatch;
@@ -94,7 +96,16 @@ export function prepareImageRefinerWorkflow(
   nodes.generate.node.inputs.request_nonce = options.requestNonce;
   nodes.generate.node.inputs.vip_channel = true;
   delete nodes.generate.node.inputs.confirm_cost;
-  nodes.unpack.node.inputs.returned_sheet = [nodes.generate.id, 0];
+  nodes.adjustReturnedSheet.node.inputs.image = [nodes.generate.id, 0];
+  nodes.adjustReturnedSheet.node.inputs.brightness = 0.01;
+  nodes.adjustReturnedSheet.node.inputs.contrast = 1;
+  nodes.adjustReturnedSheet.node.inputs.saturation = 0.95;
+  nodes.adjustReturnedSheet.node.inputs.sharpness = 1;
+  nodes.adjustReturnedSheet.node.inputs.blur = 0;
+  nodes.adjustReturnedSheet.node.inputs.gaussian_blur = 0;
+  nodes.adjustReturnedSheet.node.inputs.edge_enhance = 0;
+  nodes.adjustReturnedSheet.node.inputs.detail_enhance = "false";
+  nodes.unpack.node.inputs.returned_sheet = [nodes.adjustReturnedSheet.id, 0];
   nodes.unpack.node.inputs.layout = [nodes.pack.id, 1];
   nodes.unpack.node.inputs.output_size = 512;
   nodes.removeBackground.node.inputs.image = [nodes.unpack.id, 0];
@@ -124,6 +135,7 @@ function resolveNodes(workflow: ComfyWorkflow): ImageRefinerNodes {
   const pack = findOnlyNode(workflow, "DynamicObjectSheetPack");
   const prompt = findOnlyNode(workflow, "PrimitiveStringMultiline");
   const generate = findOnlyNode(workflow, "HolopixGenerateV3");
+  const adjustReturnedSheet = findOnlyNode(workflow, "Image Filter Adjustments");
   const unpack = findOnlyNode(workflow, "DynamicObjectSheetUnpack");
   const removeBackground = findOnlyNode(workflow, "BiRefNetRMBG");
   const invertMask = findOnlyNode(workflow, "InvertMask");
@@ -135,7 +147,18 @@ function resolveNodes(workflow: ComfyWorkflow): ImageRefinerNodes {
   assertConnection(referenceBatch.node.inputs.image2, styleReference.id, 0, "ImageBatch.image2");
   assertConnection(generate.node.inputs.images, referenceBatch.id, 0, "HolopixGenerateV3.images");
   assertConnection(generate.node.inputs.prompt, prompt.id, 0, "HolopixGenerateV3.prompt");
-  assertConnection(unpack.node.inputs.returned_sheet, generate.id, 0, "DynamicObjectSheetUnpack.returned_sheet");
+  assertConnection(
+    adjustReturnedSheet.node.inputs.image,
+    generate.id,
+    0,
+    "Image Filter Adjustments.image"
+  );
+  assertConnection(
+    unpack.node.inputs.returned_sheet,
+    adjustReturnedSheet.id,
+    0,
+    "DynamicObjectSheetUnpack.returned_sheet"
+  );
   assertConnection(unpack.node.inputs.layout, pack.id, 1, "DynamicObjectSheetUnpack.layout");
   assertConnection(removeBackground.node.inputs.image, unpack.id, 0, "BiRefNetRMBG.image");
   assertConnection(invertMask.node.inputs.mask, removeBackground.id, 1, "InvertMask.mask");
@@ -150,6 +173,7 @@ function resolveNodes(workflow: ComfyWorkflow): ImageRefinerNodes {
     pack,
     prompt,
     generate,
+    adjustReturnedSheet,
     unpack,
     removeBackground,
     invertMask,

@@ -2,6 +2,7 @@ import type { AiGeneratedImage } from "../domain/aiCandidates";
 import { safeGptImage2OutputName } from "./gptImage2Workflow";
 
 const GPT_IMAGE_2_OUTPUT_ROOT = "Holopix/ChessGo/GptImage2";
+const GPT_IMAGE_2_GENERATE_TITLE = "GPT Image 2｜整链生成";
 
 interface RecoveryImage {
   filename?: string;
@@ -18,6 +19,12 @@ interface RecoveryEntry {
   prompt?: unknown;
 }
 
+export interface NamedChainRecoveryOptions {
+  outputRoot: string;
+  generateClassType: string;
+  generateTitle: string;
+}
+
 interface RecoveredImage {
   image: AiGeneratedImage;
   sequence: number;
@@ -28,15 +35,30 @@ export function collectRecentGptImage2Images(
   assetCodes: string[],
   baseUrl: string
 ): Record<string, AiGeneratedImage[]> {
+  return collectRecentNamedChainImages(history, assetCodes, baseUrl, {
+    outputRoot: GPT_IMAGE_2_OUTPUT_ROOT,
+    generateClassType: "HolopixGenerateV3",
+    generateTitle: GPT_IMAGE_2_GENERATE_TITLE
+  });
+}
+
+export function collectRecentNamedChainImages(
+  history: Record<string, RecoveryEntry>,
+  assetCodes: string[],
+  baseUrl: string,
+  options: NamedChainRecoveryOptions
+): Record<string, AiGeneratedImage[]> {
+  const outputRoot = normalizeSubfolder(options.outputRoot);
+  if (!outputRoot) throw new Error("整链恢复输出目录不能为空。");
   const recovered = new Map(assetCodes.map((assetCode) => [assetCode, [] as RecoveredImage[]]));
   for (const entry of Object.values(history)) {
-    if (!isGptImage2Entry(entry)) continue;
+    if (!isNamedChainEntry(entry, options)) continue;
     const entrySequence = historySequence(entry);
     for (const output of Object.values(entry.outputs ?? {})) {
       for (const image of output.images ?? []) {
         if (!image.filename || (image.type ?? "output") !== "output") continue;
         const subfolder = normalizeSubfolder(image.subfolder);
-        if (!subfolder.startsWith(`${GPT_IMAGE_2_OUTPUT_ROOT}/`)) continue;
+        if (!subfolder.startsWith(`${outputRoot}/`)) continue;
         for (const assetCode of assetCodes) {
           if (!matchesAssetCode(image.filename, assetCode)) continue;
           recovered.get(assetCode)!.push({
@@ -68,16 +90,38 @@ export function collectGptImage2ImagesForPromptId(
   assetCode: string,
   baseUrl: string
 ): AiGeneratedImage[] {
-  const entry = history[promptId];
-  if (!entry) return [];
-  return collectRecentGptImage2Images({ [promptId]: entry }, [assetCode], baseUrl)[assetCode] ?? [];
+  return collectNamedChainImagesForPromptId(history, promptId, assetCode, baseUrl, {
+    outputRoot: GPT_IMAGE_2_OUTPUT_ROOT,
+    generateClassType: "HolopixGenerateV3",
+    generateTitle: GPT_IMAGE_2_GENERATE_TITLE
+  });
 }
 
-function isGptImage2Entry(entry: RecoveryEntry): boolean {
+export function collectNamedChainImagesForPromptId(
+  history: Record<string, RecoveryEntry>,
+  promptId: string,
+  assetCode: string,
+  baseUrl: string,
+  options: NamedChainRecoveryOptions
+): AiGeneratedImage[] {
+  const entry = history[promptId];
+  if (!entry) return [];
+  return collectRecentNamedChainImages(
+    { [promptId]: entry },
+    [assetCode],
+    baseUrl,
+    options
+  )[assetCode] ?? [];
+}
+
+function isNamedChainEntry(
+  entry: RecoveryEntry,
+  options: Pick<NamedChainRecoveryOptions, "generateClassType" | "generateTitle">
+): boolean {
   const workflow = extractWorkflow(entry.prompt);
   return Boolean(workflow && Object.values(workflow).some((node) => (
-    node?.class_type === "HolopixGenerateV3"
-    && node._meta?.title === "GPT Image 2｜整链生成"
+    node?.class_type === options.generateClassType
+    && node._meta?.title === options.generateTitle
   )));
 }
 
