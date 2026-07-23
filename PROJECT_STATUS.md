@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-23
-当前发布版本：`0.8.0`
+当前发布版本：`0.8.1`
 
 ## 一句话摘要
 
@@ -11,17 +11,24 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.0`（本地待提交） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.0`（本地待提交） |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.1` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.1` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.0`。
+- `manifest.json` 与 `package.json` 均为 `0.8.1`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步本地 `0.8.0` 运行文件，十个运行文件与源码仓库 `dist` SHA-256 一致；当前改动尚未提交或推送。
-- `0.8.0` 已完成 60 个测试文件、290 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有包体积提示。Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 已同步 `0.8.1` 完整运行包和 revision 2 安装器；十个运行文件与源码仓库 `dist` SHA-256 一致。
+- `0.8.1` 已完成 61 个测试文件、293 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.1` 发布内容
+
+- 根据其他环境安装后的实际目录 ZIP，确认弹窗显示 `0.8.0` 安装成功时，目标目录只有 `manifest.json`、`Holopix.json`、`GptImage2.json`、`index.html`、`main.js`、许可证和样式七项；缺少 `ImageEditor.json`、`ImageRefiner.json` 与 `ImageRefinerStyle.png`，因此 AI编辑和 AI细化会在读取插件资源时立即阻断。
+- 根因是安装器在 `0.5.4` 后先后扩充运行文件清单，却一直保留 `CHESSGO_INSTALLER_REVISION=1`。旧七文件安装器下载到新 `0.8.0` 发布目录后仍只复制自身认识的七项；自更新又因远端安装器同为 revision 1 而跳过，所以“安装成功”只代表旧清单成功。
+- 安装器 revision 提升为 `2`，让所有 revision 1 安装器在正式安装前强制换成最新完整清单；新版同时在 revision 相同但安装器内容变化时也执行刷新，避免未来忘记提升 revision 再次冻结旧复制逻辑。新增回归测试约束 revision、十项运行文件和同 revision 内容刷新分支，插件版本提升为 `0.8.1`。
+- 自动化验证为 61 个测试文件、293 项测试、TypeScript strict 与生产构建全部通过；Webpack 仅有既有 `main.js` 与固定参考图体积建议。
 
 ## `0.8.0` 发布内容
 

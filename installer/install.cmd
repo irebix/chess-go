@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=1"
+set "CHESSGO_INSTALLER_REVISION=2"
 set "CHESSGO_INSTALLER=%~f0"
 set "CHESSGO_PWSH="
 where pwsh.exe >nul 2>nul
@@ -131,13 +131,21 @@ try {
     exit 0
   }
   $candidateRevision = [int64]$candidateRevisionMatch.Groups[1].Value
-  if ($candidateRevision -le $currentRevision) {
+  if ($candidateRevision -lt $currentRevision) {
+    Remove-Item -LiteralPath $candidatePath -Force
+    exit 0
+  }
+  if ($candidateRevision -eq $currentRevision -and $candidateContent -ceq $currentContent) {
     Remove-Item -LiteralPath $candidatePath -Force
     exit 0
   }
   Assert-ChessGoInstaller $candidateContent "The downloaded installer"
 
-  Write-Host "A newer ChessGo installer is ready. Updating revision $currentRevision to $candidateRevision..."
+  if ($candidateRevision -gt $currentRevision) {
+    Write-Host "A newer ChessGo installer is ready. Updating revision $currentRevision to $candidateRevision..."
+  } else {
+    Write-Host "An updated ChessGo installer payload is ready. Refreshing revision $currentRevision..."
+  }
   exit 20
 } catch {
   if (Test-Path -LiteralPath $candidatePath) {
