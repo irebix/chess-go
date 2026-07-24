@@ -335,7 +335,7 @@ const PLUGIN_UPDATE_STATUS_MESSAGES: Record<PluginUpdateStatusStage, string> = {
   "release-verified": "发布包校验通过。",
   "preparing-registration": "正在准备 UXP 插件注册。",
   "installing-files": "正在写入插件文件并更新注册。",
-  "completed": "更新完成，请重启 Photoshop。",
+  "completed": "升级成功，重启 Photoshop 后生效。",
   "failed": "更新失败。"
 };
 
@@ -351,7 +351,7 @@ function formatPluginUpdateStatus(record: PluginUpdateStatusRecord): string {
         : PLUGIN_UPDATE_STATUS_MESSAGES[record.stage];
     case "completed":
       return record.detail
-        ? `棋子go ${record.detail} 更新完成，请重启 Photoshop。`
+        ? `棋子go ${PLUGIN_VERSION} → ${record.detail} 升级成功，重启 Photoshop 后生效。`
         : PLUGIN_UPDATE_STATUS_MESSAGES[record.stage];
     case "failed":
       return record.detail

@@ -141,7 +141,7 @@ describe("UXP plugin update", () => {
         id: "a".repeat(32),
         kind: "success",
         stage: "completed",
-        detail: "0.8.10"
+        detail: "0.8.17"
       }))
     };
     const temporaryFolder = {
@@ -165,7 +165,7 @@ describe("UXP plugin update", () => {
       progressEvents.push(progress);
     })).resolves.toEqual({
       outcome: "success",
-      message: "棋子go 0.8.10 更新完成，请重启 Photoshop。"
+      message: "棋子go 0.8.16 → 0.8.17 升级成功，重启 Photoshop 后生效。"
     });
 
     expect(installerWrites).toEqual([installerContent]);
@@ -189,7 +189,7 @@ describe("UXP plugin update", () => {
       { kind: "progress", message: "更新程序已启动。" },
       {
         kind: "success",
-        message: "棋子go 0.8.10 更新完成，请重启 Photoshop。"
+        message: "棋子go 0.8.16 → 0.8.17 升级成功，重启 Photoshop 后生效。"
       }
     ]);
   });

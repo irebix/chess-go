@@ -8,7 +8,7 @@ const webpackConfig = readFileSync(resolve(process.cwd(), "webpack.config.js"), 
 
 describe("Windows installer", () => {
   it("advances the installer revision for manifest-driven payload installation", () => {
-    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=6"');
+    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=7"');
   });
 
   it("discovers and verifies every runtime file from the generated release manifest", () => {
@@ -60,14 +60,24 @@ describe("Windows installer", () => {
       'Write-Host "Photoshop folder selection is not required."'
     );
     expect(installer).toContain(
-      '$installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1")'
+      '$installerCommand = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1")'
     );
     expect(installer).toContain('"{0}" --internal-update');
+    expect(installer).toContain("$env:CHESSGO_UPDATE_STATUS_BASE64");
+    expect(installer).toContain("[Convert]::FromBase64String($encodedUpdateStatusPath)");
+    expect(installer).toContain(
+      '$statusEnvironmentPrefix = \'set "CHESSGO_UPDATE_STATUS_BASE64={0}" && \' -f $statusPathBase64'
+    );
     expect(installer).toContain("-Verb RunAs -WindowStyle Hidden");
     expect(installer).toContain("function Write-UpdateStatus");
     expect(installer).toContain('Write-UpdateStatus "progress" "downloading-release"');
     expect(installer).toContain('Write-UpdateStatus "success" "completed" ([string]$installation.Version)');
     expect(installer).toContain('Write-UpdateStatus "error" "failed" ([string]$_.Exception.Message)');
+    expect(installer).toContain("PreviousVersion = $previousVersion");
+    expect(installer).toContain(
+      '$result = "棋子go $previousVersion → $($installation.Version) 升级成功。`r`n`r`n重启 Photoshop 后生效。"'
+    );
+    expect(installer).toContain('$resultTitle = "棋子go 更新"');
     expect(webpackConfig).toContain(
       '{ from: "installer/install.cmd", to: "ChessGoInstaller.cmd" }'
     );

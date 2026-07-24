@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=6"
+set "CHESSGO_INSTALLER_REVISION=7"
 set "CHESSGO_INSTALLER=%~f0"
 if /I "%~1"=="--internal-update" set "CHESSGO_INTERNAL_UPDATE=1"
 set "CHESSGO_PWSH="
@@ -177,7 +177,17 @@ $managedReleaseDir = Join-Path $managedRoot "release"
 $archiveReleaseDir = Join-Path $managedRoot "archive-release"
 $releaseShaMarkerName = ".chessgo-release-sha"
 $updateStatusPath = $null
-if (-not [string]::IsNullOrWhiteSpace([string]$env:CHESSGO_UPDATE_STATUS_FILE)) {
+$encodedUpdateStatusPath = [string]$env:CHESSGO_UPDATE_STATUS_BASE64
+if (-not [string]::IsNullOrWhiteSpace($encodedUpdateStatusPath)) {
+  try {
+    $decodedUpdateStatusPath = [Text.Encoding]::UTF8.GetString(
+      [Convert]::FromBase64String($encodedUpdateStatusPath)
+    )
+    $updateStatusPath = [IO.Path]::GetFullPath($decodedUpdateStatusPath)
+  } catch {
+    $updateStatusPath = $null
+  }
+} elseif (-not [string]::IsNullOrWhiteSpace([string]$env:CHESSGO_UPDATE_STATUS_FILE)) {
   try {
     $updateStatusPath = [IO.Path]::GetFullPath([string]$env:CHESSGO_UPDATE_STATUS_FILE)
   } catch {
@@ -688,6 +698,13 @@ function Install-RegisteredUxpPlugin(
 
   $registryExisted = Test-Path -LiteralPath $registryPath -PathType Leaf
   $registry = Read-UxpPluginRegistry $registryPath
+  $previousVersion = [string](
+    $registry.plugins |
+      Where-Object { [string]$_.pluginId -eq $pluginId } |
+      ForEach-Object { [string]$_.versionString } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Select-Object -First 1
+  )
   $otherPlugins = @(
     $registry.plugins | Where-Object { [string]$_.pluginId -ne $pluginId }
   )
@@ -824,6 +841,7 @@ function Install-RegisteredUxpPlugin(
 
   return [pscustomobject]@{
     Destination = $safeDestination
+    PreviousVersion = $previousVersion
     RegistryPath = $registryPath
     Version = $version
   }
@@ -835,11 +853,19 @@ $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administ
 if (-not $isAdmin) {
   Write-Host "Requesting administrator permission..."
   Write-UpdateStatus "progress" "awaiting-admin"
-  $installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
+  $installerCommand = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
     '"{0}" --internal-update' -f $installerPath
   } else {
     '"{0}"' -f $installerPath
   }
+  $statusEnvironmentPrefix = ""
+  if ($updateStatusPath) {
+    $statusPathBase64 = [Convert]::ToBase64String(
+      [Text.Encoding]::UTF8.GetBytes($updateStatusPath)
+    )
+    $statusEnvironmentPrefix = 'set "CHESSGO_UPDATE_STATUS_BASE64={0}" && ' -f $statusPathBase64
+  }
+  $installerInvocation = $statusEnvironmentPrefix + $installerCommand
   $arguments = @("/d", "/c", $installerInvocation)
   try {
     Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden | Out-Null
@@ -964,22 +990,29 @@ try {
   $installation = Install-RegisteredUxpPlugin $sourceDir $manifest $photoshopRoot
 
   $photoshopIsRunning = @(Get-Process -Name Photoshop -ErrorAction SilentlyContinue).Count -gt 0
-  $resultAction = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
-    "was updated successfully"
+  $isInternalUpdate = [string]$env:CHESSGO_INTERNAL_UPDATE -eq "1"
+  if ($isInternalUpdate) {
+    $previousVersion = if ([string]::IsNullOrWhiteSpace([string]$installation.PreviousVersion)) {
+      "旧版本"
+    } else {
+      [string]$installation.PreviousVersion
+    }
+    $result = "棋子go $previousVersion → $($installation.Version) 升级成功。`r`n`r`n重启 Photoshop 后生效。"
+    $resultTitle = "棋子go 更新"
   } else {
-    "was installed successfully"
-  }
-  $result = "ChessGo $($installation.Version) $resultAction.`r`n`r`nPlugin folder: $($installation.Destination)`r`nRegistration: $($installation.RegistryPath)`r`n`r`n"
-  if ($photoshopIsRunning) {
-    $result += "Restart Photoshop once to load the registered plugin. No other setup is required."
-  } else {
-    $result += "Start Photoshop normally to load the registered plugin. No other setup is required."
+    $activationMessage = if ($photoshopIsRunning) {
+      "重启 Photoshop 后生效。"
+    } else {
+      "启动 Photoshop 后生效。"
+    }
+    $result = "棋子go $($installation.Version) 安装成功。`r`n`r`n$activationMessage"
+    $resultTitle = "棋子go 安装"
   }
 
   Write-Host ""
   Write-Host $result
   Write-UpdateStatus "success" "completed" ([string]$installation.Version)
-  Show-Message $result "ChessGo Installer" ([System.Windows.Forms.MessageBoxIcon]::Information)
+  Show-Message $result $resultTitle ([System.Windows.Forms.MessageBoxIcon]::Information)
   exit 0
 } catch {
   $message = "Installation failed.`r`n`r`n$($_.Exception.Message)"

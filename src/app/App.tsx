@@ -110,7 +110,7 @@ interface UiError {
 }
 
 interface PluginUpdateUiState {
-  status: "idle" | "checking" | "current" | "available" | "error";
+  status: "idle" | "checking" | "current" | "available" | "installed" | "error";
   latestVersion?: string;
   detail?: string;
 }
@@ -197,6 +197,7 @@ export function App(): React.ReactElement {
   const thumbnailQueue = useRef<ThumbnailTask[]>([]);
   const thumbnailActiveCount = useRef(0);
   const updateCheckInFlight = useRef(false);
+  const updateInstalled = useRef(false);
 
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
@@ -324,18 +325,20 @@ export function App(): React.ReactElement {
   }, []);
 
   const checkForPluginRelease = useCallback(async (): Promise<void> => {
-    if (updateCheckInFlight.current) return;
+    if (updateCheckInFlight.current || updateInstalled.current) return;
     updateCheckInFlight.current = true;
     setPluginUpdate((current) => (
       current.status === "available" ? current : { status: "checking" }
     ));
     try {
       const result = await checkPluginUpdate();
+      if (updateInstalled.current) return;
       setPluginUpdate({
         status: result.updateAvailable ? "available" : "current",
         latestVersion: result.latestVersion
       });
     } catch (error) {
+      if (updateInstalled.current) return;
       const detail = toErrorMessage(error);
       setPluginUpdate((current) => (
         current.status === "available"
@@ -803,7 +806,14 @@ export function App(): React.ReactElement {
         ));
       });
       setMessage(result.message);
-      if (result.outcome === "error") {
+      if (result.outcome === "success") {
+        updateInstalled.current = true;
+        setPluginUpdate((current) => ({
+          status: "installed",
+          latestVersion: current.latestVersion,
+          detail: result.message
+        }));
+      } else {
         setUpdateLaunchHint(result.message);
       }
     } catch (error) {
@@ -1718,6 +1728,11 @@ export function App(): React.ReactElement {
                   重试检查
                 </button>
               </>
+            ) : null}
+            {pluginUpdate.status === "installed" ? (
+              <span className="diagnostics-update-detail">
+                {pluginUpdate.detail || "升级成功，重启 Photoshop 后生效。"}
+              </span>
             ) : null}
             {pluginUpdate.status === "available" ? (
               <>

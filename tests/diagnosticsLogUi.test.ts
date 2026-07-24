@@ -24,6 +24,9 @@ describe("diagnostics log UI", () => {
     expect(app).not.toContain("更新会自动使用当前插件注册位置");
     expect(app).not.toContain("diagnostics-update-note");
     expect(app).toContain('status: "idle"');
+    expect(app).toContain('status: "installed"');
+    expect(app).toContain("updateInstalled.current = true");
+    expect(app).toContain("升级成功，重启 Photoshop 后生效。");
     expect(app).toContain("尚未检查更新。");
     expect(app).toContain("检查更新");
     expect(app).not.toContain('window.addEventListener("focus", handleWindowFocus)');

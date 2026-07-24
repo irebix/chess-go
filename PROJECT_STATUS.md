@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-24
-当前发布版本：`0.8.15`
+当前发布版本：`0.8.16`
 
 ## 一句话摘要
 
@@ -11,17 +11,24 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.15` |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.15` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.16` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.16` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.15`。
+- `manifest.json` 与 `package.json` 均为 `0.8.16`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十三个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.15` 完整运行包和 revision 6 安装器；共十三个运行文件，均与源码仓库 `dist` SHA-256 一致。
-- `0.8.15` 已完成 75 个测试文件、340 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 已同步 `0.8.16` 完整运行包和 revision 7 安装器；共十三个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.16` 已完成 75 个测试文件、340 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.16` 发布内容
+
+- 修复内部更新通过 Windows UAC 提升管理员权限后状态文件路径丢失：提升命令显式注入 UTF-8 Base64 路径，管理员阶段会继续写入授权、下载、校验、注册、安装和最终成功/失败状态。
+- 插件收到成功终态后进入“已安装、等待重启”状态，停止后台版本检查并隐藏更新按钮；诊断日志同步记录“当前版本 → 新版本升级成功，重启 Photoshop 后生效”。
+- 内部更新成功弹窗精简为中文“棋子go 旧版本 → 新版本升级成功。重启 Photoshop 后生效。”；外部安装成功弹窗也移除插件目录和注册表等技术信息。
+- Windows 安装器提升到 revision 7。自动化验证为 75 个测试文件、340 项测试、TypeScript strict 与生产构建全部通过；发布清单覆盖十三个运行文件并与 `dist` 的字节数、SHA-256 一致。
 
 ## `0.8.15` 发布内容
 

@@ -3,7 +3,7 @@ import manifest from "../manifest.json";
 
 describe("UXP manifest", () => {
   it("publishes the current release without changing host startup boundaries", () => {
-    expect(manifest.version).toBe("0.8.15");
+    expect(manifest.version).toBe("0.8.16");
     expect(manifest.host.minVersion).toBe("24.2.0");
     expect(manifest.host.data.loadEvent).toBe("use");
   });
