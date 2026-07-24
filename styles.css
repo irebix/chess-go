@@ -802,6 +802,36 @@ button:disabled {
   gap: 6px;
 }
 
+.table-grid-generation-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.generation-branch-note {
+  margin: 0;
+  color: var(--uxp-host-text-color-secondary, #a8a8a8);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.generation-branch-divider {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0;
+  color: var(--uxp-host-text-color-secondary, #929292);
+  font-size: 10px;
+}
+
+.generation-branch-divider::before,
+.generation-branch-divider::after {
+  height: 1px;
+  flex: 1 1 auto;
+  background: var(--uxp-host-border-color, #4a4a4a);
+  content: "";
+}
+
 .generation-setting-control {
   display: flex;
   min-height: 36px;
