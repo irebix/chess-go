@@ -1,7 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-24
-当前发布版本：`0.8.13`
+当前发布版本：`0.8.14`
 
 ## 一句话摘要
 
@@ -11,17 +11,23 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.13` |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.13` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.14` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.14` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 均为 `0.8.13`。
+- `manifest.json` 与 `package.json` 均为 `0.8.14`。
 - `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十三个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.13` 完整运行包和 revision 6 安装器；共十三个运行文件，均与源码仓库 `dist` SHA-256 一致。
-- `0.8.13` 已完成 72 个测试文件、330 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `ChessGo-Release` 已同步 `0.8.14` 完整运行包和 revision 6 安装器；共十三个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.14` 已完成 72 个测试文件、330 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+
+## `0.8.14` 发布内容
+
+- 修复内部更新启动时报 `writeToFile: data cannot be null`：UXP 不接受空字符串作为 UTF-8 写入数据，状态文件初始化改为写入一个可忽略的 JSONL 空行。
+- 回归测试明确要求初始化内容非空；安装器追加的 JSONL 状态记录及插件日志解析行为保持不变。
+- 自动化验证为 72 个测试文件、330 项测试、TypeScript strict 与生产构建全部通过；发布清单覆盖十三个运行文件并与 `dist` 的字节数、SHA-256 一致。
 
 ## `0.8.13` 发布内容
 

@@ -169,7 +169,8 @@ describe("UXP plugin update", () => {
     });
 
     expect(installerWrites).toEqual([installerContent]);
-    expect(statusWrites).toEqual([""]);
+    expect(statusWrites).toEqual(["\r\n"]);
+    expect(statusWrites[0]).not.toBe("");
     expect(temporaryFolder.createFile).toHaveBeenCalledWith(
       CHESSGO_UPDATE_LAUNCHER,
       { overwrite: true }

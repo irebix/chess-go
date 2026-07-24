@@ -131,7 +131,9 @@ export async function launchPluginUpdate(
     CHESSGO_UPDATE_STATUS_FILE,
     { overwrite: true }
   );
-  await statusFile.write("", { format: storage.formats.utf8 });
+  // UXP rejects an empty UTF-8 payload as null data. A blank JSONL line still
+  // truncates the file and is ignored by the status parser.
+  await statusFile.write("\r\n", { format: storage.formats.utf8 });
   const statusPath = statusFile.nativePath ?? provider.getNativePath?.(statusFile);
   if (!statusPath) {
     throw new Error("无法取得棋子go更新状态文件的系统路径。");
