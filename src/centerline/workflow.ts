@@ -65,7 +65,7 @@ export function createAutomaticOutlineWorkflow(): CenterlineWorkflow {
         aspect_ratio: "1:1",
         batch_size: "1",
         request_nonce: 365901467480228,
-        confirm_cost: true,
+        vip_channel: true,
         timeout_seconds: 150,
         prompt: ["12", 0],
         images: ["24", 0]

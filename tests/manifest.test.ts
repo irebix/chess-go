@@ -3,7 +3,7 @@ import manifest from "../manifest.json";
 
 describe("UXP manifest", () => {
   it("publishes the standard-grid release without changing host startup boundaries", () => {
-    expect(manifest.version).toBe("0.8.5");
+    expect(manifest.version).toBe("0.8.6");
     expect(manifest.host.minVersion).toBe("24.2.0");
     expect(manifest.host.data.loadEvent).toBe("use");
   });

@@ -111,9 +111,10 @@ describe("Centerline Forge workflow integration", () => {
       aspect_ratio: "1:1",
       batch_size: "1",
       request_nonce: 1784614660069,
-      confirm_cost: true,
+      vip_channel: true,
       timeout_seconds: 150
     });
+    expect(workflow["11"]?.inputs).not.toHaveProperty("confirm_cost");
     expect(workflow["4"]?.inputs).toMatchObject({
       filename_prefix: "centerline_forge/centerline_pad20",
       overwrite: true
