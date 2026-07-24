@@ -20,13 +20,22 @@ describe("AI image refiner integration", () => {
     expect(generator).toBeGreaterThan(refine);
   });
 
-  it("creates sibling group or layer results, preserves ordering and supports smart objects", () => {
+  it("creates sibling group or layer results, preserves ordering and supports native PSB smart objects", () => {
     const source = readFileSync(resolve("src/photoshop/imageRefinerInsert.ts"), "utf8");
     const createGroup = source.indexOf("document.createLayerGroup");
     const siblingMove = source.indexOf("outputGroup.move(selectedSource, constants.ElementPlacement.PLACEBEFORE)");
     const singleMove = source.indexOf("placedLayer.move(selectedSource, constants.ElementPlacement.PLACEBEFORE)");
     const firstInside = source.indexOf("placedLayer.move(outputGroup as LayerLike, constants.ElementPlacement.PLACEINSIDE)");
     const nextAfter = source.indexOf("placedLayer.move(previousLayer, constants.ElementPlacement.PLACEAFTER)");
+    const place = source.indexOf("placeEmbeddedDescriptor(temporaryResults[index]!.token)");
+    const psbWrap = source.indexOf(
+      "convertSelectedLayerToEmbeddedSmartObjectDescriptor()",
+      place
+    );
+    const placedLayer = source.indexOf(
+      "const placedLayer = document.activeLayers?.[0]",
+      psbWrap
+    );
     const gridConstraint = source.indexOf('placementMode === "STANDARD_GRID"');
     const target = source.indexOf("constrainBoundsToPrimaryGridSlot(source.bounds)", gridConstraint);
     const fit = source.indexOf("await fitLayerInsideBounds(", target);
@@ -35,6 +44,9 @@ describe("AI image refiner integration", () => {
     const rasterize = source.indexOf('_obj: "rasterizeLayer"', fit);
     expect(createGroup).toBeGreaterThan(-1);
     expect(siblingMove).toBeGreaterThan(createGroup);
+    expect(place).toBeGreaterThan(siblingMove);
+    expect(psbWrap).toBeGreaterThan(place);
+    expect(placedLayer).toBeGreaterThan(psbWrap);
     expect(singleMove).toBeGreaterThan(siblingMove);
     expect(firstInside).toBeGreaterThan(siblingMove);
     expect(nextAfter).toBeGreaterThan(firstInside);
@@ -98,10 +110,10 @@ describe("AI image refiner integration", () => {
   it("keeps the UXP prompt editor empty and treats it as an optional suffix", () => {
     const panel = readFileSync(resolve("src/app/AiRefinePanel.tsx"), "utf8");
     expect(panel).toContain('const [promptText, setPromptText] = useState("")');
-    expect(panel).toContain("const [keepSmartObject, setKeepSmartObject] = useState(false)");
+    expect(panel).toContain("const [keepSmartObject, setKeepSmartObject] = useState(true)");
     expect(panel).toContain("补充要求（可选）");
     expect(panel).toContain("填写内容会追加到 ComfyUI 主提示词末尾");
-    expect(panel).toContain("插入为智能对象");
+    expect(panel).toContain("插入为 PSB 智能对象");
     expect(panel).not.toContain("IMAGE_REFINER_DEFAULT_PROMPT");
   });
 });

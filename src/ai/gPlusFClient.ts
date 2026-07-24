@@ -81,7 +81,7 @@ export async function generateGPlusFChain(
   const estimatedCostPoints = gPlusFEstimatedCostPoints(options.items.length);
   options.onStage?.(
     `已确保 ${G_PLUS_F_STYLE_ASSET} 上传；GPT Image 2 将先生成整张初稿并裁切为 `
-      + `${options.items.length} 张，每张裁切图再独立上传为真实参考图，以 0.2 权重`
+      + `${options.items.length} 张，每张裁切图再独立上传为真实参考图，以 0.4 权重`
       + `串行交给 Holopix 逐图细化。预计消耗 ${estimatedCostPoints} 积分`
       + `（35 + 3 × ${options.items.length}）。`
   );

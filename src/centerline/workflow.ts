@@ -236,6 +236,14 @@ export function createAutomaticOutlineWorkflow(): CenterlineWorkflow {
       },
       class_type: "easy ifElse",
       _meta: { title: "小图放大 / 大图保持原尺寸" }
+    },
+    "29": {
+      inputs: {
+        filename_prefix: `centerline_forge/${CENTERLINE_OUTPUT_BASENAME}_refit_source`,
+        images: ["18", 0]
+      },
+      class_type: "SaveImage",
+      _meta: { title: "保存高级参数重拟合输入" }
     }
   };
 }
@@ -252,6 +260,30 @@ export function makeAutomaticOutlinePrompt(
   prompt["2"]!.inputs.corner_sensitivity = clampPercent(settings.cornerSensitivity);
   prompt["2"]!.inputs.smoothing = clampPercent(settings.smoothing);
   return prompt;
+}
+
+export function makeOutlineRefitPrompt(
+  savedOutputImageName: string,
+  settings: CenterlineVectorSettings
+): CenterlineWorkflow {
+  const workflow = createAutomaticOutlineWorkflow();
+  const vectorize = workflow["2"]!;
+  vectorize.inputs = {
+    ...vectorize.inputs,
+    detail: clampPercent(settings.detail),
+    corner_sensitivity: clampPercent(settings.cornerSensitivity),
+    smoothing: clampPercent(settings.smoothing),
+    image: ["29", 0]
+  };
+  return {
+    "2": vectorize,
+    "4": workflow["4"]!,
+    "29": {
+      inputs: { image: savedOutputImageName },
+      class_type: "LoadImageOutput",
+      _meta: { title: "读取已保存的重拟合输入" }
+    }
+  };
 }
 
 function clampPercent(value: number): number {

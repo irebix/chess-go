@@ -34,7 +34,7 @@ export function AiRefinePanel({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [busy, setBusy] = useState(false);
-  const [keepSmartObject, setKeepSmartObject] = useState(false);
+  const [keepSmartObject, setKeepSmartObject] = useState(true);
   const [activeIdentity, setActiveIdentity] = useState<CenterlineLayerIdentity | null>(
     inspectActiveLayerIdentity
   );
@@ -367,7 +367,7 @@ export function AiRefinePanel({
                         disabled={busy || externalBusy}
                         onChange={(event) => setKeepSmartObject(event.currentTarget.checked)}
                       />
-                      <span>插入为智能对象</span>
+                      <span>插入为 PSB 智能对象</span>
                     </label>
                   </div>
                 ) : null}

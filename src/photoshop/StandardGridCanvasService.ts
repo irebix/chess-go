@@ -11,6 +11,7 @@ import {
   gridDraftExpectedLayerNames,
   gridDraftGroupName,
   gridDraftGroupRow,
+  isGridDraftRefinementGroupName,
   gridDraftLayerName,
   type GridDraftChainItemIdentity
 } from "../grid/GridDraftBinding";
@@ -237,7 +238,11 @@ export function inspectGridDraftBinding(
   if (draftGroupRow !== undefined && draftGroupRow >= STANDARD_GRID_TEMPLATE.grid.rows) {
     return { status: "invalid", reason: "AI初稿图层组记录的绑定行超出标准网格。" };
   }
-  const markerLayers = collectDraftMarkerLayers(document, expectedNames);
+  const markerLayers = collectDraftMarkerLayers(document, expectedNames).filter(
+    (record) => !record.ancestorGroupNames.some(
+      (name) => isGridDraftRefinementGroupName(name, chainId)
+    )
+  );
   if (draftGroup && markerLayers.some((record) => record.parentGroupId !== draftGroup.id)) {
     return { status: "invalid", reason: "同一条链的 AI初稿图层位于绑定组外。" };
   }
@@ -731,16 +736,32 @@ function layerCollectionValues(collection: GridLayerCollectionLike | undefined):
 function collectDraftMarkerLayers(
   document: StandardGridDocumentLike,
   expectedNames: ReadonlyMap<string, number>
-): Array<{ layer: GridLayerLike; chainIndex: number; parentGroupId: number | null }> {
-  const records: Array<{ layer: GridLayerLike; chainIndex: number; parentGroupId: number | null }> = [];
-  const visit = (collection: GridLayerCollectionLike | undefined, parentGroupId: number | null): void => {
+): Array<{
+  layer: GridLayerLike;
+  chainIndex: number;
+  parentGroupId: number | null;
+  ancestorGroupNames: string[];
+}> {
+  const records: Array<{
+    layer: GridLayerLike;
+    chainIndex: number;
+    parentGroupId: number | null;
+    ancestorGroupNames: string[];
+  }> = [];
+  const visit = (
+    collection: GridLayerCollectionLike | undefined,
+    parentGroupId: number | null,
+    ancestorGroupNames: string[]
+  ): void => {
     for (const layer of layerCollectionValues(collection)) {
       const chainIndex = expectedNames.get(layer.name);
-      if (chainIndex !== undefined) records.push({ layer, chainIndex, parentGroupId });
-      if (layer.layers) visit(layer.layers, layer.id);
+      if (chainIndex !== undefined) {
+        records.push({ layer, chainIndex, parentGroupId, ancestorGroupNames });
+      }
+      if (layer.layers) visit(layer.layers, layer.id, [...ancestorGroupNames, layer.name]);
     }
   };
-  visit(document.layers as unknown as GridLayerCollectionLike, null);
+  visit(document.layers as unknown as GridLayerCollectionLike, null, []);
   return records;
 }
 

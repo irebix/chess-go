@@ -44,6 +44,15 @@ export function gridDraftGroupRow(name: string, chainId?: string): number | unde
   return Number.isInteger(row) && row >= 0 ? row : undefined;
 }
 
+export function isGridDraftRefinementGroupName(name: string, chainId: string): boolean {
+  const suffix = " 细化";
+  let sourceName = name;
+  while (sourceName.endsWith(suffix)) {
+    sourceName = sourceName.slice(0, -suffix.length);
+  }
+  return sourceName !== name && gridDraftGroupRow(sourceName, chainId) !== undefined;
+}
+
 export function gridDraftExpectedLayerNames(
   chainId: string,
   items: readonly GridDraftChainItemIdentity[]

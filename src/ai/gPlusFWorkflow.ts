@@ -33,7 +33,7 @@ export const G_PLUS_F_NODE_TITLES = {
 
 export const G_PLUS_F_ITEMS_MARKER = GPT_IMAGE_2_ITEMS_MARKER;
 export const G_PLUS_F_ITEM_MARKER = "{{CHESS_GO_ITEM}}";
-export const G_PLUS_F_REFERENCE_WEIGHT = 0.2;
+export const G_PLUS_F_REFERENCE_WEIGHT = 0.4;
 
 export const G_PLUS_F_HOLOPIX_MODEL_CHAIN = [
   { modelId: 858, strength: 0.6 },

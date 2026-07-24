@@ -4,6 +4,7 @@ import {
   gridDraftExpectedLayerNames,
   gridDraftGroupName,
   gridDraftGroupRow,
+  isGridDraftRefinementGroupName,
   gridDraftLayerName
 } from "../src/grid/GridDraftBinding";
 
@@ -32,5 +33,14 @@ describe("standard grid AI draft binding", () => {
     expect(gridDraftGroupRow(name, "Sheet1!A2:A9")).toBe(3);
     expect(gridDraftGroupRow(name)).toBe(3);
     expect(gridDraftGroupRow(name, "Sheet1!A10:A17")).toBeUndefined();
+  });
+
+  it("recognizes current and repeatedly refined result groups without matching other chains", () => {
+    const chainId = "Sheet1!A2:A9";
+    const groupName = gridDraftGroupName(chainId, "汽车零件", 0);
+    expect(isGridDraftRefinementGroupName(`${groupName} 细化`, chainId)).toBe(true);
+    expect(isGridDraftRefinementGroupName(`${groupName} 细化 细化`, chainId)).toBe(true);
+    expect(isGridDraftRefinementGroupName(groupName, chainId)).toBe(false);
+    expect(isGridDraftRefinementGroupName(`${groupName} 细化`, "Sheet1!A10:A17")).toBe(false);
   });
 });

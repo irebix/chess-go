@@ -137,7 +137,7 @@ describe("G+F per-item GPT sheet → Holopix workflow adapter", () => {
         aspect_ratio: "1:1",
         batch_size: "1",
         request_nonce: 42 + index,
-        reference_weight: 0.2
+        reference_weight: 0.4
       });
     }
     expect(prepared.refinementPromptTexts[0]).toContain("第 1/2 件");
@@ -204,7 +204,7 @@ describe("G+F per-item GPT sheet → Holopix workflow adapter", () => {
         batch_size: "1",
         confirm_cost: false,
         timeout_seconds: 175,
-        reference_weight: 0.2
+        reference_weight: 0.4
       });
     }
     expect(prepared.timeoutSeconds).toBe(500);
@@ -251,7 +251,7 @@ describe("G+F per-item GPT sheet → Holopix workflow adapter", () => {
     expect(() => assertGPlusFWorkflow(wholeSheetUpload)).toThrow(/单张 GPT 裁切图/);
 
     for (const [inputName, unsafeValue, message] of [
-      ["reference_weight", 0.8, /权重必须固定为 0.2/],
+      ["reference_weight", 0.8, /权重必须固定为 0.4/],
       ["batch_size", "2", /batch_size 必须固定为 1/],
       ["aspect_ratio", "4:3", /aspect_ratio 必须固定为 1:1/]
     ] as const) {

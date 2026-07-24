@@ -101,10 +101,11 @@ describe("standard grid AI integration", () => {
     expect(source).not.toContain("planGridSlots");
   });
 
-  it("validates outline placement and moves the Shape above the bound source", () => {
+  it("allows outline insertion on ordinary documents and moves the Shape above the bound source", () => {
     const panel = readFileSync(resolve("src/app/AiOutlinePanel.tsx"), "utf8");
     const importer = readFileSync(resolve("src/centerline/pathImporter.ts"), "utf8");
-    expect(panel).toContain('resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS"');
+    expect(panel).not.toContain('resolvePlacementMode(app.activeDocument)');
+    expect(panel).not.toContain("当前不是棋子go标准网格画布");
     expect(panel).toContain("pixels.layerId");
     expect(importer).toContain("await alignResultToSource(");
     expect(importer).toContain('{ fit: "preserve", moveAbove: true }');

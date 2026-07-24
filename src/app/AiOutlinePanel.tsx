@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CenterlineComfyClient } from "../centerline/client";
 import {
   assertActiveLayerSource,
-  inspectActiveLayerIdentity,
   isLayerAvailable,
   readActiveLayerPixels,
   readLayerPixels,
@@ -19,16 +18,19 @@ import { createCenterlinePathTransform } from "../centerline/pathGeometry";
 import { validatePathJson } from "../centerline/pathJson";
 import type {
   CenterlineJob,
-  CenterlineLayerIdentity,
   CenterlineLayerSource,
   CenterlinePathJson,
-  CenterlineReport
+  CenterlineReport,
+  CenterlineVectorSettings
 } from "../centerline/types";
+import {
+  isReadyResultAvailableForActiveDocument,
+  shouldReportStoredOutlineAsReady
+} from "../centerline/readyResultScope";
 import { toErrorMessage } from "../utils/errors";
-import { resolvePlacementMode } from "../photoshop/placementMode";
-import { app } from "photoshop";
 
 interface AiOutlinePanelProps {
+  activeDocumentId: number | null;
   externalBusy: boolean;
   onBusyChange: (busy: boolean) => void;
   onStatus: (detail: string, level?: "info" | "warn" | "error") => void;
@@ -38,15 +40,19 @@ type ConnectionState = "checking" | "ready" | "error";
 
 const client = new CenterlineComfyClient();
 const CENTERLINE_OUTPUT_NAME = "Autoline";
+const SOURCE_AVAILABILITY_RETRY_DELAYS_MS = [100, 250, 500];
 
 interface SessionReusablePath {
   pathJson: CenterlinePathJson;
   source: CenterlineLayerSource;
+  promptId: string;
+  settings: CenterlineVectorSettings;
 }
 
 let sessionReusablePath: SessionReusablePath | null = null;
 
 export function AiOutlinePanel({
+  activeDocumentId,
   externalBusy,
   onBusyChange,
   onStatus
@@ -57,9 +63,6 @@ export function AiOutlinePanel({
   const [busy, setBusy] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const currentJobIdRef = useRef<string | null>(null);
-  const [activeLayerIdentity, setActiveLayerIdentity] = useState<CenterlineLayerIdentity | null>(
-    inspectActiveLayerIdentity
-  );
   const [reusablePath, setReusablePath] = useState<SessionReusablePath | null>(sessionReusablePath);
   const [reusableSourceAvailable, setReusableSourceAvailable] = useState(
     () => Boolean(sessionReusablePath && isLayerAvailable(sessionReusablePath.source))
@@ -73,8 +76,11 @@ export function AiOutlinePanel({
   const [progressStage, setProgressStage] = useState("正在检测 ComfyUI");
   const lastReportedStageRef = useRef("");
   const activeReusablePath = reusablePath
-    && sameDocumentIdentity(reusablePath.source, activeLayerIdentity)
-    && reusableSourceAvailable
+    && isReadyResultAvailableForActiveDocument(
+      reusablePath.source,
+      activeDocumentId,
+      reusableSourceAvailable
+    )
     ? reusablePath
     : null;
 
@@ -84,12 +90,35 @@ export function AiOutlinePanel({
   }, [onBusyChange]);
 
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
-  useEffect(() => watchActiveLayerIdentity((identity) => {
-    setActiveLayerIdentity(identity);
+  useEffect(() => watchActiveLayerIdentity(() => {
     setReusableSourceAvailable(Boolean(
       sessionReusablePath && isLayerAvailable(sessionReusablePath.source)
     ));
   }), []);
+  useEffect(() => {
+    if (!reusablePath) {
+      setReusableSourceAvailable(false);
+      return;
+    }
+    let disposed = false;
+    let retryIndex = 0;
+    let timer: number | undefined;
+    const refresh = (): void => {
+      const available = isLayerAvailable(reusablePath.source);
+      if (disposed) return;
+      setReusableSourceAvailable(available);
+      if (available || retryIndex >= SOURCE_AVAILABILITY_RETRY_DELAYS_MS.length) return;
+      timer = window.setTimeout(
+        refresh,
+        SOURCE_AVAILABILITY_RETRY_DELAYS_MS[retryIndex++]!
+      );
+    };
+    refresh();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [activeDocumentId, reusablePath]);
 
   useEffect(() => {
     if (!open || healthCheckedRef.current) return;
@@ -142,7 +171,8 @@ export function AiOutlinePanel({
     try {
       const pixels = await readActiveLayerPixels();
       onStatus(`AI勾线读取图层：${pixels.layerName} · ${pixels.width} × ${pixels.height}`);
-      const job = await client.createJob(pixels, { detail, cornerSensitivity, smoothing });
+      const vectorSettings = { detail, cornerSensitivity, smoothing };
+      const job = await client.createJob(pixels, vectorSettings);
       currentJobIdRef.current = job.id;
       setCurrentJobId(job.id);
       const completed = await client.waitForJob(job, updateJob);
@@ -164,6 +194,8 @@ export function AiOutlinePanel({
       const pathJson = validatePathJson(result.pathJson);
       const nextReusablePath: SessionReusablePath = {
         pathJson,
+        promptId: job.id,
+        settings: vectorSettings,
         source: {
           documentId: pixels.documentId,
           documentName: pixels.documentName,
@@ -176,9 +208,6 @@ export function AiOutlinePanel({
       setReusablePath(nextReusablePath);
       setReusableSourceAvailable(isLayerAvailable(nextReusablePath.source));
       assertActiveLayerSource(pixels);
-      if (resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS") {
-        throw new Error("当前不是棋子go标准网格画布，无法自动插入。描边已保留为就绪结果。");
-      }
 
       setProgress(98);
       setProgressStage("写入 Photoshop 描边");
@@ -219,7 +248,7 @@ export function AiOutlinePanel({
       onStatus(`AI勾线完成：${resultSummary}`, shapeWarning ? "warn" : "info");
     } catch (error) {
       const detailMessage = toErrorMessage(error);
-      if (readySource && isLayerAvailable(readySource)) {
+      if (shouldReportStoredOutlineAsReady(readySource)) {
         setProgress(100);
         setProgressStage("描边已就绪，等待插入");
         onStatus(
@@ -260,14 +289,53 @@ export function AiOutlinePanel({
     setProgressStage("读取来源图层位置");
     onStatus("AI勾线开始：插入就绪描边");
     try {
-      const pathJson = validatePathJson(activeReusablePath.pathJson);
-      const pixels = await readLayerPixels(activeReusablePath.source);
-      if (resolvePlacementMode(app.activeDocument) === "UNSUPPORTED_CANVAS") {
-        throw new Error("当前不是棋子go标准网格画布，无法自动插入。描边仍保留为就绪结果。");
+      const vectorSettings = { detail, cornerSensitivity, smoothing };
+      let reusablePathForInsert = activeReusablePath;
+      let pathJson = validatePathJson(reusablePathForInsert.pathJson);
+      let refitted = false;
+      if (!sameVectorSettings(reusablePathForInsert.settings, vectorSettings)) {
+        lastReportedStageRef.current = "";
+        setProgress(18);
+        setProgressStage("绕过前序节点重新拟合路径");
+        onStatus("AI勾线高级参数已更改：正在跳过前序节点并重新拟合路径。");
+        const refitJob = await client.createRefitJob(
+          reusablePathForInsert.promptId,
+          vectorSettings
+        );
+        currentJobIdRef.current = refitJob.id;
+        setCurrentJobId(refitJob.id);
+        const completed = await client.waitForJob(refitJob, updateJob);
+        if (completed.status === "canceled") {
+          currentJobIdRef.current = null;
+          setCurrentJobId(null);
+          setProgress(0);
+          setProgressStage("已取消");
+          onStatus("AI勾线路径重新拟合已取消。", "warn");
+          return;
+        }
+        if (completed.status !== "completed") {
+          throw new Error(completed.error ?? `路径重新拟合状态：${completed.status}`);
+        }
+        currentJobIdRef.current = null;
+        setCurrentJobId(null);
+        setProgress(72);
+        setProgressStage("接收重新拟合的路径");
+        const refitResult = await client.getResult(completed.id);
+        pathJson = validatePathJson(refitResult.pathJson);
+        reusablePathForInsert = {
+          ...reusablePathForInsert,
+          pathJson,
+          promptId: refitJob.id,
+          settings: vectorSettings
+        };
+        sessionReusablePath = reusablePathForInsert;
+        setReusablePath(reusablePathForInsert);
+        refitted = true;
       }
+      const pixels = await readLayerPixels(activeReusablePath.source);
       sourceDocumentId = pixels.documentId;
       const transform = createCenterlinePathTransform(pathJson, pixels);
-      setProgress(55);
+      setProgress(refitted ? 82 : 55);
       setProgressStage("插入就绪路径结果");
       createdPath = await createEditableWorkPath(pathJson, outputName, transform, {
         keepSelected: true,
@@ -290,7 +358,9 @@ export function AiOutlinePanel({
       setProgress(100);
       setProgressStage("完成");
       const resultSummary = [
-        "已插入就绪描边 Shape；没有重新运行 ComfyUI 或 Holopix。",
+        refitted
+          ? "已绕过前序生成节点，按当前高级参数重新拟合并插入描边 Shape。"
+          : "已插入就绪描边 Shape；高级参数未变，没有重新提交 ComfyUI。",
         `${pathJson.paths.length} 条路径 · ${countAnchors(pathJson)} 个锚点 · ${normalizedStrokeWidth}px`,
         cleanupWarning ? `中间路径清理提示：${cleanupWarning}` : null
       ].filter(Boolean).join("\n");
@@ -304,9 +374,22 @@ export function AiOutlinePanel({
       onStatus(`AI勾线插入失败：${detailMessage}`, "error");
       console.error(error);
     } finally {
+      currentJobIdRef.current = null;
+      setCurrentJobId(null);
       commitBusy(false);
     }
-  }, [activeReusablePath, busy, commitBusy, externalBusy, onStatus, strokeWidth]);
+  }, [
+    activeReusablePath,
+    busy,
+    commitBusy,
+    cornerSensitivity,
+    detail,
+    externalBusy,
+    onStatus,
+    smoothing,
+    strokeWidth,
+    updateJob
+  ]);
 
   const cancelCurrentJob = useCallback(async (): Promise<void> => {
     const promptId = currentJobIdRef.current;
@@ -546,18 +629,17 @@ function normalizeProgress(progress: number): number {
   return Math.max(0, Math.min(100, Number(progress) || 0));
 }
 
-function sameDocumentIdentity(
-  left: CenterlineLayerIdentity,
-  right: CenterlineLayerIdentity | null
-): boolean {
-  return Boolean(
-    right &&
-    left.documentId === right.documentId
-  );
-}
-
 function countAnchors(pathJson: CenterlinePathJson): number {
   return pathJson.paths.reduce((sum, path) => sum + path.points.length, 0);
+}
+
+function sameVectorSettings(
+  left: CenterlineVectorSettings,
+  right: CenterlineVectorSettings
+): boolean {
+  return left.detail === right.detail
+    && left.cornerSensitivity === right.cornerSensitivity
+    && left.smoothing === right.smoothing;
 }
 
 function formatResultStatus(

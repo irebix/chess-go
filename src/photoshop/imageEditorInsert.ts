@@ -11,7 +11,12 @@ import {
   deleteTemporaryFile,
   downloadTemporaryImage
 } from "../infrastructure/filesystem/uxpFiles";
-import { placeEmbeddedDescriptor, selectLayerDescriptor } from "./actionDescriptors";
+import {
+  convertSelectedLayerToEmbeddedSmartObjectDescriptor,
+  placeEmbeddedDescriptor,
+  selectLayerDescriptor
+} from "./actionDescriptors";
+import { assertSingleBatchPlaySucceeded } from "./aiCandidateBackfillSafety";
 import { alignResultToSource } from "./layerPlacementGeometry";
 import { resolvePlacementMode } from "./placementMode";
 
@@ -92,9 +97,28 @@ async function insertImageEditorResult(
         throw new Error(`AI编辑来源图层“${ready.source.layerName}”已不存在。`);
       }
       await action.batchPlay([selectLayerDescriptor(ready.source.layerId)], {});
-      await action.batchPlay([placeEmbeddedDescriptor(token)], {});
+      const placeResults = await action.batchPlay([placeEmbeddedDescriptor(token)], {});
+      assertSingleBatchPlaySucceeded(placeResults, "置入 AI编辑结果");
+      const placedFileLayer = document.activeLayers?.[0];
+      if (!placedFileLayer) throw new Error("Photoshop 置入 AI编辑结果后没有返回图层。");
+      if (options.keepSmartObject) {
+        try {
+          const psbResults = await action.batchPlay(
+            [convertSelectedLayerToEmbeddedSmartObjectDescriptor()],
+            {}
+          );
+          assertSingleBatchPlaySucceeded(psbResults, "转换 AI编辑结果为 PSB 智能对象");
+        } catch (error) {
+          try {
+            await placedFileLayer.delete();
+          } catch {
+            // Preserve the conversion error; Photoshop may already have replaced the placed layer.
+          }
+          throw error;
+        }
+      }
       const placedLayer = document.activeLayers?.[0];
-      if (!placedLayer) throw new Error("Photoshop 置入 AI编辑结果后没有返回图层。");
+      if (!placedLayer) throw new Error("Photoshop 转换 AI编辑结果后没有返回图层。");
       placedLayer.name = `AI编辑 ${ready.workflowVersion.toUpperCase()}`;
       const placedLayerId = placedLayer.id;
 

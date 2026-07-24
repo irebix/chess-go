@@ -1039,6 +1039,7 @@ export function App(): React.ReactElement {
         aria-hidden={activePhotoshopDocumentId === null}
       >
         <AiOutlinePanel
+          activeDocumentId={activePhotoshopDocumentId}
           externalBusy={
             nonAiBusy || aiBusy || editBusy || refineBusy || gridBusy || referenceBusy || groupArtboardBusy || Boolean(artboardBackgroundBusy)
           }

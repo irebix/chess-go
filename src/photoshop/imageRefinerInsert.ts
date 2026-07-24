@@ -8,7 +8,12 @@ import {
   type ImageRefinerReadyResult
 } from "../imageRefiner/types";
 import { deleteTemporaryFile } from "../infrastructure/filesystem/uxpFiles";
-import { placeEmbeddedDescriptor, selectLayerDescriptor } from "./actionDescriptors";
+import {
+  convertSelectedLayerToEmbeddedSmartObjectDescriptor,
+  placeEmbeddedDescriptor,
+  selectLayerDescriptor
+} from "./actionDescriptors";
+import { assertSingleBatchPlaySucceeded } from "./aiCandidateBackfillSafety";
 import {
   fitLayerInsideBounds,
   type TransformableLayerLike
@@ -108,12 +113,37 @@ export async function insertImageRefinerResults(
         for (let index = 0; index < ready.images.length; index += 1) {
           const source = ready.source.layers[index]!;
           await action.batchPlay([selectLayerDescriptor(source.layerId)], {});
-          await action.batchPlay([placeEmbeddedDescriptor(temporaryResults[index]!.token)], {});
+          const placeResults = await action.batchPlay(
+            [placeEmbeddedDescriptor(temporaryResults[index]!.token)],
+            {}
+          );
+          assertSingleBatchPlaySucceeded(placeResults, `置入 AI细化结果“${source.layerName}”`);
+          const placedFileLayer = document.activeLayers?.[0] as unknown as LayerLike | undefined;
+          if (!placedFileLayer) throw new Error("Photoshop 置入 AI细化结果后没有返回图层。");
+          if (options.keepSmartObject) {
+            try {
+              const psbResults = await action.batchPlay(
+                [convertSelectedLayerToEmbeddedSmartObjectDescriptor()],
+                {}
+              );
+              assertSingleBatchPlaySucceeded(
+                psbResults,
+                `转换 AI细化结果“${source.layerName}”为 PSB 智能对象`
+              );
+            } catch (error) {
+              if (placedFileLayer.delete) {
+                try {
+                  await placedFileLayer.delete();
+                } catch {
+                  // Preserve the conversion error; Photoshop may already have replaced the placed layer.
+                }
+              }
+              throw error;
+            }
+          }
           const placedLayer = document.activeLayers?.[0] as unknown as LayerLike | undefined;
-          if (!placedLayer) throw new Error("Photoshop 置入 AI细化结果后没有返回图层。");
-          placedLayer.name = ready.source.selectionKind === "group"
-            ? source.layerName
-            : imageRefinerOutputLayerName(source.layerName);
+          if (!placedLayer) throw new Error("Photoshop 转换 AI细化结果后没有返回图层。");
+          placedLayer.name = imageRefinerOutputLayerName(source.layerName);
           const placedLayerId = placedLayer.id;
 
           if (ready.source.selectionKind === "layer") {

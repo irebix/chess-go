@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   createAutomaticOutlineWorkflow,
-  makeAutomaticOutlinePrompt
+  makeAutomaticOutlinePrompt,
+  makeOutlineRefitPrompt
 } from "../src/centerline/workflow";
 import { CENTERLINE_JOB_TIMEOUT_MS } from "../src/centerline/config";
 
@@ -16,7 +17,7 @@ describe("Centerline Forge workflow integration", () => {
     expect(Object.keys(workflow)).toEqual([
       "2", "3", "4", "6", "7", "9", "11", "12", "13",
       "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24",
-      "25", "26", "27", "28"
+      "25", "26", "27", "28", "29"
     ]);
     expect(workflow["2"]?.class_type).toBe("CenterlineForgeVectorize");
     expect(workflow["4"]?.class_type).toBe("CenterlineForgeSave");
@@ -75,6 +76,13 @@ describe("Centerline Forge workflow integration", () => {
     expect(workflow["14"]?.inputs.mask).toEqual(["24", 1]);
     expect(workflow["15"]?.inputs.mask).toEqual(["24", 1]);
     expect(workflow["13"]?.inputs.image).toEqual(["28", 0]);
+    expect(workflow["29"]).toMatchObject({
+      class_type: "SaveImage",
+      inputs: {
+        filename_prefix: "centerline_forge/centerline_pad20_refit_source",
+        images: ["18", 0]
+      }
+    });
   });
 
   it("changes the uploaded image, request nonce, and the three exposed vector controls", () => {
@@ -129,5 +137,29 @@ describe("Centerline Forge workflow integration", () => {
     expect(first["7"]?.inputs.image).not.toBe(second["7"]?.inputs.image);
     expect(first["11"]?.inputs.request_nonce).toBe(101);
     expect(second["11"]?.inputs.request_nonce).toBe(102);
+  });
+
+  it("builds a refit-only workflow with no Holopix or upstream generation nodes", () => {
+    const prompt = makeOutlineRefitPrompt(
+      "centerline_forge/refit_source_00001_.png [output]",
+      { detail: 71, cornerSensitivity: 62, smoothing: 83 }
+    );
+
+    expect(Object.keys(prompt)).toEqual(["2", "4", "29"]);
+    expect(Object.values(prompt).some((node) =>
+      node.class_type.startsWith("Holopix")
+    )).toBe(false);
+    expect(prompt["29"]).toMatchObject({
+      class_type: "LoadImageOutput",
+      inputs: {
+        image: "centerline_forge/refit_source_00001_.png [output]"
+      }
+    });
+    expect(prompt["2"]?.inputs).toMatchObject({
+      detail: 71,
+      corner_sensitivity: 62,
+      smoothing: 83,
+      image: ["29", 0]
+    });
   });
 });

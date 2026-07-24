@@ -153,6 +153,13 @@ export function placeEmbeddedDescriptor(sessionToken: string): ActionDescriptor 
   };
 }
 
+export function convertSelectedLayerToEmbeddedSmartObjectDescriptor(): ActionDescriptor {
+  return {
+    _obj: "newPlacedLayer",
+    _options: { dialogOptions: "dontDisplay" }
+  };
+}
+
 export function replacePlacedLayerContentsDescriptor(sessionToken: string): ActionDescriptor {
   return {
     _obj: "placedLayerReplaceContents",

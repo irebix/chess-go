@@ -754,7 +754,7 @@ export function AiGenerationPanel({
         kind: "unknown",
         label: workflowVersion === "g-plus-f" ? "GPlusF.json" : "GptImage2.json",
         detail: workflowVersion === "g-plus-f"
-          ? "G+F 先生成 GPT 整张初稿并按物品裁切，再将每张裁切图独立上传，以 0.2 权重交给 Holopix 逐图细化；这里编辑当前物品描述。"
+          ? "G+F 先生成 GPT 整张初稿并按物品裁切，再将每张裁切图独立上传，以 0.4 权重交给 Holopix 逐图细化；这里编辑当前物品描述。"
           : "GPT Image 2 使用工作流内置风格参考；这里编辑当前物品描述。"
       });
       return () => {
@@ -1879,7 +1879,7 @@ export function AiGenerationPanel({
                     options={[
                       { value: "flux", label: "Flux · 单物品候选" },
                       { value: "gpt-image-2", label: "GPT Image 2 · 整链候选" },
-                      { value: "g-plus-f", label: "G+F · GPT 整图裁切 + Holopix 逐图 0.2 细化" }
+                      { value: "g-plus-f", label: "G+F · GPT 整图裁切 + Holopix 逐图 0.4 细化" }
                     ]}
                     onValueChange={(value) => switchWorkflowVersion(value as AiWorkflowVersion)}
                   />

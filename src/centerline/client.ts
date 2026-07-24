@@ -15,10 +15,21 @@ import type {
   CenterlineResult,
   CenterlineVectorSettings
 } from "./types";
-import { makeAutomaticOutlinePrompt } from "./workflow";
+import {
+  makeAutomaticOutlinePrompt,
+  makeOutlineRefitPrompt,
+  type CenterlineWorkflow
+} from "./workflow";
 import { removeCenterlineCanvasPadding, validatePathJson } from "./pathJson";
 
 type JsonRecord = Record<string, unknown>;
+
+interface CenterlineRefitContext {
+  savedOutputImageName?: string;
+}
+
+const CENTERLINE_SAVE_OUTPUT_NODE_ID = "4";
+const CENTERLINE_REFIT_SOURCE_OUTPUT_NODE_ID = "29";
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -157,9 +168,35 @@ function findExecutionError(entry: JsonRecord): string | null {
   return null;
 }
 
+function savedOutputImageName(entry: JsonRecord, nodeId: string): string | null {
+  const outputs = asRecord(entry.outputs);
+  const nodeOutput = asRecord(outputs?.[nodeId]);
+  const images = nodeOutput?.images;
+  if (!Array.isArray(images) || !images.length) return null;
+  const image = asRecord(images[0]);
+  const filename = typeof image?.filename === "string"
+    ? image.filename.replace(/\\/g, "/")
+    : "";
+  const subfolder = typeof image?.subfolder === "string"
+    ? image.subfolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
+    : "";
+  if (
+    !filename
+    || filename.includes("/")
+    || filename === ".."
+    || subfolder.split("/").includes("..")
+    || image?.type !== "output"
+  ) {
+    return null;
+  }
+  const relativePath = subfolder ? `${subfolder}/${filename}` : filename;
+  return `${relativePath} [output]`;
+}
+
 export class CenterlineComfyClient {
   private readonly baseUrl: string;
   private readonly canceledJobs = new Set<string>();
+  private readonly refitContexts = new Map<string, CenterlineRefitContext>();
   private lastRequestNonce = 0;
 
   constructor(baseUrl = CENTERLINE_COMFY_BASE_URL) {
@@ -212,16 +249,57 @@ export class CenterlineComfyClient {
   ): Promise<CenterlineJob> {
     const requestNonce = this.nextRequestNonce();
     const uploaded = await this.uploadPixels(pixelSource, requestNonce);
+    const uploadedImageName = safeUploadedImageName(uploaded);
+    const promptId = await this.submitPrompt(
+      makeAutomaticOutlinePrompt(uploadedImageName, settings, requestNonce),
+      `chessgo-centerline-${Date.now()}`
+    );
+    this.refitContexts.set(promptId, {});
+    return {
+      id: promptId,
+      status: "queued",
+      stage: "已进入 ComfyUI 队列",
+      progress: 12
+    };
+  }
+
+  async createRefitJob(
+    sourcePromptId: string,
+    settings: CenterlineVectorSettings
+  ): Promise<CenterlineJob> {
+    const context = this.refitContexts.get(sourcePromptId);
+    if (!context) {
+      throw new Error("当前就绪描边缺少可复用的 ComfyUI 重拟合上下文，请重新生成描边。");
+    }
+    if (!context.savedOutputImageName) {
+      throw new Error("当前就绪描边缺少已保存的重拟合输入，请重新生成描边。");
+    }
+    const promptId = await this.submitPrompt(
+      makeOutlineRefitPrompt(context.savedOutputImageName, settings),
+      `chessgo-centerline-refit-${Date.now()}`,
+      [CENTERLINE_SAVE_OUTPUT_NODE_ID]
+    );
+    this.refitContexts.set(promptId, context);
+    return {
+      id: promptId,
+      status: "queued",
+      stage: "已提交缓存路径重新拟合",
+      progress: 36
+    };
+  }
+
+  private async submitPrompt(
+    prompt: CenterlineWorkflow,
+    clientId: string,
+    partialExecutionTargets?: string[]
+  ): Promise<string> {
     const response = await this.json<JsonRecord>("/prompt", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        prompt: makeAutomaticOutlinePrompt(
-          safeUploadedImageName(uploaded),
-          settings,
-          requestNonce
-        ),
-        client_id: `chessgo-centerline-${Date.now()}`
+        prompt,
+        client_id: clientId,
+        ...(partialExecutionTargets ? { partial_execution_targets: partialExecutionTargets } : {})
       })
     }, 30_000);
     const nodeErrors = asRecord(response.node_errors);
@@ -231,12 +309,7 @@ export class CenterlineComfyClient {
     if (typeof response.prompt_id !== "string" || !response.prompt_id) {
       throw new Error("ComfyUI 未返回 prompt_id。");
     }
-    return {
-      id: response.prompt_id,
-      status: "queued",
-      stage: "已进入 ComfyUI 队列",
-      progress: 12
-    };
+    return response.prompt_id;
   }
 
   private nextRequestNonce(): number {
@@ -341,6 +414,9 @@ export class CenterlineComfyClient {
     const status = asRecord(entry?.status);
     if (!entry) throw new Error("ComfyUI 历史中找不到当前任务。");
     if (status?.completed !== true) throw new Error("ComfyUI 工作流尚未完成。");
+    const refitContext = this.refitContexts.get(promptId);
+    const savedImage = savedOutputImageName(entry, CENTERLINE_REFIT_SOURCE_OUTPUT_NODE_ID);
+    if (refitContext && savedImage) refitContext.savedOutputImageName = savedImage;
     return this.getReusableResult();
   }
 }

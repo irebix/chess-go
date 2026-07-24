@@ -24,7 +24,8 @@ describe("AI image editor disclosure safety", () => {
     const styles = readFileSync(resolve("src/styles.css"), "utf8");
 
     expect(panelSource).toContain('className="ai-stepper" aria-label="AI编辑生成数量"');
-    expect(panelSource).toContain("const [keepSmartObject, setKeepSmartObject] = useState(false);");
+    expect(panelSource).toContain("const [keepSmartObject, setKeepSmartObject] = useState(true);");
+    expect(panelSource).toContain("插入为 PSB 智能对象");
     expect(panelSource).toContain('className="ai-prompt-textarea-shell"');
     expect(panelSource).toContain("className={`centerline-advanced-shell");
     expect(panelSource).toContain('className="ai-prompt-editor image-editor-prompt-editor"');

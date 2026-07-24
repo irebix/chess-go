@@ -68,7 +68,7 @@ export function AiEditPanel({
   const [workflowVersion, setWorkflowVersion] = useState<ImageEditorWorkflowVersion>("v3");
   const [batchSize, setBatchSize] = useState<ImageEditorBatchSize>(1);
   const [insertPosition, setInsertPosition] = useState<ImageEditorInsertPosition>("above");
-  const [keepSmartObject, setKeepSmartObject] = useState(false);
+  const [keepSmartObject, setKeepSmartObject] = useState(true);
   const [promptText, setPromptText] = useState("");
   const [promptEditorHeight, setPromptEditorHeight] = useState(132);
   const [activeLayer, setActiveLayer] = useState<ImageEditorLayerSummary | null>(inspectActiveImageEditorLayer);
@@ -462,7 +462,7 @@ export function AiEditPanel({
                         disabled={busy || externalBusy}
                         onChange={(event) => setKeepSmartObject(event.currentTarget.checked)}
                       />
-                      <span>插入为智能对象</span>
+                      <span>插入为 PSB 智能对象</span>
                     </label>
                     <div className="centerline-advanced-row ai-setting-row">
                       <span className="ai-setting-label">插入位置</span>

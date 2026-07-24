@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  convertSelectedLayerToEmbeddedSmartObjectDescriptor,
   getArtboardDescriptor,
   makeArtboardBackgroundBatchDescriptors,
   makeArtboardColorDescriptor,
@@ -120,6 +121,13 @@ describe("artboard action descriptors", () => {
         _path: "session-token",
         _kind: "local"
       },
+      _options: { dialogOptions: "dontDisplay" }
+    });
+  });
+
+  it("wraps the selected placed file in a native embedded PSB smart object", () => {
+    expect(convertSelectedLayerToEmbeddedSmartObjectDescriptor()).toEqual({
+      _obj: "newPlacedLayer",
       _options: { dialogOptions: "dontDisplay" }
     });
   });
