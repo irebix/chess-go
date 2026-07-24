@@ -1,8 +1,7 @@
 # 棋子go｜项目状态与会话交接
 
 更新时间：2026-07-24
-当前开发版本：`0.8.8`
-当前发布版本：`0.8.7`
+当前发布版本：`0.8.8`
 
 ## 一句话摘要
 
@@ -12,26 +11,26 @@
 
 | 用途 | 本地路径 | 分支 | 当前基线 |
 | --- | --- | --- | --- |
-| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.8`（开发中） |
-| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.7` |
+| 源码、测试、文档 | `D:\Scripts\UXP\PsdArchive` | `main` | `0.8.8` |
+| 同事安装用运行包 | `D:\Scripts\UXP\ChessGo-Release` | `release` | `0.8.8` |
 
 远端公开仓库：`https://github.com/irebix/chess-go.git`。`main` 与 `release` 是同一远端的独立分支，不是嵌套目录；本地使用两个并列工作目录维护。发布分支不包含开发文档与源码。
 
 ## 当前发布快照
 
-- `manifest.json` 与 `package.json` 已提升为待发布的 `0.8.8`。
-- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十二个运行文件，不直接编辑构建产物。
-- `ChessGo-Release` 已同步 `0.8.7` 完整运行包和 revision 4 安装器；共十二个运行文件，均与源码仓库 `dist` SHA-256 一致。
-- `0.8.7` 已完成 70 个测试文件、324 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
+- `manifest.json` 与 `package.json` 均为 `0.8.8`。
+- `main` 保存完整源码、测试和交接文档；`release` 只保存安装器及十三个运行文件，不直接编辑构建产物。
+- `ChessGo-Release` 已同步 `0.8.8` 完整运行包和 revision 5 安装器；共十三个运行文件，均与源码仓库 `dist` SHA-256 一致。
+- `0.8.8` 已完成 71 个测试文件、329 项测试、TypeScript strict 与生产构建验证；Webpack 仅有既有 bundle-size 提示。Photoshop 最终交互验收继续由用户执行。
 
-## `0.8.8` 待发布改动
+## `0.8.8` 发布内容
 
 - “运行与诊断”新增版本检查：插件启动、窗口重新获得焦点、展开诊断页以及每 5 分钟读取一次 GitHub `release` 提交，并从该固定提交读取 `release-manifest.json`，避免分支更新瞬间读到不一致文件。只有远端三段式版本高于当前版本时才显示“（有新版本）”。
 - 展开诊断页后显示当前/远端版本、检查失败重试和“更新棋子go”按钮。更新入口不会在后台执行；只有用户点击并同意 UXP Manifest v5 的 `.cmd` `openPath` 权限后，才把发布清单内的 `ChessGoInstaller.cmd` 复制到 UXP 临时目录并启动。
 - Windows 安装器提升到 revision 5，并新增 `--internal-update` 模式。内部更新复用当前 Adobe UXP 全局注册位置，不再弹出 Photoshop 路径选择；仍保留管理员授权、安装器自更新、Git/Codeload 回退、逐文件 SHA-256、原子注册、旧版本备份和完成后的 Photoshop 重启提示。
 - Webpack 将安装器作为第十三个运行文件加入构建输出；发布脚本会自动把它纳入 `release-manifest.json`，外部首次安装仍使用 release 根目录的同一份 `install.cmd`。
 - 内部更新能力从 `0.8.8` 开始生效；已经安装 `0.8.7` 或更早版本的设备必须再手动运行一次外部 `install.cmd` 才能获得此入口，后续版本才可直接在 UXP 内升级。
-- 自动化验证目标为 71 个测试文件、329 项测试、TypeScript strict 与生产构建全部通过；Photoshop 的 UXP 授权、管理员提权和从 `0.8.7` 升级到 `0.8.8` 仍需真机验收。
+- 自动化验证为 71 个测试文件、329 项测试、TypeScript strict 与生产构建全部通过；发布清单覆盖十三个运行文件并与 `dist` 的字节数、SHA-256 一致。Photoshop 的 UXP 授权、管理员提权和后续版本内部升级仍需真机验收。
 
 ## `0.8.7` 发布内容
 
