@@ -1,6 +1,7 @@
 declare module "uxp" {
   const shell: {
     openExternal(url: string, developerText?: string): Promise<string>;
+    openPath(path: string, developerText?: string): Promise<string>;
   };
 
   namespace storage {

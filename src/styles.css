@@ -1840,11 +1840,66 @@ button:disabled {
   justify-content: flex-start;
 }
 
+.diagnostics-update-badge {
+  margin-left: 2px;
+  color: #f0b849;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .diagnostics-content {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
+.diagnostics-update-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--uxp-host-border-color, #666);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.diagnostics-update-card.is-available {
+  border-color: rgba(240, 184, 73, 0.7);
+  background: rgba(240, 184, 73, 0.08);
+}
+
+.diagnostics-update-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.diagnostics-update-heading small,
+.diagnostics-update-note {
+  color: var(--uxp-host-text-color-secondary, #b8b8b8);
+  font-size: 10px;
+}
+
+.diagnostics-update-detail {
+  line-height: 1.45;
+}
+
+.diagnostics-update-detail.is-error {
+  color: #ffb0a8;
+}
+
+.diagnostics-update-action {
+  min-height: 30px;
+}
+
+.diagnostics-update-recheck {
+  align-self: flex-start;
+}
+
 .standard-grid-content {
   display: flex;
   flex-direction: column;

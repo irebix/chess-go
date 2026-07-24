@@ -52,6 +52,7 @@ module.exports = (_env, argv) => ({
         { from: "ImageRefiner.json", to: "ImageRefiner.json" },
         { from: "ImageRefinerStyle.png", to: "ImageRefinerStyle.png" },
         { from: "StandardGridBackground.png", to: "StandardGridBackground.png" },
+        { from: "installer/install.cmd", to: "ChessGoInstaller.cmd" },
         { from: "src/index.html", to: "index.html" },
         { from: "src/styles.css", to: "styles.css" }
       ]

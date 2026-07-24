@@ -65,6 +65,12 @@ import { StandardGridPanel } from "./StandardGridPanel";
 import type { PlacementMode } from "../photoshop/placementMode";
 import { generateStandardGridPsd } from "../photoshop/StandardGridDocumentGenerator";
 import { shouldShowAiDraftPanel } from "../domain/aiDraftVisibility";
+import {
+  CHESSGO_UPDATE_CHECK_INTERVAL_MS,
+  CHESSGO_UPDATE_CHECK_MIN_GAP_MS,
+  checkPluginUpdate,
+  launchPluginUpdate
+} from "../update/pluginUpdate";
 
 type UiPhase =
   | "idle"
@@ -99,6 +105,12 @@ interface BatchImageFeedback {
 interface UiError {
   area: "generator" | "currentPsd";
   message: string;
+}
+
+interface PluginUpdateUiState {
+  status: "checking" | "current" | "available" | "error";
+  latestVersion?: string;
+  detail?: string;
 }
 
 const LARGE_WORKBOOK_BYTES = 250 * 1024 * 1024;
@@ -144,6 +156,11 @@ export function App(): React.ReactElement {
   const [showCurrentPsd, setShowCurrentPsd] = useState(true);
   const [showGenerator, setShowGenerator] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [pluginUpdate, setPluginUpdate] = useState<PluginUpdateUiState>({
+    status: "checking"
+  });
+  const [updateLaunching, setUpdateLaunching] = useState(false);
+  const [updateLaunchHint, setUpdateLaunchHint] = useState("");
   const [referenceDocument, setReferenceDocument] = useState<ReferenceDocumentState | null>(null);
   const [activePhotoshopDocumentId, setActivePhotoshopDocumentId] = useState<number | null>(null);
   const [referenceBusy, setReferenceBusy] = useState(false);
@@ -177,6 +194,8 @@ export function App(): React.ReactElement {
   const thumbnailSession = useRef(0);
   const thumbnailQueue = useRef<ThumbnailTask[]>([]);
   const thumbnailActiveCount = useRef(0);
+  const updateCheckInFlight = useRef(false);
+  const updateLastCheckedAt = useRef(0);
 
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
@@ -285,6 +304,37 @@ export function App(): React.ReactElement {
     console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
   }, []);
 
+  const checkForPluginRelease = useCallback(async (force = false): Promise<void> => {
+    if (updateCheckInFlight.current) return;
+    if (
+      !force &&
+      Date.now() - updateLastCheckedAt.current < CHESSGO_UPDATE_CHECK_MIN_GAP_MS
+    ) {
+      return;
+    }
+    updateCheckInFlight.current = true;
+    setPluginUpdate((current) => (
+      current.status === "available" ? current : { status: "checking" }
+    ));
+    try {
+      const result = await checkPluginUpdate();
+      setPluginUpdate({
+        status: result.updateAvailable ? "available" : "current",
+        latestVersion: result.latestVersion
+      });
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      setPluginUpdate((current) => (
+        current.status === "available"
+          ? current
+          : { status: "error", detail }
+      ));
+    } finally {
+      updateLastCheckedAt.current = Date.now();
+      updateCheckInFlight.current = false;
+    }
+  }, []);
+
   const commitReferenceDocument = useCallback((next: ReferenceDocumentState | null): void => {
     referenceScopeGate.current = {
       ...referenceScopeGate.current,
@@ -335,6 +385,22 @@ export function App(): React.ReactElement {
     () => watchActiveReferenceDocument(handleReferenceDocumentScan, setActivePhotoshopDocumentId),
     [handleReferenceDocumentScan]
   );
+
+  useEffect(() => {
+    void checkForPluginRelease();
+    const intervalId = window.setInterval(
+      () => void checkForPluginRelease(),
+      CHESSGO_UPDATE_CHECK_INTERVAL_MS
+    );
+    const handleWindowFocus = (): void => {
+      void checkForPluginRelease();
+    };
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [checkForPluginRelease]);
 
   useEffect(() => {
     const editableCanvasSize = Number(editableCanvasSizeInput);
@@ -716,6 +782,32 @@ export function App(): React.ReactElement {
     } catch (error) {
       handleError(error, "导出诊断包失败");
     }
+  }
+
+  async function handleLaunchPluginUpdate(): Promise<void> {
+    if (pluginUpdate.status !== "available" || updateLaunching || busy) return;
+    setUpdateLaunching(true);
+    setUpdateLaunchHint("");
+    try {
+      await launchPluginUpdate();
+      const detail =
+        "更新程序已打开。请完成系统授权；安装成功弹窗出现后重启 Photoshop。";
+      setUpdateLaunchHint(detail);
+      setMessage(detail);
+      appendLog(makeLog("info", "plugin.update.launched", pluginUpdate.latestVersion));
+    } catch (error) {
+      const detail = `启动更新失败：${toErrorMessage(error)}`;
+      setUpdateLaunchHint(detail);
+      setMessage(detail);
+      appendLog(makeLog("error", "plugin.update.launch.failed", detail));
+    } finally {
+      setUpdateLaunching(false);
+    }
+  }
+
+  function toggleDiagnostics(): void {
+    if (!showDiagnostics) void checkForPluginRelease();
+    setShowDiagnostics((value) => !value);
   }
 
   async function handleGenerate(): Promise<void> {
@@ -1478,16 +1570,81 @@ export function App(): React.ReactElement {
           role="button"
           tabIndex={0}
           aria-expanded={showDiagnostics}
-          onClick={() => setShowDiagnostics((value) => !value)}
-          onKeyDown={(event) => handleDisclosureKey(event, () => setShowDiagnostics((value) => !value))}
+          onClick={toggleDiagnostics}
+          onKeyDown={(event) => handleDisclosureKey(event, toggleDiagnostics)}
         >
           <span className={`panel-disclosure ${showDiagnostics ? "is-open" : ""}`} aria-hidden="true">
             {showDiagnostics ? "⌄" : ">"}
           </span>
           <span>运行与诊断</span>
+          {pluginUpdate.status === "available" ? (
+            <span className="diagnostics-update-badge">（有新版本）</span>
+          ) : null}
         </div>
         {showDiagnostics ? (
           <div className="panel-section-content diagnostics-content">
+          <div className={`diagnostics-update-card is-${pluginUpdate.status}`}>
+            <div className="diagnostics-update-heading">
+              <strong>插件更新</strong>
+              <small>当前版本 {PLUGIN_VERSION}</small>
+            </div>
+            {pluginUpdate.status === "checking" ? (
+              <span className="diagnostics-update-detail">正在检查 release……</span>
+            ) : null}
+            {pluginUpdate.status === "current" ? (
+              <>
+                <span className="diagnostics-update-detail">
+                  当前已是最新版本
+                  {pluginUpdate.latestVersion === PLUGIN_VERSION
+                    ? `（${pluginUpdate.latestVersion}）`
+                    : pluginUpdate.latestVersion
+                      ? `；远端 release 为 ${pluginUpdate.latestVersion}`
+                      : ""}。
+                </span>
+                <button
+                  className="compact diagnostics-update-recheck"
+                  disabled={updateCheckInFlight.current}
+                  onClick={() => void checkForPluginRelease(true)}
+                >
+                  重新检查
+                </button>
+              </>
+            ) : null}
+            {pluginUpdate.status === "error" ? (
+              <>
+                <span className="diagnostics-update-detail is-error">
+                  {pluginUpdate.detail || "暂时无法检查更新。"}
+                </span>
+                <button
+                  className="compact diagnostics-update-recheck"
+                  onClick={() => void checkForPluginRelease(true)}
+                >
+                  重试检查
+                </button>
+              </>
+            ) : null}
+            {pluginUpdate.status === "available" ? (
+              <>
+                <span className="diagnostics-update-detail">
+                  发现 {pluginUpdate.latestVersion}。更新会自动使用当前插件注册位置，
+                  不再选择 Photoshop 路径。
+                </span>
+                <button
+                  className="primary diagnostics-update-action"
+                  disabled={busy || updateLaunching}
+                  onClick={() => void handleLaunchPluginUpdate()}
+                >
+                  {updateLaunching ? "正在启动……" : "更新棋子go"}
+                </button>
+                <small className="diagnostics-update-note">
+                  更新程序需要系统管理员授权；完成后会弹窗提示重启 Photoshop。
+                </small>
+              </>
+            ) : null}
+            {updateLaunchHint ? (
+              <span className="diagnostics-update-detail">{updateLaunchHint}</span>
+            ) : null}
+          </div>
           <div className="log-actions">
             <button className="compact" disabled={busy || !scopedItems.length} onClick={() => void handleExportManifest()}>
               {phase === "exporting" ? "正在导出……" : "导出解析 Manifest"}

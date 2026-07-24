@@ -1,7 +1,8 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=4"
+set "CHESSGO_INSTALLER_REVISION=5"
 set "CHESSGO_INSTALLER=%~f0"
+if /I "%~1"=="--internal-update" set "CHESSGO_INTERNAL_UPDATE=1"
 set "CHESSGO_PWSH="
 where pwsh.exe >nul 2>nul
 if not errorlevel 1 set "CHESSGO_PWSH=pwsh.exe"
@@ -31,7 +32,11 @@ if /I not "%CHESSGO_SELF_UPDATE_RESTARTED%"=="1" if /I not "%CHESSGO_SKIP_SELF_U
       echo Warning: the latest installer was downloaded but could not replace the current file.
     ) else (
       set "CHESSGO_SELF_UPDATE_RESTARTED=1"
-      "%ComSpec%" /d /c ""%CHESSGO_INSTALLER%""
+      if /I "%CHESSGO_INTERNAL_UPDATE%"=="1" (
+        "%ComSpec%" /d /c ""%CHESSGO_INSTALLER%" --internal-update"
+      ) else (
+        "%ComSpec%" /d /c ""%CHESSGO_INSTALLER%""
+      )
       exit /b
     )
   )
@@ -741,19 +746,21 @@ function Install-RegisteredUxpPlugin(
     throw "Photoshop UXP plugin registration verification failed."
   }
 
-  $legacyDestination = Join-Path (Join-Path $photoshopRoot "Plug-ins") $pluginFolderName
-  if (Test-Path -LiteralPath $legacyDestination) {
-    $legacyItem = Get-Item -LiteralPath $legacyDestination -Force
-    $isReparsePoint = ($legacyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-    if ($isReparsePoint) {
-      [IO.Directory]::Delete($legacyDestination)
-      Write-Host "Removed the legacy Photoshop Plug-ins link."
-    } else {
-      $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-      $legacyBackup = Join-Path $backupRoot ("Legacy-$pluginFolderName-$timestamp")
-      $legacyBackup = Assert-PathInside $legacyBackup $backupRoot "Legacy plugin backup folder"
-      Move-Item -LiteralPath $legacyDestination -Destination $legacyBackup
-      Write-Host "Legacy Photoshop Plug-ins folder backed up to: $legacyBackup"
+  if ($photoshopRoot) {
+    $legacyDestination = Join-Path (Join-Path $photoshopRoot "Plug-ins") $pluginFolderName
+    if (Test-Path -LiteralPath $legacyDestination) {
+      $legacyItem = Get-Item -LiteralPath $legacyDestination -Force
+      $isReparsePoint = ($legacyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+      if ($isReparsePoint) {
+        [IO.Directory]::Delete($legacyDestination)
+        Write-Host "Removed the legacy Photoshop Plug-ins link."
+      } else {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $legacyBackup = Join-Path $backupRoot ("Legacy-$pluginFolderName-$timestamp")
+        $legacyBackup = Assert-PathInside $legacyBackup $backupRoot "Legacy plugin backup folder"
+        Move-Item -LiteralPath $legacyDestination -Destination $legacyBackup
+        Write-Host "Legacy Photoshop Plug-ins folder backed up to: $legacyBackup"
+      }
     }
   }
 
@@ -796,7 +803,12 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
   Write-Host "Requesting administrator permission..."
-  $arguments = @("/d", "/c", ('"{0}"' -f $installerPath))
+  $installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
+    '"{0}" --internal-update' -f $installerPath
+  } else {
+    '"{0}"' -f $installerPath
+  }
+  $arguments = @("/d", "/c", $installerInvocation)
   Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -Verb RunAs | Out-Null
   exit 0
 }
@@ -849,46 +861,54 @@ try {
     throw "The selected release folder contains an unexpected plugin manifest."
   }
 
-  $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
-  $dialog.Description = "Select the Adobe Photoshop installation folder that contains Photoshop.exe."
-  $dialog.ShowNewFolderButton = $false
+  $photoshopRoot = $null
+  if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
+    Write-Host "Internal update mode: using the Photoshop instance that launched ChessGo."
+    Write-Host "Photoshop folder selection is not required."
+  } else {
+    $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
+    $dialog.Description = "Select the Adobe Photoshop installation folder that contains Photoshop.exe."
+    $dialog.ShowNewFolderButton = $false
 
-  $appPathKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe"
-  $appPath = $null
-  if (Test-Path -LiteralPath $appPathKey) {
-    $appPath = (Get-ItemProperty -LiteralPath $appPathKey -ErrorAction SilentlyContinue)."(default)"
-  }
-  if ($appPath -and (Test-Path -LiteralPath $appPath -PathType Leaf)) {
-    $dialog.SelectedPath = Split-Path -Parent $appPath
-  } elseif (Test-Path -LiteralPath "$env:ProgramFiles\Adobe") {
-    $dialog.SelectedPath = "$env:ProgramFiles\Adobe"
-  }
+    $appPathKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe"
+    $appPath = $null
+    if (Test-Path -LiteralPath $appPathKey) {
+      $appPath = (Get-ItemProperty -LiteralPath $appPathKey -ErrorAction SilentlyContinue)."(default)"
+    }
+    if ($appPath -and (Test-Path -LiteralPath $appPath -PathType Leaf)) {
+      $dialog.SelectedPath = Split-Path -Parent $appPath
+    } elseif (Test-Path -LiteralPath "$env:ProgramFiles\Adobe") {
+      $dialog.SelectedPath = "$env:ProgramFiles\Adobe"
+    }
 
-  $selection = $dialog.ShowDialog()
-  $photoshopRoot = $dialog.SelectedPath
-  $dialog.Dispose()
-  if ($selection -ne [System.Windows.Forms.DialogResult]::OK) {
-    Write-Host "Installation cancelled."
-    exit 2
-  }
+    $selection = $dialog.ShowDialog()
+    $photoshopRoot = $dialog.SelectedPath
+    $dialog.Dispose()
+    if ($selection -ne [System.Windows.Forms.DialogResult]::OK) {
+      Write-Host "Installation cancelled."
+      exit 2
+    }
 
-  $photoshopRoot = [IO.Path]::GetFullPath($photoshopRoot)
-  $photoshopExe = Join-Path $photoshopRoot "Photoshop.exe"
-  if (-not (Test-Path -LiteralPath $photoshopExe -PathType Leaf)) {
-    throw "Photoshop.exe was not found in the selected folder."
-  }
+    $photoshopRoot = [IO.Path]::GetFullPath($photoshopRoot)
+    $photoshopExe = Join-Path $photoshopRoot "Photoshop.exe"
+    if (-not (Test-Path -LiteralPath $photoshopExe -PathType Leaf)) {
+      throw "Photoshop.exe was not found in the selected folder."
+    }
 
-  $versionText = (Get-Item -LiteralPath $photoshopExe).VersionInfo.ProductVersion
-  $versionMatch = [regex]::Match([string]$versionText, "\d+(?:\.\d+){1,3}")
-  if ($versionMatch.Success) {
-    $photoshopVersion = [version]$versionMatch.Value
-    $minimumVersion = [version]$manifest.host.minVersion
-    if ($photoshopVersion -lt $minimumVersion) {
-      throw "This plugin requires Photoshop $minimumVersion or newer. Selected version: $photoshopVersion."
+    $versionText = (Get-Item -LiteralPath $photoshopExe).VersionInfo.ProductVersion
+    $versionMatch = [regex]::Match([string]$versionText, "\d+(?:\.\d+){1,3}")
+    if ($versionMatch.Success) {
+      $photoshopVersion = [version]$versionMatch.Value
+      $minimumVersion = [version]$manifest.host.minVersion
+      if ($photoshopVersion -lt $minimumVersion) {
+        throw "This plugin requires Photoshop $minimumVersion or newer. Selected version: $photoshopVersion."
+      }
     }
   }
 
-  Write-Host "Selected Photoshop: $photoshopRoot"
+  if ($photoshopRoot) {
+    Write-Host "Selected Photoshop: $photoshopRoot"
+  }
   Write-Host "Enabling Adobe UXP developer mode..."
   $developerDir = Join-Path $env:CommonProgramFiles "Adobe\UXP\Developer"
   $developerSettings = Join-Path $developerDir "settings.json"
@@ -899,7 +919,12 @@ try {
   $installation = Install-RegisteredUxpPlugin $sourceDir $manifest $photoshopRoot
 
   $photoshopIsRunning = @(Get-Process -Name Photoshop -ErrorAction SilentlyContinue).Count -gt 0
-  $result = "ChessGo $($installation.Version) was installed successfully.`r`n`r`nPlugin folder: $($installation.Destination)`r`nRegistration: $($installation.RegistryPath)`r`n`r`n"
+  $resultAction = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
+    "was updated successfully"
+  } else {
+    "was installed successfully"
+  }
+  $result = "ChessGo $($installation.Version) $resultAction.`r`n`r`nPlugin folder: $($installation.Destination)`r`nRegistration: $($installation.RegistryPath)`r`n`r`n"
   if ($photoshopIsRunning) {
     $result += "Restart Photoshop once to load the registered plugin. No other setup is required."
   } else {

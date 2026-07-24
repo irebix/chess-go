@@ -4,10 +4,11 @@ import { describe, expect, it } from "vitest";
 
 const installer = readFileSync(resolve(process.cwd(), "installer/install.cmd"), "utf8");
 const publisher = readFileSync(resolve(process.cwd(), "scripts/publish-release.ps1"), "utf8");
+const webpackConfig = readFileSync(resolve(process.cwd(), "webpack.config.js"), "utf8");
 
 describe("Windows installer", () => {
   it("advances the installer revision for manifest-driven payload installation", () => {
-    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=4"');
+    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=5"');
   });
 
   it("discovers and verifies every runtime file from the generated release manifest", () => {
@@ -45,6 +46,25 @@ describe("Windows installer", () => {
     );
     expect(installer).toContain(
       'throw "The ChessGo release folder is incomplete or invalid: $sourceDir. $($_.Exception.Message)"'
+    );
+  });
+
+  it("supports a UXP internal-update mode without asking for a Photoshop folder", () => {
+    expect(installer).toContain(
+      'if /I "%~1"=="--internal-update" set "CHESSGO_INTERNAL_UPDATE=1"'
+    );
+    expect(installer).toContain(
+      'if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {'
+    );
+    expect(installer).toContain(
+      'Write-Host "Photoshop folder selection is not required."'
+    );
+    expect(installer).toContain(
+      '$installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1")'
+    );
+    expect(installer).toContain('"{0}" --internal-update');
+    expect(webpackConfig).toContain(
+      '{ from: "installer/install.cmd", to: "ChessGoInstaller.cmd" }'
     );
   });
 });
