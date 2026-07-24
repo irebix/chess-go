@@ -757,10 +757,13 @@ button:disabled {
   padding: 9px 10px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.2);
+  cursor: text;
   font-family: Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .log-actions {
