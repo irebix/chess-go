@@ -280,6 +280,11 @@ export function App(): React.ReactElement {
     [activeGroups, scopedItems]
   );
   const formattedLogs = useMemo(() => logs.map(formatLog).join("\n"), [logs]);
+  const displayedLogs = formattedLogs || "尚无日志。";
+  const logViewportHeight = useMemo(() => {
+    const lineCount = displayedLogs.split(/\r?\n/).length;
+    return Math.min(210, Math.max(34, lineCount * 16 + 18));
+  }, [displayedLogs]);
   const handleOutlineStatus = useCallback((detail: string, level: "info" | "warn" | "error" = "info"): void => {
     setMessage(detail);
     if (level === "error") setShowDiagnostics(true);
@@ -1654,7 +1659,13 @@ export function App(): React.ReactElement {
               {phase === "diagnosing" ? "正在打包……" : "导出诊断包"}
             </button>
           </div>
-            <pre className="logs">{formattedLogs || "尚无日志。"}</pre>
+            <textarea
+              className="logs"
+              readOnly
+              aria-label="运行日志，可选择并复制"
+              value={displayedLogs}
+              style={{ height: `${logViewportHeight}px` }}
+            />
           </div>
         ) : null}
       </section>

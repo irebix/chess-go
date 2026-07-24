@@ -751,16 +751,23 @@ button:disabled {
 }
 
 .logs {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
   max-height: 210px;
   overflow: auto;
   margin: 0;
   padding: 9px 10px;
+  border: 0;
   border-radius: 4px;
+  color: var(--uxp-host-text-color, #f4f4f4);
   background: rgba(0, 0, 0, 0.2);
   cursor: text;
   font-family: Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
+  resize: none;
   white-space: pre-wrap;
   -webkit-user-select: text;
   user-select: text;

@@ -8,8 +8,14 @@ describe("diagnostics log UI", () => {
     const styles = readFileSync(resolve("src/styles.css"), "utf8");
     const logsRule = styles.match(/\.logs\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 
-    expect(app).toContain('<pre className="logs">{formattedLogs || "尚无日志。"}</pre>');
+    expect(app).toContain("<textarea");
+    expect(app).toContain('className="logs"');
+    expect(app).toContain("readOnly");
+    expect(app).toContain("value={displayedLogs}");
+    expect(app).not.toContain('<pre className="logs">');
     expect(logsRule).toContain("cursor: text;");
+    expect(logsRule).toContain("width: 100%;");
+    expect(logsRule).toContain("resize: none;");
     expect(logsRule).toContain("-webkit-user-select: text;");
     expect(logsRule).toContain("user-select: text;");
     expect(logsRule).not.toContain("user-select: none;");
