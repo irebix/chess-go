@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "pluginId": "com.linkdesks.chess-archive-psd-generator",
-  "pluginVersion": "0.8.15",
+  "pluginVersion": "0.8.16",
   "files": [
     {
       "path": "ChessGoInstaller.cmd",
-      "size": 39957,
-      "sha256": "ed73e4577c6cc6ef819fba543187f60831b1887f9dbfa1c602d3e4e62d65c8de"
+      "size": 41154,
+      "sha256": "74cf9e5f79bbc92438365d484b6efd9cbdb2ed4fe4fdde71cbdcdabad53c7269"
     },
     {
       "path": "GPlusF.json",
@@ -45,8 +45,8 @@
     },
     {
       "path": "main.js",
-      "size": 695398,
-      "sha256": "704f8ea683a351f6b1aa4d5031e2520aad902b8fa39616af3eec6210ad518d8b"
+      "size": 695745,
+      "sha256": "2d54e58063e291fb2e752b15038dcf30ac4ff8e318389478003b77fa1f0540e8"
     },
     {
       "path": "main.js.LICENSE.txt",
@@ -56,7 +56,7 @@
     {
       "path": "manifest.json",
       "size": 990,
-      "sha256": "f4b7f42a27270a2b5f446a5c5f086101751faf1a3783e01e414d4837b2595b70"
+      "sha256": "e7cb6d524a4c6f09a52832304d44fd97fc00eb8fd709b944349c860e8047701b"
     },
     {
       "path": "StandardGridBackground.png",
@@ -65,8 +65,8 @@
     },
     {
       "path": "styles.css",
-      "size": 35491,
-      "sha256": "2215b361014e10f38166dbd4b82b50cb112e84ac96e21786d49f92268b729e4d"
+      "size": 35615,
+      "sha256": "94716718be50d730d7d207c8e976258cab6e3ced8a2e5a5e4dffbde244cd4103"
     }
   ]
 }

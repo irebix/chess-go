@@ -1911,6 +1911,11 @@ button:disabled {
   background: rgba(240, 184, 73, 0.08);
 }
 
+.diagnostics-update-card.is-installed {
+  border-color: rgba(80, 180, 110, 0.7);
+  background: rgba(80, 180, 110, 0.08);
+}
+
 .diagnostics-update-heading {
   display: flex;
   min-width: 0;
