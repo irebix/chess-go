@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "CHESSGO_INSTALLER_REVISION=5"
+set "CHESSGO_INSTALLER_REVISION=6"
 set "CHESSGO_INSTALLER=%~f0"
 if /I "%~1"=="--internal-update" set "CHESSGO_INTERNAL_UPDATE=1"
 set "CHESSGO_PWSH="
@@ -176,6 +176,37 @@ $managedRoot = Join-Path $env:LOCALAPPDATA "ChessGo"
 $managedReleaseDir = Join-Path $managedRoot "release"
 $archiveReleaseDir = Join-Path $managedRoot "archive-release"
 $releaseShaMarkerName = ".chessgo-release-sha"
+$updateStatusPath = $null
+if (-not [string]::IsNullOrWhiteSpace([string]$env:CHESSGO_UPDATE_STATUS_FILE)) {
+  try {
+    $updateStatusPath = [IO.Path]::GetFullPath([string]$env:CHESSGO_UPDATE_STATUS_FILE)
+  } catch {
+    $updateStatusPath = $null
+  }
+}
+
+function Write-UpdateStatus([string]$kind, [string]$stage, [string]$detail = "") {
+  if (-not $updateStatusPath) {
+    return
+  }
+  try {
+    $record = [ordered]@{
+      id = [Guid]::NewGuid().ToString("N")
+      timestamp = [DateTimeOffset]::UtcNow.ToString("O")
+      kind = $kind
+      stage = $stage
+      detail = $detail
+    }
+    $line = $record | ConvertTo-Json -Compress
+    [IO.File]::AppendAllText(
+      $updateStatusPath,
+      $line + "`n",
+      [Text.UTF8Encoding]::new($false)
+    )
+  } catch {
+    # Status reporting must never interrupt installation.
+  }
+}
 
 function Show-Message([string]$text, [string]$title, [System.Windows.Forms.MessageBoxIcon]$icon) {
   [System.Windows.Forms.MessageBox]::Show(
@@ -803,28 +834,37 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
   Write-Host "Requesting administrator permission..."
+  Write-UpdateStatus "progress" "awaiting-admin"
   $installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
     '"{0}" --internal-update' -f $installerPath
   } else {
     '"{0}"' -f $installerPath
   }
   $arguments = @("/d", "/c", $installerInvocation)
-  Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -Verb RunAs | Out-Null
+  try {
+    Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden | Out-Null
+  } catch {
+    Write-UpdateStatus "error" "admin-denied"
+    exit 1
+  }
   exit 0
 }
 
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $host.UI.RawUI.WindowTitle = "ChessGo Installer"
+Write-UpdateStatus "progress" "admin-granted"
 
 try {
   Write-Host "ChessGo Installer"
   Write-Host "================="
   Write-Host ""
 
+  Write-UpdateStatus "progress" "checking-environment"
   $gitPath = Find-Git
   if (-not $gitPath) {
     Write-Host "Git was not found. Installing Git automatically..."
+    Write-UpdateStatus "progress" "installing-git"
     $wingetCommand = Get-Command winget.exe -ErrorAction SilentlyContinue
     $wingetPath = if ($wingetCommand) { $wingetCommand.Source } else { Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe" }
     if (-not (Test-Path -LiteralPath $wingetPath -PathType Leaf)) {
@@ -842,10 +882,12 @@ try {
     Write-Host ""
   }
 
+  Write-UpdateStatus "progress" "reading-release"
   $remoteReleaseSha = Get-RemoteReleaseSha
   if ($remoteReleaseSha) {
     Write-Host "Remote release: $($remoteReleaseSha.Substring(0, 7))"
   }
+  Write-UpdateStatus "progress" "downloading-release"
   $sourceDir = Resolve-ChessGoRelease $sourceDir $gitPath $remoteReleaseSha
   Write-Host ""
 
@@ -860,6 +902,7 @@ try {
   if ($manifest.id -ne $pluginId) {
     throw "The selected release folder contains an unexpected plugin manifest."
   }
+  Write-UpdateStatus "progress" "release-verified" ([string]$manifest.version)
 
   $photoshopRoot = $null
   if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1") {
@@ -910,12 +953,14 @@ try {
     Write-Host "Selected Photoshop: $photoshopRoot"
   }
   Write-Host "Enabling Adobe UXP developer mode..."
+  Write-UpdateStatus "progress" "preparing-registration"
   $developerDir = Join-Path $env:CommonProgramFiles "Adobe\UXP\Developer"
   $developerSettings = Join-Path $developerDir "settings.json"
   New-Item -ItemType Directory -Path $developerDir -Force | Out-Null
   Enable-UxpDeveloperMode $developerSettings
 
   Write-Host "Registering ChessGo with the Photoshop UXP plugin manager..."
+  Write-UpdateStatus "progress" "installing-files"
   $installation = Install-RegisteredUxpPlugin $sourceDir $manifest $photoshopRoot
 
   $photoshopIsRunning = @(Get-Process -Name Photoshop -ErrorAction SilentlyContinue).Count -gt 0
@@ -933,12 +978,14 @@ try {
 
   Write-Host ""
   Write-Host $result
+  Write-UpdateStatus "success" "completed" ([string]$installation.Version)
   Show-Message $result "ChessGo Installer" ([System.Windows.Forms.MessageBoxIcon]::Information)
   exit 0
 } catch {
   $message = "Installation failed.`r`n`r`n$($_.Exception.Message)"
   Write-Host ""
   Write-Error $_
+  Write-UpdateStatus "error" "failed" ([string]$_.Exception.Message)
   Show-Message $message "ChessGo Installer" ([System.Windows.Forms.MessageBoxIcon]::Error)
   exit 1
 }
