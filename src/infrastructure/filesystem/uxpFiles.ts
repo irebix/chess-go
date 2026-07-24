@@ -137,6 +137,26 @@ export async function writeTemporaryImage(bytes: Uint8Array): Promise<storage.Fi
   return file;
 }
 
+export async function writeNamedTemporaryImage(
+  bytes: Uint8Array,
+  baseName: string,
+  extension: string
+): Promise<storage.File> {
+  const folder = await storage.localFileSystem.getTemporaryFolder();
+  const safeBaseName = safeTemporaryName(baseName).replace(/\.[a-z0-9]{2,5}$/i, "");
+  const safeExtension = /^[a-z0-9]{2,5}$/i.test(extension) ? extension.toLowerCase() : "bin";
+  temporaryImageSequence = (temporaryImageSequence + 1) % 1_000_000;
+  const sequence = String(temporaryImageSequence).padStart(6, "0");
+  const file = await folder.createFile(
+    `${safeBaseName}-${Date.now()}-${sequence}.${safeExtension}`,
+    { overwrite: true }
+  );
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  await file.write(copy, { format: storage.formats.binary });
+  return file;
+}
+
 export async function deleteTemporaryFile(file: storage.File): Promise<void> {
   try {
     await file.delete();

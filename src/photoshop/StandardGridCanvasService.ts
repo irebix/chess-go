@@ -33,6 +33,7 @@ import {
   type GridMetadataStoreState
 } from "../grid/GridMetadataStore";
 import { STANDARD_GRID_TEMPLATE } from "../grid/GridTemplate";
+import { readGridTableSourceMetadataStore } from "../grid/GridTableSourceMetadataStore";
 import {
   deleteTemporaryFile,
   downloadTemporaryImage
@@ -793,6 +794,14 @@ function gridDraftReservedSlots(document: StandardGridDocumentLike): Set<string>
     if (row === undefined || row >= STANDARD_GRID_TEMPLATE.grid.rows) continue;
     for (let column = 0; column < STANDARD_GRID_TEMPLATE.grid.columns; column += 1) {
       reserved.add(gridSlotAt(row, column).id);
+    }
+  }
+  const tableSource = readGridTableSourceMetadataStore(document);
+  if (tableSource.status === "valid") {
+    for (const chain of tableSource.metadata.chains) {
+      for (let column = 0; column < STANDARD_GRID_TEMPLATE.grid.columns; column += 1) {
+        reserved.add(gridSlotAt(chain.row, column).id);
+      }
     }
   }
   return reserved;

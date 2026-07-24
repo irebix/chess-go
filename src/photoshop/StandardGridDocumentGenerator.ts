@@ -25,7 +25,7 @@ export interface StandardGridGenerationResult {
   fileName: string;
 }
 
-interface ModalExecutionContext {
+export interface StandardGridModalExecutionContext {
   isCancelled: boolean;
   hostControl: {
     registerAutoCloseDocument(documentId: number): Promise<void> | void;
@@ -44,49 +44,13 @@ export async function generateStandardGridPsd(): Promise<StandardGridGenerationR
   let result: StandardGridGenerationResult | null = null;
 
   await core.executeAsModal(async (executionContext) => {
-    const context = executionContext as unknown as ModalExecutionContext;
+    const context = executionContext as unknown as StandardGridModalExecutionContext;
     assertNotCancelled(context);
-    const document = await app.createDocument({
-      width: STANDARD_GRID_TEMPLATE.canvas.width,
-      height: STANDARD_GRID_TEMPLATE.canvas.height,
-      resolution: 300,
-      mode: constants.NewDocumentMode.RGB,
-      fill: constants.DocumentFill.TRANSPARENT,
-      name: outputFile.name.replace(/\.psd$/i, "")
-    } as never);
-    if (!document) throw new Error("Photoshop 未能创建标准网格文档。");
-    await context.hostControl.registerAutoCloseDocument(document.id);
-
-    const initialLayerIds = new Set(document.layers.map((layer) => layer.id));
-    await action.batchPlay([placeEmbeddedDescriptor(backgroundToken)], {});
-    const backgroundLayer = document.activeLayers[0] as unknown as GridBackgroundLayer | undefined;
-    if (!backgroundLayer) throw new Error("标准网格背景置入后没有活动图层。");
-    backgroundLayer.name = GRID_BACKGROUND_LAYER_NAME;
-    backgroundLayer.visible = true;
-    await fitLayerInsideBounds(
-      backgroundLayer,
-      {
-        left: 0,
-        top: 0,
-        right: STANDARD_GRID_TEMPLATE.canvas.width,
-        bottom: STANDARD_GRID_TEMPLATE.canvas.height
-      },
-      { allowUpscale: true, tolerance: 1 }
+    const document = await createStandardGridDocumentFoundation(
+      outputFile,
+      backgroundToken,
+      context
     );
-
-    for (const layerId of initialLayerIds) {
-      const initialLayer = document.layers.find((layer) => layer.id === layerId);
-      if (initialLayer) await initialLayer.delete();
-    }
-
-    await initializeGridMetadataStore(document as never);
-    const metadata = readGridMetadataStore(document as never);
-    if (metadata.status !== "valid") {
-      throw new Error("标准网格隐藏数据写入后校验失败。");
-    }
-    if (inspectGridCanvas(document).mode !== "STANDARD_GRID") {
-      throw new Error("新文档没有被识别为棋子go标准网格画布。");
-    }
 
     assertNotCancelled(context);
     await document.saveAs.psd(outputFile as never);
@@ -101,7 +65,57 @@ export async function generateStandardGridPsd(): Promise<StandardGridGenerationR
   return result;
 }
 
-async function bundledGridBackground(): Promise<storage.File> {
+export async function createStandardGridDocumentFoundation(
+  outputFile: storage.File,
+  backgroundToken: string,
+  context: StandardGridModalExecutionContext
+) {
+  assertNotCancelled(context);
+  const document = await app.createDocument({
+    width: STANDARD_GRID_TEMPLATE.canvas.width,
+    height: STANDARD_GRID_TEMPLATE.canvas.height,
+    resolution: 300,
+    mode: constants.NewDocumentMode.RGB,
+    fill: constants.DocumentFill.TRANSPARENT,
+    name: outputFile.name.replace(/\.psd$/i, "")
+  } as never);
+  if (!document) throw new Error("Photoshop 未能创建标准网格文档。");
+  await context.hostControl.registerAutoCloseDocument(document.id);
+
+  const initialLayerIds = new Set(document.layers.map((layer) => layer.id));
+  await action.batchPlay([placeEmbeddedDescriptor(backgroundToken)], {});
+  const backgroundLayer = document.activeLayers[0] as unknown as GridBackgroundLayer | undefined;
+  if (!backgroundLayer) throw new Error("标准网格背景置入后没有活动图层。");
+  backgroundLayer.name = GRID_BACKGROUND_LAYER_NAME;
+  backgroundLayer.visible = true;
+  await fitLayerInsideBounds(
+    backgroundLayer,
+    {
+      left: 0,
+      top: 0,
+      right: STANDARD_GRID_TEMPLATE.canvas.width,
+      bottom: STANDARD_GRID_TEMPLATE.canvas.height
+    },
+    { allowUpscale: true, tolerance: 1 }
+  );
+
+  for (const layerId of initialLayerIds) {
+    const initialLayer = document.layers.find((layer) => layer.id === layerId);
+    if (initialLayer) await initialLayer.delete();
+  }
+
+  await initializeGridMetadataStore(document as never);
+  const metadata = readGridMetadataStore(document as never);
+  if (metadata.status !== "valid") {
+    throw new Error("标准网格隐藏数据写入后校验失败。");
+  }
+  if (inspectGridCanvas(document).mode !== "STANDARD_GRID") {
+    throw new Error("新文档没有被识别为棋子go标准网格画布。");
+  }
+  return document;
+}
+
+export async function bundledGridBackground(): Promise<storage.File> {
   const provider = storage.localFileSystem;
   if (!provider.getPluginFolder) {
     throw new Error("当前 UXP 不支持读取标准网格背景资源。");
@@ -113,6 +127,12 @@ async function bundledGridBackground(): Promise<storage.File> {
   return entry as storage.File;
 }
 
-function assertNotCancelled(context: ModalExecutionContext): void {
+export function assertStandardGridNotCancelled(
+  context: Pick<StandardGridModalExecutionContext, "isCancelled">
+): void {
   if (context.isCancelled) throw new UserCancelledError("已取消生成标准网格画布。");
+}
+
+function assertNotCancelled(context: StandardGridModalExecutionContext): void {
+  assertStandardGridNotCancelled(context);
 }

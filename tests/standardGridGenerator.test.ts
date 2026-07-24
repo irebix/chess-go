@@ -15,21 +15,26 @@ describe("standard grid PSD generator", () => {
 
   it("creates, backgrounds, initializes, verifies and saves one non-artboard PSD", () => {
     const source = readFileSync(resolve("src/photoshop/StandardGridDocumentGenerator.ts"), "utf8");
-    const createDocument = source.indexOf("await app.createDocument({");
+    const foundationCall = source.indexOf("await createStandardGridDocumentFoundation(");
+    const savePsd = source.indexOf("await document.saveAs.psd(", foundationCall);
+    const foundation = source.indexOf("export async function createStandardGridDocumentFoundation(");
+    const createDocument = source.indexOf("await app.createDocument({", foundation);
     const placeBackground = source.indexOf("placeEmbeddedDescriptor(backgroundToken)", createDocument);
     const initializeMetadata = source.indexOf("await initializeGridMetadataStore(", placeBackground);
     const verifyMode = source.indexOf('mode !== "STANDARD_GRID"', initializeMetadata);
-    const savePsd = source.indexOf("await document.saveAs.psd(", verifyMode);
+    const foundationReturn = source.indexOf("return document;", verifyMode);
     expect(source).toContain("width: STANDARD_GRID_TEMPLATE.canvas.width");
     expect(source).toContain("height: STANDARD_GRID_TEMPLATE.canvas.height");
     expect(source).toContain("fill: constants.DocumentFill.TRANSPARENT");
     expect(source).toContain("backgroundLayer.name = GRID_BACKGROUND_LAYER_NAME");
     expect(source).toContain("{ allowUpscale: true, tolerance: 1 }");
+    expect(foundationCall).toBeGreaterThan(-1);
+    expect(savePsd).toBeGreaterThan(foundationCall);
     expect(createDocument).toBeGreaterThan(-1);
     expect(placeBackground).toBeGreaterThan(createDocument);
     expect(initializeMetadata).toBeGreaterThan(placeBackground);
     expect(verifyMode).toBeGreaterThan(initializeMetadata);
-    expect(savePsd).toBeGreaterThan(verifyMode);
+    expect(foundationReturn).toBeGreaterThan(verifyMode);
   });
 
   it("uses the shared primary button inside Generate PSD instead of a standalone panel", () => {
@@ -47,6 +52,7 @@ describe("standard grid PSD generator", () => {
     expect(diagnostics).toBeGreaterThan(generateGrid);
     expect(app).not.toContain("grid-canvas-generator-panel");
     expect(app).not.toContain("grid-canvas-generator-action");
+    expect(app).toContain("生成空网格画布");
 
     const webpack = readFileSync(resolve("webpack.config.js"), "utf8");
     expect(webpack).toContain('{ from: "StandardGridBackground.png", to: "StandardGridBackground.png" }');

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_TEMPLATE, type AssetCandidate, type SheetGroup } from "../domain/models";
 import { applyScopedTaskValidation, selectImageCandidate } from "../domain/mapper";
-import { filterItemsByGroups } from "../domain/sheetGroups";
+import { filterItemsByGroups, filterSelectedItemsByGroups } from "../domain/sheetGroups";
 import {
   imageDataUri,
   importWorkbook,
@@ -27,7 +27,7 @@ import {
 } from "../services/GenerationSettingsService";
 import { formatLog, makeLog, type LogEvent } from "../utils/logging";
 import { toErrorMessage, UserCancelledError } from "../utils/errors";
-import { defaultBatchBaseName } from "../utils/fileNames";
+import { defaultBatchBaseName, defaultTableGridBaseName } from "../utils/fileNames";
 import { exportDiagnosticPackage } from "../services/DiagnosticPackageService";
 import {
   clearRecentWorkbook,
@@ -64,7 +64,9 @@ import { SpectrumSelect } from "./SpectrumSelect";
 import { StandardGridPanel } from "./StandardGridPanel";
 import type { PlacementMode } from "../photoshop/placementMode";
 import { generateStandardGridPsd } from "../photoshop/StandardGridDocumentGenerator";
+import { generateTableGridPsd } from "../photoshop/TableGridDocumentGenerator";
 import { shouldShowAiDraftPanel } from "../domain/aiDraftVisibility";
+import { TABLE_GRID_ITEMS_PER_CHAIN } from "../domain/tableGridPlan";
 import {
   CHESSGO_UPDATE_CHECK_INTERVAL_MS,
   checkPluginUpdate,
@@ -81,6 +83,7 @@ type UiPhase =
   | "diagnosing"
   | "generating"
   | "generatingGrid"
+  | "generatingTableGrid"
   | "done"
   | "error";
 
@@ -197,7 +200,8 @@ export function App(): React.ReactElement {
 
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
-    phase === "diagnosing" || phase === "generating" || phase === "generatingGrid";
+    phase === "diagnosing" || phase === "generating" || phase === "generatingGrid" ||
+    phase === "generatingTableGrid";
   const busy = nonAiBusy || aiBusy || editBusy || outlineBusy || refineBusy || gridBusy;
   const largeWorkbook = (workbook?.sourceSize ?? 0) > LARGE_WORKBOOK_BYTES;
   const activeGroups = useMemo(
@@ -276,6 +280,18 @@ export function App(): React.ReactElement {
         .map((group) => ({ group, items: filterItemsByGroups(scopedItems, [group]) }))
         .filter((entry) => entry.items.length > 0),
     [activeGroups, scopedItems]
+  );
+  const tableGridChainCounts = useMemo(
+    () => activeGroups
+      .map((group) => ({
+        group,
+        itemCount: filterSelectedItemsByGroups(scopedItems, [group]).length
+      }))
+      .filter((entry) => entry.itemCount > 0),
+    [activeGroups, scopedItems]
+  );
+  const oversizedTableGridChain = tableGridChainCounts.find(
+    (entry) => entry.itemCount > TABLE_GRID_ITEMS_PER_CHAIN
   );
   const formattedLogs = useMemo(() => logs.map(formatLog).join("\n"), [logs]);
   const displayedLogs = formattedLogs || "尚无日志。";
@@ -881,6 +897,58 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function handleGenerateTableGrid(): Promise<void> {
+    if (
+      busy
+      || !workbook
+      || !tableGridChainCounts.length
+      || oversizedTableGridChain
+      || selectedErrorCount > 0
+    ) {
+      return;
+    }
+    setUiError(null);
+    setPhase("generatingTableGrid");
+    setProgress({ completed: 0, total: selectedCount });
+    setMessage("请选择表格网格 PSD 的保存位置……");
+    appendLog(makeLog(
+      "info",
+      "table-grid.generation.started",
+      `${sheetName}, ${tableGridChainCounts.length} chains, ${selectedCount} items`
+    ));
+    try {
+      const results = await generateTableGridPsd({
+        workbook,
+        sheetName,
+        selectedGroups: activeGroups,
+        items: scopedItems,
+        suggestedBaseName: defaultTableGridBaseName(workbook.sourceName, sheetName),
+        onProgress: ({ stage, completed, total }) => {
+          setProgress({ completed, total });
+          setMessage(`${stage}（${completed}/${total}）`);
+        }
+      });
+      const activeResult = results[results.length - 1];
+      if (activeResult) {
+        setActivePhotoshopDocumentId(activeResult.documentId);
+        setPlacementMode("STANDARD_GRID");
+      }
+      setPhase("done");
+      setShowGenerator(false);
+      setMessage(
+        `表格网格生成完成：${results.length} 个 PSD，`
+          + `${tableGridChainCounts.length} 条链、${selectedCount} 个棋子。`
+      );
+      appendLog(makeLog(
+        "info",
+        "table-grid.generation.completed",
+        `${results.length} volumes`
+      ));
+    } catch (error) {
+      handleError(error, "从表格生成网格 PSD 失败");
+    }
+  }
+
   async function handleReferenceViewToggle(): Promise<void> {
     if (!referenceDocument || referenceBusy || groupArtboardBusy || artboardBackgroundBusy) return;
     setUiError((current) => current?.area === "currentPsd" ? null : current);
@@ -1239,7 +1307,7 @@ export function App(): React.ReactElement {
         disabled={busy}
         onClick={() => void handleGenerateStandardGrid()}
       >
-        {phase === "generatingGrid" ? "正在生成网格画布……" : "生成网格画布"}
+        {phase === "generatingGrid" ? "正在生成空网格画布……" : "生成空网格画布"}
       </button>
 
       {workbook ? (
@@ -1330,6 +1398,29 @@ export function App(): React.ReactElement {
       {items.length && activeGroups.length ? (
         <>
           <div className="generation-action">
+            <div className="table-grid-generation-branch">
+              <button
+                className="primary"
+                disabled={
+                  busy
+                  || selectedCount === 0
+                  || selectedErrorCount > 0
+                  || !tableGridChainCounts.length
+                  || Boolean(oversizedTableGridChain)
+                }
+                onClick={() => void handleGenerateTableGrid()}
+              >
+                {phase === "generatingTableGrid"
+                  ? `正在生成网格 ${progress?.completed ?? 0}/${progress?.total ?? selectedCount}`
+                  : `从表格生成网格 PSD（${tableGridChainCounts.length} 条链）`}
+              </button>
+              <small className={oversizedTableGridChain ? "blocking-note" : "generation-branch-note"}>
+                {oversizedTableGridChain
+                  ? `“${oversizedTableGridChain.group.label}”已选择 ${oversizedTableGridChain.itemCount} 项，超过单行 ${TABLE_GRID_ITEMS_PER_CHAIN} 格上限。`
+                  : "一条链占一整行，图层组名使用链名；超过 8 条链自动分卷。"}
+              </small>
+            </div>
+            <div className="generation-branch-divider"><span>或生成画板 PSD</span></div>
             <div className="generation-setting-control">
               <label className="generation-setting-label" htmlFor="editable-canvas-size">
                 智能对象边长

@@ -18,6 +18,10 @@ export function defaultBatchBaseName(workbookName: string, sheetName: string): s
   return sanitizeFileName(`${workbookStem(workbookName)}_${sheetName}`);
 }
 
+export function defaultTableGridBaseName(workbookName: string, sheetName: string): string {
+  return sanitizeFileName(`${workbookStem(workbookName)}_${sheetName}_网格`);
+}
+
 export function buildBatchOutputNames(requestedBaseName: string, volumeCount: number): VolumeOutputNames[] {
   const baseName = sanitizeFileName(requestedBaseName);
   return Array.from({ length: volumeCount }, (_, index) => {

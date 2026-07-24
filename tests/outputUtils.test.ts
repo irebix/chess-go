@@ -3,6 +3,7 @@ import { escapeCsv, toCsv } from "../src/utils/csv";
 import {
   buildBatchOutputNames,
   defaultBatchBaseName,
+  defaultTableGridBaseName,
   findOutputNameConflicts,
   sanitizeFileName
 } from "../src/utils/fileNames";
@@ -20,6 +21,8 @@ describe("output utilities", () => {
   it("builds editable multi-volume output names", () => {
     expect(defaultBatchBaseName("M图标月度安排2.xlsx", "巴西第三十二至三十四章"))
       .toBe("M图标月度安排2_巴西第三十二至三十四章");
+    expect(defaultTableGridBaseName("M图标月度安排2.xlsx", "巴西第三十二至三十四章"))
+      .toBe("M图标月度安排2_巴西第三十二至三十四章_网格");
     expect(buildBatchOutputNames("我的归档", 2)).toEqual([
       {
         volumeNumber: 1,
