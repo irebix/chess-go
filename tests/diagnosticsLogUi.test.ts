@@ -16,11 +16,17 @@ describe("diagnostics log UI", () => {
     expect(logsRule).toContain("cursor: text;");
     expect(logsRule).toContain("width: 100%;");
     expect(logsRule).toContain("resize: none;");
+    expect(logsRule).toContain("background-color: var(--uxp-host-widget-background-color, #444);");
     expect(logsRule).toContain("-webkit-user-select: text;");
     expect(logsRule).toContain("user-select: text;");
     expect(logsRule).not.toContain("user-select: none;");
     expect(app).toContain("发现 {pluginUpdate.latestVersion}。");
     expect(app).not.toContain("更新会自动使用当前插件注册位置");
     expect(app).not.toContain("diagnostics-update-note");
+    expect(app).toContain('status: "idle"');
+    expect(app).toContain("尚未检查更新。");
+    expect(app).toContain("检查更新");
+    expect(app).not.toContain('window.addEventListener("focus", handleWindowFocus)');
+    expect(app).not.toContain("if (!showDiagnostics) void checkForPluginRelease()");
   });
 });

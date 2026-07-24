@@ -67,7 +67,6 @@ import { generateStandardGridPsd } from "../photoshop/StandardGridDocumentGenera
 import { shouldShowAiDraftPanel } from "../domain/aiDraftVisibility";
 import {
   CHESSGO_UPDATE_CHECK_INTERVAL_MS,
-  CHESSGO_UPDATE_CHECK_MIN_GAP_MS,
   checkPluginUpdate,
   launchPluginUpdate
 } from "../update/pluginUpdate";
@@ -108,7 +107,7 @@ interface UiError {
 }
 
 interface PluginUpdateUiState {
-  status: "checking" | "current" | "available" | "error";
+  status: "idle" | "checking" | "current" | "available" | "error";
   latestVersion?: string;
   detail?: string;
 }
@@ -157,7 +156,7 @@ export function App(): React.ReactElement {
   const [showGenerator, setShowGenerator] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pluginUpdate, setPluginUpdate] = useState<PluginUpdateUiState>({
-    status: "checking"
+    status: "idle"
   });
   const [updateLaunching, setUpdateLaunching] = useState(false);
   const [updateLaunchHint, setUpdateLaunchHint] = useState("");
@@ -195,7 +194,6 @@ export function App(): React.ReactElement {
   const thumbnailQueue = useRef<ThumbnailTask[]>([]);
   const thumbnailActiveCount = useRef(0);
   const updateCheckInFlight = useRef(false);
-  const updateLastCheckedAt = useRef(0);
 
   const nonAiBusy =
     phase === "importing" || phase === "parsingSheet" || phase === "exporting" ||
@@ -309,14 +307,8 @@ export function App(): React.ReactElement {
     console[level === "error" ? "error" : level === "warn" ? "warn" : "log"](event.event, event.detail ?? "");
   }, []);
 
-  const checkForPluginRelease = useCallback(async (force = false): Promise<void> => {
+  const checkForPluginRelease = useCallback(async (): Promise<void> => {
     if (updateCheckInFlight.current) return;
-    if (
-      !force &&
-      Date.now() - updateLastCheckedAt.current < CHESSGO_UPDATE_CHECK_MIN_GAP_MS
-    ) {
-      return;
-    }
     updateCheckInFlight.current = true;
     setPluginUpdate((current) => (
       current.status === "available" ? current : { status: "checking" }
@@ -335,7 +327,6 @@ export function App(): React.ReactElement {
           : { status: "error", detail }
       ));
     } finally {
-      updateLastCheckedAt.current = Date.now();
       updateCheckInFlight.current = false;
     }
   }, []);
@@ -392,18 +383,12 @@ export function App(): React.ReactElement {
   );
 
   useEffect(() => {
-    void checkForPluginRelease();
     const intervalId = window.setInterval(
       () => void checkForPluginRelease(),
       CHESSGO_UPDATE_CHECK_INTERVAL_MS
     );
-    const handleWindowFocus = (): void => {
-      void checkForPluginRelease();
-    };
-    window.addEventListener("focus", handleWindowFocus);
     return () => {
       window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleWindowFocus);
     };
   }, [checkForPluginRelease]);
 
@@ -816,7 +801,6 @@ export function App(): React.ReactElement {
   }
 
   function toggleDiagnostics(): void {
-    if (!showDiagnostics) void checkForPluginRelease();
     setShowDiagnostics((value) => !value);
   }
 
@@ -1598,6 +1582,17 @@ export function App(): React.ReactElement {
               <strong>插件更新</strong>
               <small>当前版本 {PLUGIN_VERSION}</small>
             </div>
+            {pluginUpdate.status === "idle" ? (
+              <>
+                <span className="diagnostics-update-detail">尚未检查更新。</span>
+                <button
+                  className="compact diagnostics-update-recheck"
+                  onClick={() => void checkForPluginRelease()}
+                >
+                  检查更新
+                </button>
+              </>
+            ) : null}
             {pluginUpdate.status === "checking" ? (
               <span className="diagnostics-update-detail">正在检查 release……</span>
             ) : null}
@@ -1614,7 +1609,7 @@ export function App(): React.ReactElement {
                 <button
                   className="compact diagnostics-update-recheck"
                   disabled={updateCheckInFlight.current}
-                  onClick={() => void checkForPluginRelease(true)}
+                  onClick={() => void checkForPluginRelease()}
                 >
                   重新检查
                 </button>
@@ -1627,7 +1622,7 @@ export function App(): React.ReactElement {
                 </span>
                 <button
                   className="compact diagnostics-update-recheck"
-                  onClick={() => void checkForPluginRelease(true)}
+                  onClick={() => void checkForPluginRelease()}
                 >
                   重试检查
                 </button>
