@@ -25,6 +25,8 @@ import {
   CHESSGO_BUNDLED_INSTALLER,
   CHESSGO_PLUGIN_ID,
   CHESSGO_RELEASE_API_URL,
+  CHESSGO_UPDATE_LAUNCHER,
+  CHESSGO_UPDATE_STATUS_FILE,
   checkPluginUpdate,
   comparePluginVersions,
   launchPluginUpdate
@@ -96,7 +98,7 @@ describe("UXP plugin update", () => {
       .rejects.toThrow("不属于棋子go");
   });
 
-  it("copies the bundled installer to UXP temp and opens an internal update launcher", async () => {
+  it("copies the bundled installer to UXP temp and opens a hidden internal update launcher", async () => {
     const installerContent = [
       "@echo off",
       ":__CHESSGO_SELF_UPDATE_POWERSHELL__",
@@ -106,6 +108,8 @@ describe("UXP plugin update", () => {
     ].join("\r\n");
     const installerWrites: unknown[] = [];
     const launcherWrites: unknown[] = [];
+    const statusWrites: unknown[] = [];
+    const progressEvents: unknown[] = [];
     const temporaryInstaller = {
       name: CHESSGO_BUNDLED_INSTALLER,
       isFile: true,
@@ -115,18 +119,35 @@ describe("UXP plugin update", () => {
       })
     };
     const launcher = {
-      name: "StartChessGoUpdate.cmd",
+      name: CHESSGO_UPDATE_LAUNCHER,
       isFile: true,
-      nativePath: "C:\\Temp\\StartChessGoUpdate.cmd",
+      nativePath: "C:\\Temp\\StartChessGoUpdate.vbs",
       write: vi.fn((value: unknown) => {
         launcherWrites.push(value);
         return Promise.resolve();
       })
     };
+    const statusFile = {
+      name: CHESSGO_UPDATE_STATUS_FILE,
+      isFile: true,
+      nativePath: "C:\\Temp\\ChessGoUpdateStatus.jsonl",
+      write: vi.fn((value: unknown) => {
+        statusWrites.push(value);
+        return Promise.resolve();
+      }),
+      read: vi.fn().mockResolvedValue(JSON.stringify({
+        id: "a".repeat(32),
+        kind: "success",
+        stage: "completed",
+        detail: "0.8.10"
+      }))
+    };
     const temporaryFolder = {
-      createFile: vi.fn((name: string) => Promise.resolve(
-        name === CHESSGO_BUNDLED_INSTALLER ? temporaryInstaller : launcher
-      ))
+      createFile: vi.fn((name: string) => {
+        if (name === CHESSGO_BUNDLED_INSTALLER) return Promise.resolve(temporaryInstaller);
+        if (name === CHESSGO_UPDATE_STATUS_FILE) return Promise.resolve(statusFile);
+        return Promise.resolve(launcher);
+      })
     };
     uxpMocks.getPluginFolder.mockResolvedValue({
       getEntry: vi.fn().mockResolvedValue({
@@ -138,17 +159,36 @@ describe("UXP plugin update", () => {
     uxpMocks.getTemporaryFolder.mockResolvedValue(temporaryFolder);
     uxpMocks.openPath.mockResolvedValue("");
 
-    await launchPluginUpdate();
+    await expect(launchPluginUpdate((progress) => {
+      progressEvents.push(progress);
+    })).resolves.toEqual({
+      outcome: "success",
+      message: "棋子go 0.8.10 更新完成，请重启 Photoshop。"
+    });
 
     expect(installerWrites).toEqual([installerContent]);
-    expect(String(launcherWrites[0])).toContain('set "CHESSGO_INTERNAL_UPDATE=1"');
-    expect(String(launcherWrites[0])).toContain(
-      `call "%~dp0${CHESSGO_BUNDLED_INSTALLER}" --internal-update`
+    expect(statusWrites).toEqual([""]);
+    expect(temporaryFolder.createFile).toHaveBeenCalledWith(
+      CHESSGO_UPDATE_LAUNCHER,
+      { overwrite: true }
     );
+    expect(String(launcherWrites[0])).toContain('CreateObject("WScript.Shell")');
+    expect(String(launcherWrites[0])).toContain(CHESSGO_BUNDLED_INSTALLER);
+    expect(String(launcherWrites[0])).toContain(statusFile.nativePath);
+    expect(String(launcherWrites[0])).toContain("CHESSGO_UPDATE_STATUS_FILE");
+    expect(String(launcherWrites[0])).toContain("--internal-update");
+    expect(String(launcherWrites[0])).toContain("shell.Run command, 0, False");
     expect(uxpMocks.openPath).toHaveBeenCalledWith(
       launcher.nativePath,
-      expect.stringContaining("重启 Photoshop")
+      "启动棋子go更新程序。"
     );
+    expect(progressEvents).toEqual([
+      { kind: "progress", message: "更新程序已启动。" },
+      {
+        kind: "success",
+        message: "棋子go 0.8.10 更新完成，请重启 Photoshop。"
+      }
+    ]);
   });
 });
 

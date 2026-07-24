@@ -8,7 +8,7 @@ const webpackConfig = readFileSync(resolve(process.cwd(), "webpack.config.js"), 
 
 describe("Windows installer", () => {
   it("advances the installer revision for manifest-driven payload installation", () => {
-    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=5"');
+    expect(installer).toContain('set "CHESSGO_INSTALLER_REVISION=6"');
   });
 
   it("discovers and verifies every runtime file from the generated release manifest", () => {
@@ -63,6 +63,11 @@ describe("Windows installer", () => {
       '$installerInvocation = if ([string]$env:CHESSGO_INTERNAL_UPDATE -eq "1")'
     );
     expect(installer).toContain('"{0}" --internal-update');
+    expect(installer).toContain("-Verb RunAs -WindowStyle Hidden");
+    expect(installer).toContain("function Write-UpdateStatus");
+    expect(installer).toContain('Write-UpdateStatus "progress" "downloading-release"');
+    expect(installer).toContain('Write-UpdateStatus "success" "completed" ([string]$installation.Version)');
+    expect(installer).toContain('Write-UpdateStatus "error" "failed" ([string]$_.Exception.Message)');
     expect(webpackConfig).toContain(
       '{ from: "installer/install.cmd", to: "ChessGoInstaller.cmd" }'
     );

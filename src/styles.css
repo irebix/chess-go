@@ -1881,8 +1881,7 @@ button:disabled {
   gap: 8px;
 }
 
-.diagnostics-update-heading small,
-.diagnostics-update-note {
+.diagnostics-update-heading small {
   color: var(--uxp-host-text-color-secondary, #b8b8b8);
   font-size: 10px;
 }

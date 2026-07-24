@@ -3,7 +3,7 @@ import manifest from "../manifest.json";
 
 describe("UXP manifest", () => {
   it("publishes the current release without changing host startup boundaries", () => {
-    expect(manifest.version).toBe("0.8.9");
+    expect(manifest.version).toBe("0.8.10");
     expect(manifest.host.minVersion).toBe("24.2.0");
     expect(manifest.host.data.loadEvent).toBe("use");
   });
@@ -12,10 +12,10 @@ describe("UXP manifest", () => {
     expect(manifest.requiredPermissions.network.domains).toBe("all");
   });
 
-  it("allows explicit browser viewing of local HTTP candidates", () => {
+  it("allows explicit browser viewing and the hidden update launcher", () => {
     expect(manifest.requiredPermissions.launchProcess).toEqual({
       schemes: ["http"],
-      extensions: [".cmd"]
+      extensions: [".vbs"]
     });
   });
 

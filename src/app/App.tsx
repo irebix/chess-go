@@ -789,12 +789,17 @@ export function App(): React.ReactElement {
     setUpdateLaunching(true);
     setUpdateLaunchHint("");
     try {
-      await launchPluginUpdate();
-      const detail =
-        "更新程序已打开。请完成系统授权；安装成功弹窗出现后重启 Photoshop。";
-      setUpdateLaunchHint(detail);
-      setMessage(detail);
-      appendLog(makeLog("info", "plugin.update.launched", pluginUpdate.latestVersion));
+      const result = await launchPluginUpdate((progress) => {
+        appendLog(makeLog(
+          progress.kind === "error" ? "error" : "info",
+          "plugin.update.progress",
+          progress.message
+        ));
+      });
+      setMessage(result.message);
+      if (result.outcome === "error") {
+        setUpdateLaunchHint(result.message);
+      }
     } catch (error) {
       const detail = `启动更新失败：${toErrorMessage(error)}`;
       setUpdateLaunchHint(detail);
@@ -1626,19 +1631,15 @@ export function App(): React.ReactElement {
             {pluginUpdate.status === "available" ? (
               <>
                 <span className="diagnostics-update-detail">
-                  发现 {pluginUpdate.latestVersion}。更新会自动使用当前插件注册位置，
-                  不再选择 Photoshop 路径。
+                  发现 {pluginUpdate.latestVersion}。
                 </span>
                 <button
                   className="primary diagnostics-update-action"
                   disabled={busy || updateLaunching}
                   onClick={() => void handleLaunchPluginUpdate()}
                 >
-                  {updateLaunching ? "正在启动……" : "更新棋子go"}
+                  {updateLaunching ? "正在更新……" : "更新棋子go"}
                 </button>
-                <small className="diagnostics-update-note">
-                  更新程序需要系统管理员授权；完成后会弹窗提示重启 Photoshop。
-                </small>
               </>
             ) : null}
             {updateLaunchHint ? (

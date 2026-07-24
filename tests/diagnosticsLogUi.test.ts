@@ -13,5 +13,8 @@ describe("diagnostics log UI", () => {
     expect(logsRule).toContain("-webkit-user-select: text;");
     expect(logsRule).toContain("user-select: text;");
     expect(logsRule).not.toContain("user-select: none;");
+    expect(app).toContain("发现 {pluginUpdate.latestVersion}。");
+    expect(app).not.toContain("更新会自动使用当前插件注册位置");
+    expect(app).not.toContain("diagnostics-update-note");
   });
 });
