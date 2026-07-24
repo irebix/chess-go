@@ -25,6 +25,7 @@ import {
   CHESSGO_BUNDLED_INSTALLER,
   CHESSGO_PLUGIN_ID,
   CHESSGO_RELEASE_API_URL,
+  CHESSGO_UPDATE_CHECK_INTERVAL_MS,
   CHESSGO_UPDATE_LAUNCHER,
   CHESSGO_UPDATE_STATUS_FILE,
   checkPluginUpdate,
@@ -38,6 +39,7 @@ describe("UXP plugin update", () => {
   });
 
   it("compares three-part release versions numerically", () => {
+    expect(CHESSGO_UPDATE_CHECK_INTERVAL_MS).toBe(10 * 60 * 1000);
     expect(comparePluginVersions("0.8.8", "0.8.7")).toBeGreaterThan(0);
     expect(comparePluginVersions("0.10.0", "0.9.9")).toBeGreaterThan(0);
     expect(comparePluginVersions("1.0.0", "1.0.0")).toBe(0);
